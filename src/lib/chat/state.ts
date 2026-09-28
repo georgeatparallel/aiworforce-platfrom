@@ -99,6 +99,25 @@ export function isCheckpointedPartial(input: Pick<DeriveWorkflowInput, 'plan' | 
   return input.tasks.some((t) => taskResultIsPartial(t.result));
 }
 
+/**
+ * IS THE LEAD V2 QUEUE CARRYING THIS TASK ON?
+ *
+ * A designed pause between slices — or a save point inside one — writes the
+ * row `ready` / `continuation_required`, the same shape as a run that stopped
+ * and waits for the user's Continue. They are not the same state: the queue
+ * re-claims its own mission, and nothing is owed by the user. Canary 11
+ * (plan 76194e61) showed "Partial" in the chat while its worker was mid-slice.
+ *
+ * The owner is read from the top level (written from the first save point on)
+ * and from `company_first` (written at every slice end).
+ */
+export function taskQueueContinuing(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const r = result as { terminal_status?: unknown; continuation_owner?: unknown; company_first?: { continuation_owner?: unknown } | null };
+  if (String(r.terminal_status ?? '') !== 'continuation_required') return false;
+  return r.continuation_owner === 'v2_queue' || r.company_first?.continuation_owner === 'v2_queue';
+}
+
 // ------------------------------------------------- mission vs. row lifecycle -
 //
 // A TERMINAL TASK ROW IS NOT MISSION SUCCESS.
@@ -158,6 +177,15 @@ export function deriveWorkflowUiState(input: DeriveWorkflowInput): WorkflowRunUi
   if (anyRunning) {
     // Stale guard: a running plan with no activity for 24h is shown as stale,
     // not auto-marked failed.
+    const lastTs = input.lastActivityAt ? Date.parse(input.lastActivityAt) : Date.parse(plan.created_at);
+    if (Number.isFinite(lastTs) && now - lastTs > STALE_MS) return 'stale';
+    return 'running';
+  }
+
+  // THE QUEUE IS STILL WORKING. A queue-owned checkpoint is a continuing run,
+  // not a paused one — shown as running, with the same staleness guard, so a
+  // worker that has genuinely died still surfaces as stale rather than running.
+  if (tasks.some((t) => String(t.status) === CHECKPOINTED_ROW_STATUS && taskQueueContinuing(t.result))) {
     const lastTs = input.lastActivityAt ? Date.parse(input.lastActivityAt) : Date.parse(plan.created_at);
     if (Number.isFinite(lastTs) && now - lastTs > STALE_MS) return 'stale';
     return 'running';

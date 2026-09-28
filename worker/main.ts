@@ -33,6 +33,7 @@ import {
   CANCEL_SWEEP_LIMIT, CANCELLED_REASON, reconcileTerminalRows, sweepCancelledMissions,
   type CancelSweepDb, type TerminalIds,
 } from "../supabase/functions/_shared/leadMissionCancellation.ts";
+import { resolvePlanNoticesForQueueEnd, supabaseNoticeDb } from "../supabase/functions/_shared/runNotices.ts";
 import { createLeadMissionRunner } from "./leadMissionRunner.ts";
 import { newStatus, healthView, startHealthServer } from "./health.ts";
 import { mountApi } from "./api/server.ts";
@@ -275,6 +276,31 @@ async function main() {
     });
   };
 
+  // ── THE CONVERSATION ENDS WHERE THE LINEAGE ENDS ─────────────────────────
+  //
+  // Idempotent: on the normal path run-agent's last slice already wrote the
+  // final result and resolved the checkpoint notice, and this writes nothing.
+  // It speaks for the endings run-agent never reaches — retries exhausted,
+  // attempts exhausted, a cancellation — which left the chat on its last
+  // mid-run notice.
+  const noticeDb = supabaseNoticeDb(db);
+  const resolveNotices = async (
+    planId: string, queueStatus: "complete" | "failed" | "cancelled", reason: string,
+  ) => {
+    try {
+      const r = await resolvePlanNoticesForQueueEnd(noticeDb, {
+        planId, queueStatus, reason, nowIso: new Date().toISOString(),
+      });
+      if (r.checkpoints_resolved > 0 || r.results === "finalized" || r.results === "inserted") {
+        log("[worker] plan notices resolved", { plan_id: planId, queue_status: queueStatus, reason, ...r });
+      }
+    } catch (e) {
+      // A chat line must never fail a release.
+      log("[worker] plan notice resolution failed", String((e as Error)?.message ?? e));
+    }
+  };
+  rowsDb.resolveNotices = resolveNotices;
+
   const release = async (mission: ClaimedMission, outcome: ReleaseOutcome) => {
     const stated = finalQueueStatus(outcome, mission.attempts);
     const { data: released, error } = await db.rpc("release_lead_mission", {
@@ -290,15 +316,18 @@ async function main() {
     const finalStatus = String(firstRow(released)?.final_status ?? stated);
     if (isTerminalQueueStatus(finalStatus)) {
       const taskId = outcome.taskId ?? mission.taskId;
+      const planId = typeof mission.request.plan_id === "string" ? mission.request.plan_id : null;
+      const reason = terminalReasonFor(outcome, mission.attempts);
       try {
-        await reconcileTerminal(finalStatus, terminalReasonFor(outcome, mission.attempts), {
+        await reconcileTerminal(finalStatus, reason, {
           taskId,
           lineageId: mission.lineageId ?? taskId,
-          planId: typeof mission.request.plan_id === "string" ? mission.request.plan_id : null,
+          planId,
         });
       } catch (e) {
         log("[worker] terminal reconcile failed", String((e as Error)?.message ?? e));
       }
+      if (planId) await resolveNotices(planId, finalStatus, reason);
     }
   };
 

@@ -1,0 +1,87 @@
+[
+ {
+  "id": "c21e2419-e39f-4f5c-87ed-970a51e848ee",
+  "conversation_id": "f6719b77-9531-4852-88f6-2fff0e192fa9",
+  "content": "I created a 1-step plan: Scout will execute the approved mission.",
+  "created_at": "2026-09-25T14:25:31.967869+00:00",
+  "metadata": {
+   "type": "execution_plan",
+   "agents": [
+    "scout"
+   ],
+   "plan_id": "76194e61-3a57-417a-82ef-ae1787fe839a",
+   "plan_title": "6 capabilities: general company discovery \u2192 company identity resolution \u2192 company enrichment \u2192 hiring verification \u2192 company brain qualifica",
+   "task_count": 1,
+   "tool_input": null,
+   "execution_mode": "fast",
+   "prompt_version": "2026-06-09-v2",
+   "connector_limitations": []
+  }
+ },
+ {
+  "id": "0fe64a0f-ae82-4eda-843e-6a7ff3178319",
+  "conversation_id": "f6719b77-9531-4852-88f6-2fff0e192fa9",
+  "content": "This run reached its time limit partway through, so I've saved where it got to \u2014 4 companies found, 2 shortlisted. 4 credits across 5 provider calls. 2 results are still being collected. The Lead V2 worker picks it up automatically \u2014 there is nothing to click.",
+  "created_at": "2026-09-25T14:26:08.317421+00:00",
+  "metadata": {
+   "kind": "run_checkpoint",
+   "outcome": {
+    "gaps": [
+     {
+      "code": "run_incomplete",
+      "detail": "the run paused at its time limit before finishing every step"
+     }
+    ],
+    "state": "PARTIALLY_SATISFIED",
+    "reason": "execution_deadline_checkpoint",
+    "version": "outcome-v1"
+   },
+   "plan_id": "76194e61-3a57-417a-82ef-ae1787fe839a",
+   "task_id": "80e46ba1-bb9e-47a3-ab20-e32791475300",
+   "agent_id": "pilot",
+   "resumable": false,
+   "resume_refusal": "v2_queue_owned",
+   "terminal_status": "continuation_required",
+   "checkpoint_summary": "4 companies found, 0 shortlisted",
+   "continuation_owner": "v2_queue",
+   "restorable_companies": 4
+  }
+ },
+ {
+  "id": "2f65edb4-00e4-430f-b10a-b020e2bfc7b4",
+  "conversation_id": "f6719b77-9531-4852-88f6-2fff0e192fa9",
+  "content": "I opened the results in Workbench \u2014 0 of 1 qualified company. I discovered 4 companies and screened out 2 before any paid research. 2 companies were checked against your requirements: 0 qualified, 2 pending (a requirement is not yet established). The pending companies are in Workbench with the requirement still to be established. Nothing was sent.",
+  "created_at": "2026-09-25T14:30:07.304724+00:00",
+  "metadata": {
+   "plan_id": "76194e61-3a57-417a-82ef-ae1787fe839a",
+   "task_id": "80e46ba1-bb9e-47a3-ab20-e32791475300",
+   "agent_id": "pilot",
+   "ui_panel": {
+    "kind": "lead_results",
+    "title": "Qualified lead sourcing",
+    "actions": [],
+    "plan_id": "76194e61-3a57-417a-82ef-ae1787fe839a",
+    "subtitle": "0 of 1 CONTACT-ready leads",
+    "lead_count": 0,
+    "source_type": "hiring_signal",
+    "enrichable_count": 0,
+    "lead_candidate_ids": []
+   },
+   "workflow_kind": "qualified_lead_sourcing",
+   "mission_counts": {
+    "qualified": 0,
+    "shortlisted": 2,
+    "contact_ready": 0,
+    "companies_evaluated": 4,
+    "identities_resolved": 2,
+    "open_jobs_evaluated": 0,
+    "companies_discovered": 4,
+    "commercially_eligible": 4,
+    "identities_unresolved": 0
+   },
+   "requested_leads": 1,
+   "terminal_status": "continuation_required",
+   "contact_ready_leads": 0
+  }
+ }
+]

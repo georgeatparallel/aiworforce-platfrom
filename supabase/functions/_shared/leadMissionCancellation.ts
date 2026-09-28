@@ -165,6 +165,12 @@ export interface CancelSweepDb extends TerminalRowsDb {
    * window and the count; this module never asks for more than `limit`.
    */
   listCancelled: (limit: number) => Promise<CancelledQueueRow[]>;
+  /**
+   * THE CHAT HEARS IT TOO. A cancellation no release follows would otherwise
+   * leave the conversation on "still working" (`runNotices.ts`). Optional so a
+   * sweep without a message store still reconciles the rows.
+   */
+  resolveNotices?: (planId: string, queueStatus: "cancelled", reason: string) => Promise<void>;
 }
 
 /** How many cancelled missions one idle tick reconciles. */
@@ -202,6 +208,9 @@ export async function sweepCancelledMissions(
       planId,
     }, nowIso);
     if (r.written.length === 0) continue;
+    // Only when the rows were just reconciled: a settled cancellation was
+    // announced the first time, and the sweep runs on every idle tick.
+    if (planId && db.resolveNotices) await db.resolveNotices(planId, "cancelled", CANCELLED_REASON);
     out.reconciled++;
     out.details.push({ queue_id: row.id, violations: r.violations, written: r.written, remaining: r.remaining });
   }

@@ -34,6 +34,7 @@ export interface TaskResultField {
 export const TASK_RESULT_FIELDS: readonly TaskResultField[] = [
   { alias: 'r_task_status', path: ['task_status'], reader: 'chat/state taskResultIsPartial' },
   { alias: 'r_terminal_status', path: ['terminal_status'], reader: 'chat/state taskResultIsPartial' },
+  { alias: 'r_continuation_owner', path: ['continuation_owner'], reader: 'chat/state taskQueueContinuing' },
   { alias: 'r_quota', path: ['quota'], reader: 'chat/state taskQuotaUnmet' },
   { alias: 'r_company_first', path: ['company_first'], reader: 'SummaryView, taskCompanyFirst, taskQuotaUnmet' },
   { alias: 'r_workbench_progress', path: ['workbench_progress'], reader: 'workbench/workbenchProgress' },

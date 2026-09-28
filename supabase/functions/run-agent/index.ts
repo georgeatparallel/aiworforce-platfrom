@@ -433,6 +433,10 @@ import {
   AUTO_CONTINUATION_VERSION, LINEAGE_PROGRESS_KEY, type LineageProgress,
 } from "../_shared/leadAutoContinuation.ts";
 import {
+  continuingCheckpointContent, continuingResultsContent, noticeIsOpen, publishResultsNotice,
+  RUN_NOTICE_VERSION, runEndingOf, supabaseNoticeDb, type NoticeMessage, type RunEnding,
+} from "../_shared/runNotices.ts";
+import {
   dispatchContinuation, type DispatchOutcome,
 } from "../_shared/leadContinuationDispatch.ts";
 import { isFrontier, isUnfinishedFrontier, wasInvestigated } from "../_shared/leadInvestigationBudget.ts";
@@ -551,6 +555,16 @@ async function persistLeadResultsPanel(
   uiPanel: Record<string, unknown>,
   summary: {
     eligible: number; requested: number; rawJobs: number; terminalStatus: string;
+    /**
+     * THE LINEAGE, NOT THE SLICE. False once it has ended; true while another
+     * slice will run. A continuing lineage's message is corrected in place by
+     * the next slice and made FINAL by the last one (`publishResultsNotice`).
+     */
+    lineageContinuing?: boolean;
+    /** The Lead V2 queue continues it — nothing for the user to do. */
+    queueOwned?: boolean;
+    /** How the lineage ended, when it has. */
+    ending?: RunEnding | null;
     /** What `eligible` counts. Lead V2 missions deliver qualified companies. */
     deliverable?: "company" | "contact";
     /**
@@ -620,15 +634,22 @@ async function persistLeadResultsPanel(
     const conversationId = (planMsg as { conversation_id?: string } | null)?.conversation_id ?? null;
     if (!conversationId) return;
 
-    // One panel per plan. `metadata->ui_panel->>kind` is the same key ChatView
-    // keys its auto-open on, so this asks exactly the question that matters.
-    const { data: existing } = await db.from("messages")
-      .select("id")
-      .eq("conversation_id", conversationId)
-      .filter("metadata->>plan_id", "eq", planId)
-      .filter("metadata->ui_panel->>kind", "eq", "lead_results")
-      .limit(1).maybeSingle();
-    if (existing) return;
+    // ONE PANEL PER PLAN, CORRECTED UNTIL IT IS FINAL (`publishResultsNotice`).
+    //
+    // This returned as soon as a panel existed, so the FIRST slice's message was
+    // the only one a lineage could ever have. Canary 11 (plan 76194e61): slice 1
+    // wrote "0 of 1 … continuation_required" at a designed slice boundary; the
+    // slice that actually finished found it and said nothing, and Chat, Pilot and
+    // the Workbench (which reads this message's `ui_panel`) all kept the
+    // mid-run snapshot. An open message is now updated in place; a final one is
+    // still never reopened.
+    const noticeDb = supabaseNoticeDb(db);
+    const nowIso = new Date().toISOString();
+    const lineageContinuing = summary.lineageContinuing ??
+      summary.terminalStatus === "continuation_required";
+    const ending = lineageContinuing
+      ? null
+      : summary.ending ?? runEndingOf({ terminalStatus: summary.terminalStatus });
 
     // COUNTS STAY SEPARATE. Raw jobs are sourcing evidence; the quota is
     // CONTACT-ready people. Collapsing them is what produced "25 results" for a
@@ -647,14 +668,12 @@ async function persistLeadResultsPanel(
     if (refusedEarly) {
       const blocking = outcomes.find((o) => o.status !== "complete" && !!o.reason)!;
       const provider = (blocking.providers_used ?? [])[0] ?? "the provider";
-      await db.from("messages").insert({
-        conversation_id: conversationId,
-        role: "assistant",
+      await publishResultsNotice(noticeDb, {
+        planId, conversationId, nowIso, lifecycle: "final", ending: "failed",
         content:
           `I couldn't run the search, so I have nothing to report about your market. ` +
           `The ${blocking.capability.replace(/_/g, " ")} step was refused before ${provider} was called: ` +
           `${blocking.reason}. Nothing was charged.`,
-        agent_slug: "pilot",
         metadata: {
           ui_panel: uiPanel,
           plan_id: planId,
@@ -747,15 +766,20 @@ async function persistLeadResultsPanel(
     // counters above (open roles, commercial signals, the legacy qualified
     // list) are not read. `m` stays for rows written before the canonical view.
     const canonicalLine = renderCanonicalCompletion(summaryOutcome);
-    const content = canonicalLine
+    // A SLICE THE V2 QUEUE WILL CONTINUE SPEAKS OF RESULTS SO FAR. The funnel
+    // sentence ("None qualified yet", "screened out 2") is a verdict the lineage
+    // has not reached, and it is exactly what the last slice replaces. A legacy
+    // pause keeps its full account: there the user does have to press Continue.
+    const content = lineageContinuing && summary.queueOwned
+      ? continuingResultsContent(delivered)
+      : canonicalLine
       ? `I opened the results in Workbench — ${delivered}. ${canonicalLine.evidence}${canonicalLine.tail} Nothing was sent.`
       : `I opened the results in Workbench — ${delivered}. ${evidence}${tail} Nothing was sent.`;
 
-    await db.from("messages").insert({
-      conversation_id: conversationId,
-      role: "assistant",
-      content,
-      agent_slug: "pilot",
+    await publishResultsNotice(noticeDb, {
+      planId, conversationId, nowIso, content,
+      lifecycle: lineageContinuing ? "continuing" : "final",
+      ending,
       metadata: {
         ui_panel: uiPanel,
         plan_id: planId,
@@ -3624,6 +3648,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                       ...prior,
                       task_status: "partial",
                       terminal_status: "continuation_required",
+                      // Who carries it on — so the plan pill reads a queue-owned save point as running.
+                      continuation_owner: inProcess.continuationOwner ??
+                        (typeof prior.continuation_owner === "string" ? prior.continuation_owner : null),
                       // Built by the owner's factory so `version` — which
                       // `decideResume` checks — is right by construction.
                       company_first_state: {
@@ -3767,8 +3794,6 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             snap.state as unknown as Record<string, unknown> },
                         snap.resume_records,
                       );
-                      const foundLine = found > 0
-                        ? ` — ${found} companies found, ${short} shortlisted` : "";
                       // ── WHAT THIS SLICE ACTUALLY SPENT ─────────────────
                       //
                       // The card used to assert "nothing extra was charged"
@@ -3804,10 +3829,25 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                       // mission on its own. Offering Continue as well would let
                       // one click start a second executor on the edge beside it.
                       const queueOwned = inProcess.continuationOwner === "v2_queue";
-                      const v2Notice =
-                        `This run reached its time limit partway through, so I've saved where it ` +
-                        `got to${foundLine}. ${checkpointSpend} The Lead V2 worker picks it up ` +
-                        `automatically — there is nothing to click.`;
+                      // ── A SAVE POINT IS NOT A TIME LIMIT ─────────────────
+                      //
+                      // This callback runs at EVERY stage boundary, and this
+                      // notice said "This run reached its time limit" at the
+                      // first one — 34 seconds into canary 11, while the slice
+                      // carried on. It stayed in the conversation after the
+                      // lineage finished, and Pilot read a failure from it.
+                      // The wording is now true whatever happens next, and the
+                      // run's end resolves it (`publishResultsNotice`).
+                      const noticeContent = continuingCheckpointContent({
+                        queueOwned, resumable: resume.resumable, cannotResume,
+                        summary: found > 0 ? `${found} companies found, ${short} shortlisted` : null,
+                        spendClause: checkpointSpend,
+                      });
+                      const alreadyMsg = already as NoticeMessage | null;
+                      // A RESOLVED NOTICE BELONGS TO A FINISHED LINEAGE: never
+                      // reopened. One from before this change is rewritten once.
+                      const alreadyOpen = alreadyMsg ? noticeIsOpen(alreadyMsg) : false;
+                      const alreadyCurrent = alreadyMsg?.metadata?.notice_version === RUN_NOTICE_VERSION;
                       if (!already) {
                         await supabase.from("messages").insert({
                           conversation_id: convId,
@@ -3839,14 +3879,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                           // What is true and worth saying is that the work is
                           // kept and that continuing reuses it. What was spent
                           // comes from the ledger.
-                          content: queueOwned ? v2Notice : resume.resumable
-                            ? `This run hit its time limit partway through, so I've saved where it ` +
-                              `got to${foundLine}. ${checkpointSpend} ` +
-                              `Use Continue below to pick it up from here — it reuses the work ` +
-                              `already paid for instead of searching again.`
-                            : `This run hit its time limit partway through${foundLine}. ` +
-                              `I can't pick this one up where it left off: ${cannotResume}. ` +
-                              `${checkpointSpend}`,
+                          content: noticeContent,
                           agent_slug: "pilot",
                           metadata: {
                             plan_id: plan_id ?? null,
@@ -3867,18 +3900,15 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             checkpoint_summary: found > 0
                               ? `${found} companies found, ${short} shortlisted`
                               : null,
-                            terminal_status: "continuation_required",
-                            outcome: {
-                              version: "outcome-v1", state: "PARTIALLY_SATISFIED",
-                              reason: "execution_deadline_checkpoint",
-                              gaps: [{
-                                code: "run_incomplete",
-                                detail: "the run paused at its time limit before finishing every step",
-                              }],
-                            },
+                            // NO OUTCOME AND NO TERMINAL STATUS. A save point
+                            // states neither: this carried PARTIALLY_SATISFIED /
+                            // continuation_required, a verdict the lineage had
+                            // not reached. The task row holds the status.
+                            notice_version: RUN_NOTICE_VERSION,
+                            notice_lifecycle: "continuing",
                           },
                         });
-                      } else if (priorResumable !== resume.resumable) {
+                      } else if (alreadyOpen && (priorResumable !== resume.resumable || !alreadyCurrent)) {
                         // THE VERDICT MOVED. Correct the standing notice rather
                         // than leaving a stale one or adding a second.
                         await supabase.from("messages").update({
@@ -3887,17 +3917,17 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                           // rewritten is exactly when the numbers have moved, so
                           // this is the last place that should be quoting a
                           // constant about money.
-                          content: queueOwned ? v2Notice : resume.resumable
-                            ? `This run hit its time limit partway through, so I've saved ` +
-                              `where it got to${foundLine}. ${checkpointSpend} ` +
-                              `Use Continue below to pick it up from here — it ` +
-                              `reuses the work already paid for instead of searching again.`
-                            : `This run hit its time limit partway through${foundLine}. ` +
-                              `I can't pick this one up where it left off: ${cannotResume}. ` +
-                              `${checkpointSpend}`,
+                          content: noticeContent,
                           metadata: {
-                            ...((already as { metadata?: Record<string, unknown> })
-                              .metadata ?? {}),
+                            // The old stamps go: a pre-change notice carried a
+                            // PARTIALLY_SATISFIED outcome the lineage never had.
+                            ...(({ outcome: _o, terminal_status: _t, ...rest }) => rest)(
+                              ((already as { metadata?: Record<string, unknown> }).metadata ?? {})),
+                            notice_version: RUN_NOTICE_VERSION,
+                            notice_lifecycle: "continuing",
+                            checkpoint_summary: found > 0
+                              ? `${found} companies found, ${short} shortlisted`
+                              : null,
                             resumable: queueOwned ? false : resume.resumable,
                             resume_refusal: queueOwned ? "v2_queue_owned" : resume.refusal,
                             continuation_owner: queueOwned ? "v2_queue" : null,
@@ -7508,6 +7538,12 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           deliverable: v2Outcome?.deliverable ?? "contact",
           rawJobs: cf.counts.rawJobs,
           terminalStatus: effectiveTerminal,
+          // THE LINEAGE'S STATE, NOT THIS SLICE'S. `continuation_required` means
+          // another slice follows — the queue's, a dispatched one, or the user's
+          // Continue — so the message stays open and the next slice corrects it.
+          lineageContinuing: effectiveTerminal === "continuation_required",
+          queueOwned: queueOwnsContinuation,
+          ending: runEndingOf({ terminalStatus: effectiveTerminal, taskStatus: statuses.taskStatus }),
           taskId: task.id,
           // THE ROW AS COMMITTED, and the LINEAGE's ledger. Read here so the
           // panel's sentences are derived from what is stored rather than from

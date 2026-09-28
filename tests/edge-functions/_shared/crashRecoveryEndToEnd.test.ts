@@ -346,7 +346,12 @@ Deno.test("11. run-agent refuses to persist an incoherent checkpoint", async () 
   );
   const i = SRC.indexOf("onCheckpoint: async (snap) => {");
   assert(i > 0, "the checkpoint writer must be wired");
-  const block = SRC.slice(i, i + 3600);
+  // ANCHORED ON THE WRITE, NOT ON A BYTE DISTANCE: the block runs to the row
+  // status the checkpoint write ends with. A fixed 3600-character window broke
+  // on the first line added to the write (`continuation_owner`, 2026-09-28).
+  const end = SRC.indexOf('status: projectStatus("continuation_required").rowStatus', i);
+  assert(end > i, "the checkpoint write must set the row status");
+  const block = SRC.slice(i, end);
   assert(block.includes("if (!snap.coherent)"), "refuse rather than write a lie");
   assert(block.includes("[CHECKPOINT_RESULT_KEY]: buildCheckpoint({"),
     "the working set must be persisted, not just the state");

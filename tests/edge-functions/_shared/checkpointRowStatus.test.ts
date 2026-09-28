@@ -21,6 +21,7 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { projectStatus } from "../../../supabase/functions/_shared/taskStatusContract.ts";
 import { recoverPendingRuns } from "../../../supabase/functions/_shared/pendingRunRecovery.ts";
+import { continuingCheckpointContent } from "../../../supabase/functions/_shared/runNotices.ts";
 
 const SRC = await Deno.readTextFile(
   new URL("../../../supabase/functions/run-agent/index.ts", import.meta.url));
@@ -57,8 +58,18 @@ Deno.test("4. the checkpoint says so in the conversation", () => {
   // Same widening as 4b, for the same reason: the ledger read sits between the
   // guard and the insert now.
   const notice = SRC.slice(Math.max(0, i - 6000), i);
-  assert(notice.includes("hit its time limit"),
-    "it must say the run paused, not that it failed");
+  // ── A SAVE POINT, NOT A TIME LIMIT (2026-09-28) ─────────────────────────
+  //
+  // This required "hit its time limit". The notice is written at EVERY stage
+  // boundary, so it said so 34 seconds into canary 11 while the slice carried
+  // on — and the sentence outlived the lineage. The intent stands (the user is
+  // told the work is saved); the wording is now true whatever happens next.
+  assert(notice.includes("continuingCheckpointContent({"),
+    "the wording comes from the notice builder the run's end also resolves");
+  const said = continuingCheckpointContent({ queueOwned: false, resumable: true, cannotResume: "",
+    summary: "30 companies found, 10 shortlisted", spendClause: "2 credits across 3 provider calls." });
+  assert(said.startsWith("Progress saved — 30 companies found, 10 shortlisted."), said);
+  assert(!/time limit|failed/.test(said), "a save point states neither a timeout nor a failure");
   // ── EXPLICIT ABOUT COST — FROM THE LEDGER, NOT FROM A CONSTANT ─────────
   //
   // This used to require the literal "Nothing is lost and nothing extra was
@@ -98,7 +109,11 @@ Deno.test("4b. and it only PROMISES a resume the gate will honour", () => {
     "the wording must be derived from the same verdict `continue-workflow` uses");
   assert(notice.includes("resume.resumable"),
     "and branch on it rather than promising unconditionally");
-  assert(notice.includes("I can't pick this one up where it left off"),
+  assert(notice.includes("queueOwned, resumable: resume.resumable, cannotResume,"),
+    "the builder is handed the gate's verdict and its reason");
+  assert(continuingCheckpointContent({ queueOwned: false, resumable: false,
+    cannotResume: "the search itself had not finished", summary: null, spendClause: "" })
+    .includes("it can't be picked up where it left off: the search itself had not finished"),
     "an unresumable checkpoint must say so plainly");
   assert(SRC.includes('assessCheckpointResume,\n} from "../_shared/workflowContinuation.ts"'),
     "imported from the gate's own module, not reimplemented");
@@ -158,24 +173,28 @@ Deno.test("6. the checkpoint carries the ids a resume needs, and no typing instr
   // would make the history of the fix look like the fix being absent.
   // A Lead V2 queue-owned checkpoint gets its own notice first (the worker
   // continues it — no button); every other checkpoint branches on the verdict.
-  const from = SRC.indexOf("content: queueOwned ? v2Notice : resume.resumable", Math.max(0, i - 4200));
-  assert(from > 0, "the notice's wording must depend on whether a resume is possible");
-  const v2 = SRC.slice(SRC.indexOf("const v2Notice ="), SRC.indexOf("if (!already)", SRC.indexOf("const v2Notice =")));
-  assertEquals(v2.includes("Use Continue"), false,
+  // The wording now lives in `continuingCheckpointContent`; the call site
+  // hands it the gate's verdict and the ledger's figure.
+  assert(notice.includes("content: noticeContent,"),
+    "the notice's wording must depend on whether a resume is possible");
+  const call = SRC.slice(SRC.indexOf("const noticeContent = continuingCheckpointContent({"),
+    SRC.indexOf("const alreadyMsg", SRC.indexOf("const noticeContent")));
+  assert(call.includes("resumable: resume.resumable"), "branched on the verdict, not promised");
+  const v2 = continuingCheckpointContent({ queueOwned: true, resumable: true, cannotResume: "", summary: null, spendClause: "" });
+  assertEquals(v2.includes("Continue"), false,
     "a mission the V2 queue continues must not invite a Continue click");
-  const sentence = SRC.slice(from, SRC.indexOf("agent_slug:", from));
+  const sentence = continuingCheckpointContent({ queueOwned: false, resumable: true, cannotResume: "", summary: null, spendClause: "" });
   assertEquals(/say "continue"/.test(sentence), false,
     "the notice must not instruct the user to type a word nothing interprets");
-  assert(sentence.includes("Use Continue below"),
+  assert(sentence.includes("Continue below"),
     "it must point at an affordance that exists");
   assert(sentence.includes("instead of searching again"),
     "and say what continuing avoids paying for");
   // The comment at the top of this test says it exactly: "Two credits,
-  // immediately after a message saying nothing extra would be charged." The
-  // unresumable branch must still be honest about cost — which is why it now
-  // renders the ledger's figure rather than asserting a comforting constant.
-  assert(sentence.includes("checkpointSpend"),
-    "the unresumable branch must state what was actually charged");
+  // immediately after a message saying nothing extra would be charged." Every
+  // branch states the ledger's figure rather than a comforting constant.
+  assert(call.includes("spendClause: checkpointSpend"),
+    "the notice must state what was actually charged");
   assert(notice.includes("task_id: task.id") && notice.includes("plan_id"),
     "and carry the two ids `continue-workflow` takes");
   assert(notice.includes("checkpoint_summary"),
