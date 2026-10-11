@@ -3,7 +3,7 @@
 import { assert, assertEquals, assertFalse } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { parseLeadMissionDeterministic } from "../../../supabase/functions/_shared/leadMission.ts";
 import {
-  excludeV2OwnedTasks, forceCanaryLeadCount, loadV2OwnedTaskIds, mapRefusal, mapTaskOutcome,
+  excludeV2OwnedTasks, prepareV2LeadCount, loadV2OwnedTaskIds, mapRefusal, mapTaskOutcome,
   missionFromKickoff, queueStatusFor, terminalStatusOf, validateV2KickoffBody, withResume,
   type QueueLookupDb,
 } from "../../../supabase/functions/_shared/leadMissionV2Request.ts";
@@ -36,6 +36,8 @@ Deno.test("anything that is not a mission step is refused with a stated code", (
     [{ ...kickoff(), agent_slug: "hawk" }, "agent_must_be_scout"],
     [{ ...kickoff(), instruction: "  " }, "missing_instruction"],
     [{ ...kickoff(), tool_input: { requested_lead_count: 5 } }, "missing_lead_mission"],
+    [{ ...kickoff(), tool_input: { requested_lead_count: 150,
+      lead_mission: { ...mission, requested_count: 150 } } }, "requested_count_exceeds_product_limit"],
     [{ ...kickoff(), resume_task_id: "t-9" }, "resume_fields_not_allowed"],
   ];
   for (const [body, code] of cases) {
@@ -43,17 +45,28 @@ Deno.test("anything that is not a mission step is refused with a stated code", (
   }
 });
 
-Deno.test("the canary quota is forced through the quota fields; the mission is untouched; input not mutated", () => {
-  const input = kickoff();
-  const out = forceCanaryLeadCount(input);
-  assertEquals(out.requested_lead_count, 1);
-  assertEquals((out.tool_input as Record<string, unknown>).requested_lead_count, 1);
-  // The mission (and therefore its hash and the approved plan) is left exactly as approved.
-  assertEquals((out.tool_input as Record<string, unknown>).lead_mission, mission);
-  assertEquals(mission.requested_count, 5);
-  // Not mutated.
-  assertEquals(input.requested_lead_count, 5);
-  assertEquals(input.tool_input.requested_lead_count, 5);
+Deno.test("V2 queue preserves the approved mission count for 1, 3, and 10", () => {
+  for (const count of [1, 3, 10]) {
+    const approved = { ...mission, requested_count: count };
+    const input = { ...kickoff(), requested_lead_count: count,
+      tool_input: { requested_lead_count: count, lead_mission: approved } };
+    const out = prepareV2LeadCount(input);
+    assertEquals(out.requested_lead_count, count);
+    assertEquals((out.tool_input as Record<string, unknown>).requested_lead_count, count);
+    assertEquals((out.tool_input as Record<string, unknown>).lead_mission, approved);
+    assertEquals(input.requested_lead_count, count);
+  }
+});
+
+Deno.test("worker resume repairs a queued canary count using the approved mission", () => {
+  const approved = { ...mission, requested_count: 3 };
+  const oldQueue = { ...kickoff(), requested_lead_count: 1,
+    lead_quota_provenance: { source: "v2_canary", execution_quota: 1 },
+    tool_input: { requested_lead_count: 1, lead_mission: approved } };
+  const resumed = prepareV2LeadCount(oldQueue);
+  assertEquals(resumed.requested_lead_count, 3);
+  assertEquals((resumed.tool_input as Record<string, unknown>).requested_lead_count, 3);
+  assertEquals((resumed.lead_quota_provenance as Record<string, unknown>).source, "mission");
 });
 
 Deno.test("a resume adds the same field the sweeper sends; a first run adds nothing", () => {

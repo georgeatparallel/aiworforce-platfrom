@@ -16,7 +16,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveLeadExecutionEngine } from "../_shared/leadExecutionEngine.ts";
 import { isServiceRoleBearer } from "../_shared/serviceRoleAuth.ts";
 import {
-  forceCanaryLeadCount, validateV2KickoffBody, type KickoffBody,
+  prepareV2LeadCount, validateV2KickoffBody, type KickoffBody,
 } from "../_shared/leadMissionV2Request.ts";
 
 const cors = {
@@ -55,7 +55,7 @@ async function handleEnqueueLeadMission(req: Request): Promise<Response> {
   }
 
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-  const forced = forceCanaryLeadCount(request);
+  const forced = prepareV2LeadCount(request);
   const { data, error } = await admin.from("lead_mission_queue")
     .insert({ workspace_id: workspaceId, request: forced, status: "queued" })
     .select("id")

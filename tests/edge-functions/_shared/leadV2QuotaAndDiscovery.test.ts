@@ -12,7 +12,7 @@
 
 import { assert, assertEquals, assertFalse } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  forceCanaryLeadCount, leadQuotaProvenance,
+  prepareV2LeadCount, leadQuotaProvenance,
 } from "../../../supabase/functions/_shared/leadMissionV2Request.ts";
 import {
   clampMemo23MaxSize, memo23MaxSizeCeiling, runCapabilityPlan, type CapabilityEngineDeps,
@@ -20,6 +20,7 @@ import {
 import { assessRequestFeasibility } from "../../../supabase/functions/_shared/requestFeasibility.ts";
 import { buildCapabilityGraph } from "../../../supabase/functions/_shared/leadCapabilityGraph.ts";
 import { parseLeadMissionDeterministic } from "../../../supabase/functions/_shared/leadMission.ts";
+import { buildRunOutcome, readFactsFromResult } from "../../../supabase/functions/_shared/runOutcome.ts";
 import { stubDiscoverySelector } from "./discoverySelectorFixture.ts";
 import type { CompiledActorCall } from "../../../supabase/functions/_shared/hiringActorInputs.ts";
 
@@ -30,14 +31,27 @@ const read = (p: string) => Deno.readTextFileSync(new URL(p, import.meta.url));
 const MISSION = Object.freeze({ requested_count: 3, original_user_query: "Find 3 …" });
 const BODY = { lead_mission: MISSION, tool_input: { requested_lead_count: 3, lead_mission: MISSION } };
 
-Deno.test("the canary executes 1 and records that 3 were asked — the mission is untouched", () => {
+Deno.test("V2 executes the three leads the approved mission requested", () => {
   const snapshot = JSON.stringify(BODY);
-  const out = forceCanaryLeadCount(BODY);
-  assertEquals(out.requested_lead_count, 1);
+  const out = prepareV2LeadCount(BODY);
+  assertEquals(out.requested_lead_count, 3);
   assertEquals(JSON.stringify(BODY), snapshot, "the input is not mutated");
   assert(out.lead_mission === MISSION, "the mission object — and so its hash — is the same object");
-  assertEquals(leadQuotaProvenance(out, MISSION.requested_count, 1),
-    { mission_requested: 3, execution_quota: 1, source: "v2_canary" });
+  assertEquals(leadQuotaProvenance(out, MISSION.requested_count, 3),
+    { mission_requested: 3, execution_quota: 3, source: "mission" });
+});
+
+Deno.test("a three-lead mission cannot be SATISFIED after only one or two leads", () => {
+  const queued = prepareV2LeadCount(BODY);
+  const requested = queued.requested_lead_count as number;
+  for (const delivered of [1, 2, 3]) {
+    const facts = readFactsFromResult(null, requested);
+    const outcome = buildRunOutcome({ ...facts,
+      persistence: { leads_written: delivered, signals_written: 0 },
+      continuation: { required: false, resumable: true, reason: null },
+    });
+    assertEquals(outcome.state, delivered === 3 ? "SATISFIED" : "PARTIALLY_SATISFIED");
+  }
 });
 
 Deno.test("an ordinary run's quota says where it came from", () => {

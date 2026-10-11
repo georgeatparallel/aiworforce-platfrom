@@ -106,8 +106,9 @@ function executionProposal() {
 
 interface Sent { actor: string; input: Record<string, unknown>; spec?: Record<string, unknown> }
 
-function deps(sent: Sent[], opts: { refuseTeam?: boolean; chainOmitsHiring?: boolean } = {}) {
-  const byUrl = new Map(JOB_ROWS.map((r) => [(r.company as { linkedinUrl: string }).linkedinUrl, r.company as Record<string, unknown>]));
+function deps(sent: Sent[], opts: { refuseTeam?: boolean; chainOmitsHiring?: boolean; jobRows?: Record<string, unknown>[] } = {}) {
+  const rows = opts.jobRows ?? JOB_ROWS;
+  const byUrl = new Map(rows.map((r) => [(r.company as { linkedinUrl: string }).linkedinUrl, r.company as Record<string, unknown>]));
   return {
     planDiscovery: emptyDiscoverySelector() as never,
     planExecution: () => Promise.resolve(((p) => opts.chainOmitsHiring
@@ -117,7 +118,7 @@ function deps(sent: Sent[], opts: { refuseTeam?: boolean; chainOmitsHiring?: boo
       sent.push({ actor: call.actorKey, input: call.input as Record<string, unknown>, spec: call.providerCallSpec });
       call.onProviderRun?.({ run_id: `run-${sent.length}`, dataset_id: null });
       const input = call.input as Record<string, unknown>;
-      if (call.actorKey === "apify_linkedin_job_search") return Promise.resolve(input.company ? [] : JOB_ROWS);
+      if (call.actorKey === "apify_linkedin_job_search") return Promise.resolve(input.company ? [] : rows);
       if (call.actorKey === "apify_linkedin_company_details") {
         return Promise.resolve(((input.companies as string[]) ?? []).map((u) => {
           const c = byUrl.get(u)!;
@@ -142,7 +143,7 @@ function deps(sent: Sent[], opts: { refuseTeam?: boolean; chainOmitsHiring?: boo
   };
 }
 
-async function run(over: Record<string, unknown> = {}, depOpts: { refuseTeam?: boolean; chainOmitsHiring?: boolean } = {}) {
+async function run(over: Record<string, unknown> = {}, depOpts: { refuseTeam?: boolean; chainOmitsHiring?: boolean; jobRows?: Record<string, unknown>[] } = {}) {
   const sent: Sent[] = [];
   const result = await runCapabilityPlan(deps(sent, depOpts) as never, {
     mission: MISSION, plan: GRAPH, maxCandidates: 10,
@@ -155,6 +156,17 @@ async function run(over: Record<string, unknown> = {}, depOpts: { refuseTeam?: b
   } };
 }
 const byActor = (s: Sent[], a: string) => s.filter((x) => x.actor === a);
+
+Deno.test("wrong-employer discovery posting remains a candidate but cannot prove hiring", async () => {
+  const bad = structuredClone(FIRST_HIRE_ROW);
+  bad.descriptionText = "← All jobs\nFounding Growth Marketer\nOtherCo\nBoston, MA\nPosted 2d ago";
+  const { result } = await run({}, { jobRows: [bad] });
+  const pipewise = result.companies.find((c) => c.company.company_name === "Pipewise")!;
+  assert(pipewise, "the company remains available for separate verification");
+  assertEquals(pipewise.hiring_jobs.length, 0, "the conflicting job is not hiring evidence");
+  assert(pipewise.hiring_assessment?.verdict !== "hiring_verified");
+  assert(pipewise.mission_evaluation?.decision !== "qualified");
+});
 
 // ── the actor, verified ─────────────────────────────────────────────────────
 

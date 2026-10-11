@@ -168,7 +168,7 @@ import {
   dedupeJobs, dedupePeople, normalizeHarvestPerson,
   nonCompanyPageReason,
   normalizeLinkedInCompanyCandidate, normalizeLinkedInCompanyEnriched,
-  normalizeLinkedInJob, normalizeMemo23Company, normalizeMemo23OpenJobs,
+  normalizeLinkedInJob, jobEmployerIdentityConflict, normalizeMemo23Company, normalizeMemo23OpenJobs,
   firstHireLanguage, jobEmployerAgencyReason, jobEmployerToCompany, jobIsOpen,
   normalizeSolidcodeCompany,
   type NormalizedHiringCompany, type NormalizedHiringJob, type NormalizedHiringPerson,
@@ -5851,6 +5851,15 @@ export async function runCapabilityPlan(
                 dropped.set("no_employer_linkedin_url", (dropped.get("no_employer_linkedin_url") ?? 0) + 1);
                 continue;
               }
+              const identityConflict = jobEmployerIdentityConflict(r);
+              if (identityConflict) {
+                dropped.set(identityConflict, (dropped.get(identityConflict) ?? 0) + 1);
+                // Preserve the candidate for a later company-scoped check, but
+                // do not attach this contradictory posting as hiring proof.
+                addCompany(companies, { ...employer, hiring_status: null }, [], null,
+                  undefined, observedBy(cap, provider));
+                continue;
+              }
               const job = normalizeLinkedInJob(r);
               const jobKey = job.job_id ?? job.job_url ?? `${employer.linkedin_company_url}|${job.title}`;
               if (seenJobs.has(jobKey)) continue;
@@ -7785,6 +7794,7 @@ export async function runCapabilityPlan(
           if (k) byUrl.set(k, g.c);
         }
         for (const raw of rows) {
+          if (jobEmployerIdentityConflict(raw)) continue;
           const j = normalizeLinkedInJob(raw);
           const owner = j.company_linkedin_url ? byUrl.get(j.company_linkedin_url) : undefined;
           if (!owner) continue;

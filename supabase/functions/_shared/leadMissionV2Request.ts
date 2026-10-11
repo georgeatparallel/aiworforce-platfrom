@@ -2,19 +2,14 @@
 // the stalled-lead sweeper.
 //
 // WHAT IS QUEUED is orchestrate's own kickoff body for a mission step, verbatim —
-// the worker replays it into run-agent's handler, so the handler sees exactly the
-// request the edge path would have sent. Two changes only:
-//   • the canary's quota is forced to 1 through the QUOTA FIELDS. The mission is
-//     deliberately left untouched: run-agent resolves `body.requested_lead_count`
-//     before the mission's own count and sizes every engine input from that quota
-//     (`remainingLeads`, `maxCandidates`), while rewriting the mission would change
-//     its hash and could orphan the approved plan artifact.
-//   • a resume adds `resume_task_id`, the same field the sweeper sends.
+// the worker replays it into run-agent's handler. The approved mission count is
+// copied into both quota fields before enqueue and on resume; a resume also adds
+// `resume_task_id`, the same field the sweeper sends.
 //
 // PURE except `loadV2OwnedTaskIds`, whose database is injected.
 
 import { isLeadMissionV1 } from "./leadMission.ts";
-import { V2_CANARY_FORCED_REQUESTED_LEAD_COUNT } from "./leadExecutionEngine.ts";
+import { MAX_REQUESTED_LEAD_COUNT, resolveRequestedLeadCount } from "./leadQuotaPolicy.ts";
 
 export type KickoffBody = Record<string, unknown>;
 
@@ -38,7 +33,11 @@ export function validateV2KickoffBody(b: unknown): KickoffValidation {
   if (typeof r.step_index !== "number") return { ok: false, code: "missing_step_index" };
   if (r.agent_slug !== "scout") return { ok: false, code: "agent_must_be_scout" };
   if (typeof r.instruction !== "string" || !r.instruction.trim()) return { ok: false, code: "missing_instruction" };
-  if (!isLeadMissionV1(missionFromKickoff(r))) return { ok: false, code: "missing_lead_mission" };
+  const mission = missionFromKickoff(r);
+  if (!isLeadMissionV1(mission)) return { ok: false, code: "missing_lead_mission" };
+  if (typeof mission.requested_count === "number" && mission.requested_count > MAX_REQUESTED_LEAD_COUNT) {
+    return { ok: false, code: "requested_count_exceeds_product_limit" };
+  }
   // The worker decides when a run is a resume. A queued body that already names
   // one could make two missions resume the same task.
   if ("resume_task_id" in r || "continuation_token" in r) return { ok: false, code: "resume_fields_not_allowed" };
@@ -48,10 +47,8 @@ export function validateV2KickoffBody(b: unknown): KickoffValidation {
 /**
  * Where the number of leads a run executes came from.
  *
- * Lead V2 run 4250f181 was asked for 3 and executed 1: the canary override
- * rewrote the body's `requested_lead_count`, and every surface then showed a
- * different one of the two numbers with nothing saying which. The mission and
- * its hash are never touched; this is the record of the difference.
+ * The mission and its hash are never touched. The execution fields must reflect
+ * the approved count so a queued run cannot declare success after fewer leads.
  */
 export interface LeadQuotaProvenance {
   /** What the user asked for — the Mission's own count, when it stated one. */
@@ -63,25 +60,25 @@ export interface LeadQuotaProvenance {
 
 const BODY_PROVENANCE_KEY = "lead_quota_provenance";
 
-/** Returns a copy; never mutates the input. The mission is intentionally untouched. */
-export function forceCanaryLeadCount(
-  b: KickoffBody,
-  n: number = V2_CANARY_FORCED_REQUESTED_LEAD_COUNT,
-): KickoffBody {
+/** Returns a copy; never mutates the approved mission. */
+export function prepareV2LeadCount(b: KickoffBody): KickoffBody {
   const tool = b.tool_input && typeof b.tool_input === "object" && !Array.isArray(b.tool_input)
     ? b.tool_input as Record<string, unknown>
     : null;
-  // WHAT WAS ASKED, BEFORE THE CANARY OVERRODE IT — read, never rewritten.
-  const asked = b.requested_lead_count ?? tool?.requested_lead_count ?? null;
+  const mission = missionFromKickoff(b) as { requested_count?: number | null } | null;
+  const approved = mission?.requested_count ?? b.requested_lead_count ?? tool?.requested_lead_count ?? null;
+  const count = resolveRequestedLeadCount({ explicit: approved as number | null,
+    isLeadSourcingWorkflow: true }).requestedLeadCount;
   const out: KickoffBody = {
     ...b,
-    requested_lead_count: n,
+    requested_lead_count: count,
     [BODY_PROVENANCE_KEY]: {
-      source: "v2_canary", execution_quota: n,
-      requested_before_canary: typeof asked === "number" ? asked : null,
+      source: mission?.requested_count != null ? "mission"
+        : approved != null ? "explicit" : "default",
+      execution_quota: count,
     },
   };
-  if (tool) out.tool_input = { ...tool, requested_lead_count: n };
+  if (tool) out.tool_input = { ...tool, requested_lead_count: count };
   return out;
 }
 

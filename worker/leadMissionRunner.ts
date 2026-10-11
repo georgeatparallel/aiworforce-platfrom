@@ -22,7 +22,7 @@ import type {
 import type { ExecutionDeadline } from "../supabase/functions/_shared/leadExecutionFinalizer.ts";
 import { revocableDeadline } from "../supabase/functions/_shared/revocableDeadline.ts";
 import {
-  forceCanaryLeadCount, mapRefusal, mapTaskOutcome, withResume, type TaskOutcomeRow,
+  prepareV2LeadCount, mapRefusal, mapTaskOutcome, withResume, type TaskOutcomeRow,
 } from "../supabase/functions/_shared/leadMissionV2Request.ts";
 
 export interface LeadMissionRunner {
@@ -47,7 +47,7 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
   return {
     ready: true,
     async run(mission, ctl) {
-      const body = withResume(forceCanaryLeadCount(mission.request), mission.taskId);
+      const body = withResume(prepareV2LeadCount(mission.request), mission.taskId);
       const deadline = revocableDeadline(d.createDeadline(ctl.executionBudgetMs));
       const onAbort = () => deadline.revoke("worker_lost_ownership_or_cancelled");
       if (ctl.signal.aborted) onAbort();

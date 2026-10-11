@@ -3,7 +3,7 @@
 // SAFE BY DEFAULT. The allowlist is empty unless LEAD_V2_WORKER_WORKSPACES names
 // workspaces explicitly. Empty ⇒ every mission resolves to v1_edge ⇒ V2 is
 // disabled. There is no global on switch; a workspace opts in by id, one at a
-// time, and the very first production canary also forces requestedLeadCount = 1.
+// time. Enqueue preserves the approved mission count.
 //
 // No Deno/edge coupling: env is read through an injected reader so this resolves
 // identically in an edge function, the worker, and a unit test.
@@ -11,9 +11,6 @@
 export type LeadExecutionEngine = "v1_edge" | "v2_worker";
 
 export const LEAD_V2_WORKSPACES_ENV = "LEAD_V2_WORKER_WORKSPACES";
-
-/** The first production V2 canary runs one lead regardless of mission config. */
-export const V2_CANARY_FORCED_REQUESTED_LEAD_COUNT = 1;
 
 /**
  * LONG-RUNNING IS NOT UNLIMITED.

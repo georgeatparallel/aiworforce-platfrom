@@ -521,6 +521,47 @@ export function normalizeLinkedInJob(r: Record<string, unknown>): NormalizedHiri
   };
 }
 
+/**
+ * A structured employer is not sufficient when the same provider row carries
+ * an explicit, contradictory employer. Only high-signal identity fields count:
+ * a second LinkedIn company URL, an Employer/Company label, or the employer
+ * line in a syndicated job-card header. General mentions in prose are ignored.
+ */
+export function jobEmployerIdentityConflict(r: Record<string, unknown>):
+  "structured_employer_conflict" | "posting_employer_conflict" | null {
+  const company = (r.company ?? {}) as Record<string, unknown>;
+  const structuredUrl = normalizeCompanyLinkedInUrl(company.linkedinUrl);
+  const alternateUrl = normalizeCompanyLinkedInUrl(r.companyLinkedinUrl);
+  if (structuredUrl && alternateUrl && structuredUrl !== alternateUrl) {
+    return "structured_employer_conflict";
+  }
+
+  const structuredName = s(company.name);
+  if (!structuredName) return null;
+  const body = s(r.descriptionText);
+  if (!body) return null;
+  const lines = body.slice(0, 1200).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  let explicitEmployer: string | null = null;
+  for (const line of lines.slice(0, 12)) {
+    const labeled = line.match(/^(?:employer|company)\s*:\s*(.{2,100})$/i);
+    if (labeled) { explicitEmployer = labeled[1]; break; }
+  }
+  const looksLikeLocation = (line: string) => /,\s*[A-Z]{2}(?:\b|(?=[A-Z]))/i.test(line);
+  if (!explicitEmployer && /^←\s*All jobs$/i.test(lines[0] ?? "") &&
+      lines[1] === s(r.title) && lines.length >= 4 &&
+      !looksLikeLocation(lines[2]) &&
+      (looksLikeLocation(lines[3]) || /\bPosted\s+\d/i.test(lines[3]))) {
+    explicitEmployer = lines[2];
+  }
+  if (!explicitEmployer) return null;
+  const canonical = (name: string) => name.toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(?:inc|incorporated|llc|ltd|limited|corp|corporation|co|company)\b/g, "")
+    .replace(/\s+/g, " ").trim();
+  return canonical(explicitEmployer) === canonical(structuredName)
+    ? null : "posting_employer_conflict";
+}
+
 // ── JOB-FIRST DISCOVERY (LEAD V2 P3) ─────────────────────────────────────────
 //
 // A discovery job row carries the EMPLOYER'S LinkedIn company record, not just

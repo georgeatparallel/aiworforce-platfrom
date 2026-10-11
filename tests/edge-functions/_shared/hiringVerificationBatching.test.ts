@@ -345,7 +345,7 @@ Deno.test("the engine DROPS an unattributable row rather than guessing an owner"
   const ENGINE = Deno.readTextFileSync(
     new URL("../../../supabase/functions/_shared/leadCapabilityEngine.ts", import.meta.url),
   );
-  const i = ENGINE.indexOf("for (const raw of rows) {\n          const j = normalizeLinkedInJob(raw);");
+  const i = ENGINE.indexOf("for (const raw of rows) {\n          if (jobEmployerIdentityConflict(raw)) continue;\n          const j = normalizeLinkedInJob(raw);");
   assert(i > 0, "the batch partition must exist");
   const block = ENGINE.slice(i, i + 500);
   assert(

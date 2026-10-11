@@ -33,7 +33,7 @@ import type { EvidenceItem } from "./candidateObservation.ts";
 import { EVIDENCE_VALIDITY_DAYS } from "./candidateObservation.ts";
 import { authorityForEvidence, authorityRecord } from "./evidenceAuthority.ts";
 import { compileHarvestJobSearchInput } from "./hiringActorInputs.ts";
-import { normalizeLinkedInJob, type NormalizedHiringJob } from "./hiringActorNormalizers.ts";
+import { jobEmployerIdentityConflict, normalizeLinkedInJob, type NormalizedHiringJob } from "./hiringActorNormalizers.ts";
 import { normalizeCompanyLinkedInUrl } from "./structuredCompanyEnrichment.ts";
 import { estimateCallUsd } from "./budgetPolicy.ts";
 import { hiringActorCard } from "./hiringActorCatalog.ts";
@@ -193,7 +193,7 @@ export function hiringClaimVerifier(io: HiringVerifierIO): ClaimVerifier & { est
       }
       const now = io.now?.() ?? new Date();
       const at = deps.now();
-      const jobs = out.rows.map((r) => normalizeLinkedInJob(r));
+      const jobs = out.rows.filter((r) => !jobEmployerIdentityConflict(r)).map((r) => normalizeLinkedInJob(r));
       for (const { t, url } of asked) {
         const mine = jobs.filter((j) => normalizeCompanyLinkedInUrl(j.company_linkedin_url) === url);
         const matching = mine.filter((j) => !!j.title && io.matchesRole(j.title) && withinWindow(j, io.window_days, now));

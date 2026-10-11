@@ -58,6 +58,8 @@ Deno.test("COMPLETION AFTER CONTINUATION: the terminal row wins — COMPLETE", (
   const done = { task_status: "completed", terminal_status: "completed", continuation_owner: "v2_queue",
     company_first: { status: "completed", continuation_owner: "v2_queue", quota: { requested_leads: 1, eligible_leads: 1 } } };
   assertEquals(state("complete", fetchedTask("complete", done)), "complete");
+  assertEquals(state("executing", fetchedTask("complete", done)), "complete",
+    "a lagging plan row cannot keep a terminal task visually Running");
 });
 
 Deno.test("A LEGACY PAUSE (no queue) is still PARTIAL — the user does owe it a Continue", () => {

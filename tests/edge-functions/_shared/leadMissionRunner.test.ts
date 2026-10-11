@@ -37,14 +37,14 @@ function deps(over: Partial<LeadMissionRunnerDeps> = {}, cap: Captured = {}): Le
 }
 const ctl = (budget = 300_000, signal = new AbortController().signal) => ({ executionBudgetMs: budget, signal });
 
-Deno.test("replays the kickoff with the service bearer, the forced quota, and no resume field", async () => {
+Deno.test("replays the kickoff with the service bearer, the preserved quota, and no resume field", async () => {
   const cap: Captured = {};
   const out = await createLeadMissionRunner(deps({}, cap)).run(fresh, ctl());
   assertEquals(cap.req!.method, "POST");
   assertEquals(cap.req!.url, "https://fake.supabase.test/functions/v1/run-agent");
   assertEquals(cap.req!.headers.get("Authorization"), "Bearer service-key");
-  assertEquals(cap.body!.requested_lead_count, 1);
-  assertEquals((cap.body!.tool_input as Record<string, unknown>).requested_lead_count, 1);
+  assertEquals(cap.body!.requested_lead_count, 5);
+  assertEquals((cap.body!.tool_input as Record<string, unknown>).requested_lead_count, 5);
   assertFalse("resume_task_id" in cap.body!);
   assertEquals(out, { status: "quota_met", terminal: true, taskId: "task-1" });
 });
