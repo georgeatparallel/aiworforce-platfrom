@@ -239,6 +239,30 @@ Deno.test("a continuation's discovery reopen buys nothing and records why", asyn
   assert(memo.some((a) => a.outcome === "skipped_repeat_query" || a.outcome === "skipped_idempotent"), JSON.stringify(memo));
 });
 
+// Production Query B (d72bc1ce), slices 7–8: the reopened discovery could read
+// no new page, replayed its old question, and its re-plan was refused with
+// `adaptive_reserve_exhausted` — yet it recorded `exhausted: false`, so the
+// continuation scheduled two barren slices before the guard ended the mission.
+const WIDEN = stubDiscoverySelector([{ actor_key: "apify_linkedin_company_search", role: "primary",
+  input: { searchQuery: "API infrastructure", locations: ["United States"] }, rationale: "widen the pool" } as never]);
+const REPLENISH = { reason: "replenishment_required", sources_attempted: [], pages_taken: {} };
+
+Deno.test("a replenishment slice with nothing new to read and the reserve spent records discovery exhausted", async () => {
+  const first = await run("enforce");
+  const state = structuredClone(first.result.state) as { spend_ledger: { ceilings: { adaptive_reserve_usd: number } } };
+  state.spend_ledger.ceilings.adaptive_reserve_usd = 0;
+  const second = await run("enforce", { state, discoveryReplenishment: REPLENISH }, { discovery: WIDEN });
+  assertEquals(second.sent.length, 0, "nothing new was bought");
+  const d = second.result.state.discovery_source_state!;
+  assertEquals([d.exhausted, d.stop_reason], [true, "discovery_spent"]);
+});
+
+Deno.test("with reserve left, a refused-free re-plan is not called exhausted", async () => {
+  const first = await run("enforce");
+  const second = await run("enforce", { state: first.result.state, discoveryReplenishment: REPLENISH }, { discovery: WIDEN });
+  assertFalse(second.result.state.discovery_source_state!.stop_reason === "discovery_spent");
+});
+
 // ── criteria alignment in qualification ─────────────────────────────────────
 
 Deno.test("qualification rejects only on hard criteria: a Brain-filled geography ranks, never rejects", () => {

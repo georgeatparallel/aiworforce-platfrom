@@ -736,7 +736,9 @@ export interface CapabilityExecutionState {
       /** The funding screen admitted all it may: nothing discovered later could be investigated. */
       | "screen_admissions_spent"
       /** The funding screen has read its pool: its one priced Atomus read is spent. */
-      | "screen_complete";
+      | "screen_complete"
+      /** A replenishment could read no new page and the re-plan's reserve is spent (`discoveryCannotWiden`). */
+      | "discovery_spent";
   };
   /**
    * Stage removals the chain PROPOSED and containment refused.
@@ -2464,6 +2466,28 @@ export interface CapabilityRunResult {
 }
 
 // ------------------------------------------------------------------ engine ----
+
+/**
+ * CAN NOTHING LEFT WIDEN THIS POOL?
+ *
+ * True only for a replenishment slice that could propose no new page (every
+ * pageable actor at its limit, so its first pass can only replay a question
+ * already read) and whose re-plan was refused because the adaptive reserve is
+ * spent — a refusal no later slice can lift. Query B (d72bc1ce) recorded this
+ * as a plain `amendment_refused`, `run-agent` read "routes remain", and two
+ * barren slices ran before the barren-slice guard ended the mission.
+ *
+ * Every other refusal stays "routes remain": the continuation holding its plan
+ * while candidates are unspent clears as they are worked, and refusals this
+ * rule does not reason about keep the old, conservative reading.
+ */
+export function discoveryCannotWiden(i: {
+  replenishing: boolean;
+  pages_proposed: number;
+  amendment_refusal: string | null;
+}): boolean {
+  return i.replenishing && i.pages_proposed === 0 && i.amendment_refusal === "adaptive_reserve_exhausted";
+}
 
 /**
  * Execute a mission's capability plan.
@@ -4647,6 +4671,8 @@ export async function runCapabilityPlan(
     }, { plan_version: plan.version });
     log("retrieval_plan_created", { version: plan.version, routes: plan.routes.length, stages: plan.stages.length });
   }
+  /** Why the last amendment was refused, or null — read by discovery's stop decision. */
+  let lastAmendmentRefusal: string | null = null;
   /**
    * P2 — the only way a plan changes. Returns true when the change may apply
    * (accepted, or identical in content); false when it was refused.
@@ -4665,6 +4691,7 @@ export async function runCapabilityPlan(
       keepRoutes?: boolean;
     },
   ): boolean => {
+    lastAmendmentRefusal = null;
     if (!specOn || !criteriaPolicy) return true;
     const current = currentPlan();
     if (!current) return true;
@@ -4680,6 +4707,7 @@ export async function runCapabilityPlan(
         reason: held.reason, trigger, available_admitted: ctx.availableAdmitted, detail: held.detail,
       }, { plan_version: current.version });
       log("retrieval_plan_amendment_refused", { reason: "continuation_holds_plan", trigger, available: ctx.availableAdmitted });
+      lastAmendmentRefusal = "continuation_holds_plan";
       return false;
     }
     if (ctx.keepRoutes && amendedPlan) {
@@ -4715,6 +4743,7 @@ export async function runCapabilityPlan(
         changes: decision.changes.slice(0, 20),
       }, { plan_version: current.version });
       log("retrieval_plan_amendment_refused", { reason: decision.reason, trigger, detail: decision.detail });
+      lastAmendmentRefusal = decision.reason;
       return false;
     }
     state.retrieval_plans!.push(decision.plan);
@@ -6267,6 +6296,16 @@ export async function runCapabilityPlan(
         if (candidateBudgetSpent() && discoveryStop !== "raw_row_ceiling" && discoveryStop !== "no_further_actor_proposed") {
           discoveryStop = "candidate_budget_spent";
         }
+        // A REPLAY IS NOT A ROUTE. Query B (d72bc1ce) slices 7–8: no page left,
+        // the old question replayed, the re-plan refused for want of reserve —
+        // recorded as "amendment_refused", read as "routes remain", and two
+        // barren slices followed. That refusal does not clear on its own.
+        if (discoveryStop === "amendment_refused" && discoveryCannotWiden({
+          replenishing: !!opts.discoveryReplenishment, pages_proposed: proposedPages.size,
+          amendment_refusal: lastAmendmentRefusal,
+        })) {
+          discoveryStop = "discovery_spent";
+        }
         state.discovery_source_state = {
           sources_attempted: [...actorsRun],
           pages_taken: { ...pagesTaken },
@@ -6278,7 +6317,8 @@ export async function runCapabilityPlan(
           raw_rows: companies.length,
           pool_target: admittedTarget,
           exhausted: discoveryStop === "no_further_actor_proposed" ||
-            discoveryStop === "raw_row_ceiling" || discoveryStop === "candidate_budget_spent",
+            discoveryStop === "raw_row_ceiling" || discoveryStop === "candidate_budget_spent" ||
+            discoveryStop === "discovery_spent",
           stop_reason: discoveryStop,
         };
         log("discovery_source_state", state.discovery_source_state);
