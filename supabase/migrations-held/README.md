@@ -77,6 +77,26 @@ count, no refund); a new worker against the old function falls back to the
 Replayed against real Postgres (PGlite) in
 `tests/infra/leadMissionV2ContinuationsNotRetries.test.ts`.
 
+## `20261011120000_lead_mission_v2_productive_continuation_no_backoff.sql`
+
+Lead V2: a PRODUCTIVE continuation is released with no backoff. Redefines
+`release_lead_mission` (same signature) so `not_before` is cleared — instead
+of `now() + 2 minutes` — only when the lineage's slice counter moved (the
+claim-refund test of 20261003120000) AND the worker states the run's own
+continuation decision was immediate (`p_outcome->>'dispatch' = 'immediate'`).
+Retries, no-op runs, runs waiting on a provider (`awaiting_provider_run`) and
+unknown decisions keep the 2-minute hold. Query B rerun 255c333f spent 1,054 s
+(36% of 48.2 min) in that hold between clean slices.
+
+**HELD — NOT APPLIED, and not approved for production.** Depends on
+`20260910140000` and `20261003120000`. Either deploy order is safe: an old
+worker states no `dispatch` (hold kept); a new worker against a database
+without this migration has its `dispatch` key stored in `last_outcome` and
+ignored (hold kept). Rollback, verbatim to 20261003120000's function:
+`rollback/20261011120000_lead_mission_v2_productive_continuation_no_backoff.down.sql`.
+Replayed against real Postgres (PGlite) in
+`tests/infra/leadMissionV2ProductiveContinuationNoBackoff.test.ts`.
+
 ## Tests
 
 `tests/infra/` still reads these files — the baseline's structure, the V2

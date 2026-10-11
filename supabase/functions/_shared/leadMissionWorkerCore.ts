@@ -56,6 +56,12 @@ export interface MissionOutcome {
    * which refunds the claim only when it moved (see leadMissionTerminal.ts).
    */
   lineageSlices?: number | null;
+  /**
+   * `result.auto_continuation.decision` as the run left the task. Read only to
+   * tell a slice with work ready now from one that is waiting
+   * (`continuationDispatch`, leadMissionTerminal.ts).
+   */
+  continuationDecision?: string | null;
 }
 
 export interface ReleaseOutcome extends MissionOutcome {

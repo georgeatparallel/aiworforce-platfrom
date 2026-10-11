@@ -247,6 +247,17 @@ export interface AutoContinuationDecision {
   user_message: string | null;
 }
 
+/**
+ * The continuation decisions whose next slice has work ready NOW — the reasons
+ * `decideAutoContinuation` returns with `dispatch_mode: "immediate"`. The V2
+ * queue reads this (through the worker) to release a productive slice with no
+ * backoff; anything else, including a decision added later and not listed
+ * here, keeps the queue's backoff. A test pins it to the function's own output.
+ */
+export const IMMEDIATE_CONTINUATION_REASONS: ReadonlySet<string> = new Set([
+  "quota_unmet_frontier_remains", "replenishment_required", "verification_required",
+]);
+
 const stop = (
   reason: StopReason, detail: string,
 ): AutoContinuationDecision => ({ continue: false, reason, detail, user_message: null });

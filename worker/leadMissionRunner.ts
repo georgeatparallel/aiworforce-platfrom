@@ -97,12 +97,19 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
       // The lineage's own slice counter, so the release can tell a slice that
       // ran from a run that only re-read a checkpoint (a 409, a refusal).
       const lineageSlices = typeof row?.lineage_slices === "number" ? row.lineage_slices : null;
+      // The run's own continuation decision, so the release can tell a slice
+      // with work ready now from one that is only waiting on a provider.
+      const continuationDecision = typeof row?.continuation_decision === "string" ? row.continuation_decision : null;
       d.log?.("[worker][runner] run ended", {
         queue: mission.queueId, task: taskId, http: res.status, ...outcome,
-        lineage_slices: lineageSlices,
+        lineage_slices: lineageSlices, continuation_decision: continuationDecision,
         revoked: deadline.revokedReason,
       });
-      return { ...outcome, taskId, ...(lineageSlices !== null ? { lineageSlices } : {}) };
+      return {
+        ...outcome, taskId,
+        ...(lineageSlices !== null ? { lineageSlices } : {}),
+        ...(continuationDecision !== null ? { continuationDecision } : {}),
+      };
     },
   };
 }

@@ -22,6 +22,7 @@
 // it. Idempotent: consistent rows produce no writes.
 
 import { queueStatusFor, type QueueReleaseStatus } from "./leadMissionV2Request.ts";
+import { IMMEDIATE_CONTINUATION_REASONS } from "./leadAutoContinuation.ts";
 
 /**
  * RETRIES the queue grants a mission. MIRRORS the literal in
@@ -82,6 +83,8 @@ export interface ReleaseFacts {
    * lineage's own per-slice counter. Null when there is no task or no counter.
    */
   lineageSlices?: number | null;
+  /** `result.auto_continuation.decision` as the run left the task, when it wrote one. */
+  continuationDecision?: string | null;
 }
 
 /**
@@ -97,6 +100,23 @@ export function cleanContinuationSlices(o: ReleaseFacts): number | null {
   if (o.error || o.aborted === true) return null;
   const n = o.lineageSlices;
   return typeof n === "number" && Number.isInteger(n) && n >= 1 ? n : null;
+}
+
+/**
+ * How soon the queue may hand a clean continuation to the next slice.
+ *
+ * `immediate` — the run's own decision says its next slice has work ready now
+ * (`IMMEDIATE_CONTINUATION_REASONS`). Stated in the outcome document as
+ * `dispatch`; the held migration 20261011120000 then releases the row with no
+ * backoff, and only when the lineage's slice counter also moved.
+ * `deferred` — a clean continuation that is waiting (a provider run still
+ * executing) or whose decision is unknown: the queue's backoff is its cadence.
+ * null — not a clean continuation; the queue decides as it always has.
+ */
+export function continuationDispatch(o: ReleaseFacts): "immediate" | "deferred" | null {
+  if (cleanContinuationSlices(o) === null) return null;
+  return o.continuationDecision && IMMEDIATE_CONTINUATION_REASONS.has(o.continuationDecision)
+    ? "immediate" : "deferred";
 }
 
 /**
@@ -338,8 +358,12 @@ export async function releaseQueuedMission(
 ): Promise<QueueReleaseResult> {
   const stated = finalQueueStatus(r.outcome, r.attempts);
   const slices = cleanContinuationSlices(r.outcome);
+  // Rides in the outcome document, not a new parameter: a database without the
+  // held 20261011120000 ignores it, and no signature changes for the fallbacks.
+  const dispatch = continuationDispatch(r.outcome);
   const args: Record<string, unknown> = {
-    p_queue_id: r.queueId, p_worker_id: r.workerId, p_status: stated, p_outcome: r.outcomeDoc,
+    p_queue_id: r.queueId, p_worker_id: r.workerId, p_status: stated,
+    p_outcome: dispatch ? { ...r.outcomeDoc, dispatch } : r.outcomeDoc,
   };
   if (slices !== null) args.p_lineage_slices = slices;
 
