@@ -55,10 +55,11 @@ const row = (slug: string, name: string, employeeCount: number, band: [number, n
 const CANARY_ROWS = [row("bytebytego", "ByteByteGo", 86), row("psychology-today", "Psychology Today", 2135)];
 
 type Triage = (i: { company_keys: string[] }) => Promise<unknown>;
-function harness(rows: Record<string, unknown>[], triage?: Triage) {
+/** `records`: what the company-details read returns, when it disagrees with the search rows. */
+function harness(rows: Record<string, unknown>[], triage?: Triage, records: Record<string, unknown>[] = rows) {
   const sent: Array<{ actor: string; input: Record<string, unknown> }> = [];
   const calls = { planDiscovery: 0, controlRoutes: 0 };
-  const byUrl = (u: string) => rows.find((r) => String(r.linkedinUrl).replace(/\/$/, "") === u.replace(/\/$/, ""));
+  const byUrl = (u: string) => records.find((r) => String(r.linkedinUrl).replace(/\/$/, "") === u.replace(/\/$/, ""));
   const deps = {
     ...(triage ? { triageCompanies: triage } : {}),
     planDiscovery: (x: unknown) => { calls.planDiscovery++; return (emptyDiscoverySelector() as (y: unknown) => unknown)(x); },
@@ -136,14 +137,35 @@ Deno.test("CANARY 87ecf153 REPLAY: declared 11-50 with 86 / 2,135 members — en
   assertEquals(atomusTargets(cands).map((t) => t.name).sort(), ["ByteByteGo", "Psychology Today"]);
 });
 
-Deno.test("OUT-OF-BAND: a company record that DECLARES 201-500 fails size on the proven band and buys no Atomus", async () => {
-  // The fail path the canary rows used to exercise, now stated on the fact
-  // that decides it: the declared band, not the member count (here only 40).
+Deno.test("OUT-OF-BAND AT DISCOVERY: a search row that DECLARES 201-500 on its own LinkedIn page is settled before enrichment", async () => {
+  // Since 2026-10-11 (Query B, task 255c333f): the company's own declared band,
+  // on a strong LinkedIn identity, clearly disjoint from 11-50, with nothing on
+  // the candidate disagreeing — the company record would read the same band and
+  // reach the same verdict, so neither it nor Atomus is bought.
   const h = harness([row("bigband", "Bigband Co", 40, [201, 500])]);
-  const result = await runCapabilityPlan(h.deps as never, h.opts as never) as unknown as { state: Record<string, any> };
+  const result = await runCapabilityPlan(h.deps as never, h.opts as never) as unknown as {
+    state: Grounded; companies: Grounded[];
+  };
   const [p] = result.state.prequalification.companies;
-  assertEquals([p.size_status, p.exclusion, p.eligible], ["above_max", null, true], "ranked down, not out, before enrichment");
-  assert(p.reasons.some((r: string) => /ranked down, not excluded/.test(r)), p.reasons.join(" | "));
+  assertEquals([p.size_status, p.exclusion, p.eligible, p.size_exclusion_basis],
+    ["above_max", "employee_size", false, "disjoint_declared_band_at_discovery"]);
+  assertEquals(result.state.prequalification.employee_size_excluded_at_discovery, 1);
+  const [c] = result.companies;
+  assertEquals([c.investigation_state, c.shortlist_exclusion],
+    ["excluded_permanently", "mission_constraint:employee_size_disjoint_at_discovery"]);
+  assert(!h.sent.some((s) => s.actor === "apify_linkedin_company_details"), "no company-details read");
+  assert(!h.sent.some((s) => s.actor === "apify_funding_atomus"));
+});
+
+Deno.test("DISCOVERY/DETAIL DISAGREEMENT: the row says 11-50, the company record DECLARES 201-500 — not rejected early; the proven band fails it, no Atomus", async () => {
+  // The fail path on the fact that decides it: the company record's declared
+  // band, not the member count (here only 40), and not the discovery row.
+  const h = harness([row("bigband", "Bigband Co", 40, [11, 50])], undefined,
+    [row("bigband", "Bigband Co", 40, [201, 500])]);
+  const result = await runCapabilityPlan(h.deps as never, h.opts as never) as unknown as { state: Grounded };
+  const [p] = result.state.prequalification.companies;
+  assertEquals([p.size_status, p.exclusion, p.eligible], ["in_range", null, true], "the discovery row cannot reject it");
+  assert(h.sent.some((s) => s.actor === "apify_linkedin_company_details"), "the company record was read");
   const [c] = grounded(result);
   const size = c.hard_checks.find((x: Grounded) => x.dimension === "company_size")!;
   assertEquals(size.result, "fail");

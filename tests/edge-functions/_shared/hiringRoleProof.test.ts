@@ -73,3 +73,36 @@ Deno.test("requested hiring is read from the mission's hiring signals", () => {
   assert(requestedHiringFromSignals([]) === null);
   assert(requestedHiringFromSignals([{ role_families: ["gtm_sales"] }])?.window_days === null);
 });
+
+// ── SALES PRECISION (Query B rerun, task 255c333f) ──────────────────────────
+//
+// After the role-match fix, three borderline titles still counted as sales:
+// a PR "Account Executive" (FINN Partners, Inkhouse), "Global Sales &
+// Operations Planning Leader" (ABB) and "Customer Service Sales Representative"
+// (MITRU). None is a quota-carrying sales hire.
+
+import { roleMatchesFamily } from "../../../supabase/functions/_shared/roleFamilies.ts";
+
+Deno.test("sales precision: genuine sales titles still match gtm_sales", () => {
+  for (const t of ["Account Executive", "Enterprise Account Executive", "Sales Manager", "SDR", "BDR", "Sales Director"]) {
+    assert(roleMatchesFamily(t, "gtm_sales"), t);
+    assert(jobProvesRequestedHiring(posting(t), SALES, NOW), t);
+  }
+});
+
+Deno.test("sales precision: borderline and non-sales titles do not match gtm_sales", () => {
+  for (const t of [
+    "PR Account Executive",
+    "Public Relations Account Executive – Polskin Arts PR",
+    "Account Executive, Public Relations",
+    "Global Sales & Operations Planning Leader",
+    "Customer Service Sales Representative, Fully Remote - Career Transition Opportunity",
+    "Assistant Manager - 8323",
+    "Part-Time Operations Analyst - Outreach & Scheduling (Student Role)",
+    "Product Lifecycle Supply Chain Project Specialist I (Intern) - United States",
+    "Retail Key Holder, San Bruno, #1446",
+  ]) {
+    assertFalse(roleMatchesFamily(t, "gtm_sales"), t);
+    assertFalse(jobProvesRequestedHiring(posting(t), SALES, NOW), t);
+  }
+});

@@ -116,3 +116,17 @@ Deno.test("the outcome is read from the task row, not the HTTP response", async 
   })).run(fresh, ctl());
   assertEquals(out, { status: "failed:provider_error", terminal: true, taskId: "task-1" });
 });
+
+Deno.test("a continuation carries the run's own decision and slice count to the release", async () => {
+  const out = await createLeadMissionRunner(deps({
+    readTaskOutcome: async () => ({ status: "ready", terminal_status: "continuation_required",
+      lineage_slices: 4, continuation_decision: "quota_unmet_frontier_remains" }),
+  })).run(fresh, ctl());
+  assertEquals(out, { status: "continuation_required", terminal: false, taskId: "task-1",
+    lineageSlices: 4, continuationDecision: "quota_unmet_frontier_remains" });
+  // A row without the decision states none — the queue then keeps its backoff.
+  const bare = await createLeadMissionRunner(deps({
+    readTaskOutcome: async () => ({ status: "ready", terminal_status: "continuation_required", lineage_slices: 4 }),
+  })).run(fresh, ctl());
+  assertFalse("continuationDecision" in bare);
+});

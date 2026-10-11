@@ -73,6 +73,7 @@ import { normalizeNewsArticle } from "./hiringActorNormalizers.ts";
 import {
   prequalifyDiscoveredCompanies, mergePrequalification,
   genericPrequalificationKey, admittedCandidateCount, isAdmitted, isPlaceholderEmployerName,
+  discoverySizeRejectBlocker,
 } from "./leadGenericPrequalification.ts";
 import {
   assessSignals, verdictsClaimingUninvestigatedSignals,
@@ -575,6 +576,8 @@ export interface PrequalificationRecord {
   /** The vocabulary's OPINION. Ranking only — it excludes nobody. */
   eligible: boolean;
   exclusion: PrequalifiedCompany["exclusion"];
+  /** Why a size exclusion fired before enrichment; null when none did. */
+  size_exclusion_basis?: PrequalifiedCompany["size_exclusion_basis"];
   // `shortlisted` DELETED. Prequalification does not decide the shortlist, so
   // recording its guess here produced a second, contradictory answer to "was
   // this company investigated?" — one that `applyMissionIntelligence` had
@@ -737,7 +740,7 @@ export interface CapabilityExecutionState {
       | "screen_admissions_spent"
       /** The funding screen has read its pool: its one priced Atomus read is spent. */
       | "screen_complete"
-      /** A replenishment could read no new page and the re-plan's reserve is spent (`discoveryCannotWiden`). */
+      /** A replenishment left no page unread, no route unattempted, and the re-plan's reserve is spent (`discoveryCannotWiden`). */
       | "discovery_spent";
   };
   /**
@@ -936,6 +939,8 @@ export interface CapabilityExecutionState {
     artifacts_excluded: number;
     eligible_companies: number;
     employee_size_excluded: number;
+    /** Of those, settled at discovery on a clearly disjoint declared band. Absent on older checkpoints. */
+    employee_size_excluded_at_discovery?: number;
     technical_only_companies: number;
     /**
      * HOW MANY COMPANIES THE GENERIC PASS COULD READ.
@@ -2470,12 +2475,17 @@ export interface CapabilityRunResult {
 /**
  * CAN NOTHING LEFT WIDEN THIS POOL?
  *
- * True only for a replenishment slice that could propose no new page (every
- * pageable actor at its limit, so its first pass can only replay a question
- * already read) and whose re-plan was refused because the adaptive reserve is
- * spent — a refusal no later slice can lift. Query B (d72bc1ce) recorded this
- * as a plain `amendment_refused`, `run-agent` read "routes remain", and two
- * barren slices ran before the barren-slice guard ended the mission.
+ * True only for a replenishment slice that leaves NO PAGE UNREAD — measured
+ * after this slice's pages are committed, so it covers both "nothing could be
+ * proposed" and "the last page was just read" — with no approved route still
+ * unattempted, and whose re-plan was refused because the adaptive reserve is
+ * spent: a refusal no later slice can lift.
+ *
+ * Query B (d72bc1ce) recorded the first shape as a plain `amendment_refused`,
+ * `run-agent` read "routes remain", and two barren slices ran before the
+ * barren-slice guard ended the mission. The Query B rerun (255c333f) hit the
+ * second: slice 8 read page 3 of 3, and because a page HAD been proposed the
+ * old `pages_proposed === 0` test said "routes remain" — slice 9 was barren.
  *
  * Every other refusal stays "routes remain": the continuation holding its plan
  * while candidates are unspent clears as they are worked, and refusals this
@@ -2483,10 +2493,14 @@ export interface CapabilityRunResult {
  */
 export function discoveryCannotWiden(i: {
   replenishing: boolean;
-  pages_proposed: number;
+  /** Strategy actors with a page still unread AFTER this slice's commits. */
+  unread_pages_remaining: number;
+  /** Strategy actors that never reached a provider — an alternate route still open. */
+  unattempted_routes: number;
   amendment_refusal: string | null;
 }): boolean {
-  return i.replenishing && i.pages_proposed === 0 && i.amendment_refusal === "adaptive_reserve_exhausted";
+  return i.replenishing && i.unread_pages_remaining === 0 && i.unattempted_routes === 0 &&
+    i.amendment_refusal === "adaptive_reserve_exhausted";
 }
 
 /**
@@ -3480,9 +3494,14 @@ export async function runCapabilityPlan(
         // outside it. `technical_only` and `insufficient_commercial` come from
         // the role vocabulary and are judgements, so they rank (via `eligible`)
         // and no longer remove anyone from the pool.
-        hard_exclusion: c.prequalified?.exclusion === "employee_size"
-          ? "employee_size"
-          : null,
+        //
+        // A clearly disjoint declared band settled at DISCOVERY carries its own
+        // reason (`…:employee_size_disjoint_at_discovery`), so the optimisation
+        // can be counted apart from size failures the company record decided.
+        hard_exclusion: c.prequalified?.exclusion !== "employee_size" ? null
+          : c.prequalified.size_exclusion_basis === "disjoint_declared_band_at_discovery"
+          ? "employee_size_disjoint_at_discovery"
+          : "employee_size",
         hard_exclusion_source: shortlistBoundSource,
         relevance: c.triage?.relevance ?? null,
         confidence: c.triage?.confidence ?? null,
@@ -6014,26 +6033,36 @@ export async function runCapabilityPlan(
        * `actor -> { page, attemptsBefore }`.
        */
       const proposedPages = new Map<string, { page: number; before: number }>();
+      /**
+       * The next page this actor has not read, or null when it cannot page or
+       * has read its limit. ONE definition, read both where a page is proposed
+       * and where discovery decides whether anything is left to read.
+       */
+      const unreadDiscoveryPage = (actorKey: string): { field: "startPage" | "page"; page: number; limit: number } | null => {
+        const card = hiringActorCard(actorKey);
+        // P3: the LinkedIn job search pages with `page`, bounded by the card,
+        // so a job-first continuation widens the pool instead of idling
+        // (canary 03f4c9c6: four barren slices).
+        const field = card && acceptedInputFields(card).includes("startPage") ? "startPage"
+          : card && cap === "job_discovery" && acceptedInputFields(card).includes("page") ? "page" : null;
+        if (!card || !field) return null;
+        const limit = Number(card.input_limits?.[field === "page" ? "pages_discovery" : "takePages"] ?? 0);
+        const taken = pagesTaken[actorKey] ??
+          (field === "page" && attemptCountFor(actorKey) > 0 ? 1 : 0);
+        if (taken <= 0 || limit <= taken) return null;
+        return { field, page: taken + 1, limit };
+      };
       if (opts.discoveryReplenishment) {
         for (const sel of strategy.selections) {
-          const card = hiringActorCard(sel.actor_key);
-          // P3: the LinkedIn job search pages with `page`, bounded by the card,
-          // so a job-first continuation widens the pool instead of idling
-          // (canary 03f4c9c6: four barren slices).
-          const pageField = card && acceptedInputFields(card).includes("startPage") ? "startPage"
-            : card && cap === "job_discovery" && acceptedInputFields(card).includes("page") ? "page" : null;
-          if (!card || !pageField) continue;
-          const limit = Number(card.input_limits?.[pageField === "page" ? "pages_discovery" : "takePages"] ?? 0);
-          const taken = pagesTaken[sel.actor_key] ??
-            (pageField === "page" && attemptCountFor(sel.actor_key) > 0 ? 1 : 0);
-          if (taken <= 0 || limit <= taken) continue;
+          const next = unreadDiscoveryPage(sel.actor_key);
+          if (!next) continue;
           // THE INPUT CARRIES THE NEXT PAGE; THE CURSOR DOES NOT MOVE YET.
-          sel.input = { ...sel.input, [pageField]: taken + 1 };
+          sel.input = { ...sel.input, [next.field]: next.page };
           proposedPages.set(sel.actor_key, {
-            page: taken + 1, before: attemptCountFor(sel.actor_key),
+            page: next.page, before: attemptCountFor(sel.actor_key),
           });
           log("discovery_replenishment_page_proposed", {
-            actor: sel.actor_key, page: taken + 1, page_limit: limit,
+            actor: sel.actor_key, page: next.page, page_limit: next.limit,
           });
         }
         state.discovery_strategy = discoveryStrategyDiagnostics(strategy);
@@ -6300,8 +6329,15 @@ export async function runCapabilityPlan(
         // the old question replayed, the re-plan refused for want of reserve —
         // recorded as "amendment_refused", read as "routes remain", and two
         // barren slices followed. That refusal does not clear on its own.
+        //
+        // NOR IS A PAGE JUST READ. Measured after the commits above, so the
+        // slice that reads the LAST page (rerun 255c333f, slice 8) says so
+        // itself instead of leaving a barren slice to find out.
+        const strategyActors = [...new Set(strategy.selections.map((sel) => sel.actor_key))];
         if (discoveryStop === "amendment_refused" && discoveryCannotWiden({
-          replenishing: !!opts.discoveryReplenishment, pages_proposed: proposedPages.size,
+          replenishing: !!opts.discoveryReplenishment,
+          unread_pages_remaining: strategyActors.filter((a) => unreadDiscoveryPage(a) !== null).length,
+          unattempted_routes: strategyActors.filter((a) => attemptCountFor(a) === 0).length,
           amendment_refusal: lastAmendmentRefusal,
         })) {
           discoveryStop = "discovery_spent";
@@ -10812,6 +10848,7 @@ export function applyPrequalification(
   // not need a second opinion.
   const unscored = companies.filter((c) =>
     c.prequalified === null && c.prequal_key === null);
+  const candidateOf = new Map(unscored.map((c) => [c.company, c]));
   const generic = prequalifyDiscoveredCompanies(
     unscored.map((c) => c.company),
     { min: bounds.min, max: bounds.max },
@@ -10821,6 +10858,14 @@ export function applyPrequalification(
       // remove anyone from it.
       size_enforceable: bounds.enforceable,
       mission_requires_hiring: missionRequiresHiring,
+      // WHAT ONLY THE POOL KNOWS. A clearly disjoint declared band may reject
+      // at discovery only when no identity conflict and no disagreeing or
+      // stale size observation sits on the candidate. A row with no candidate
+      // behind it is refused the shortcut rather than assumed clean.
+      early_size_reject_blocker: (co) => {
+        const c = candidateOf.get(co);
+        return c ? discoverySizeRejectBlocker(c) : "candidate_context_missing";
+      },
     },
   );
 
@@ -10900,6 +10945,7 @@ export function applyPrequalification(
     artifacts_excluded: merged.excluded.length,
     eligible_companies: merged.eligible_companies,
     employee_size_excluded: merged.employee_size_excluded,
+    employee_size_excluded_at_discovery: merged.employee_size_excluded_at_discovery ?? 0,
     technical_only_companies: merged.technical_only_companies,
     // ── WHAT THE FREE PASS ACTUALLY REACHED ───────────────────────────────
     //
@@ -10937,6 +10983,7 @@ export function applyPrequalification(
         .map((j) => j.title),
       eligible: c.eligible,
       exclusion: c.exclusion,
+      size_exclusion_basis: c.size_exclusion_basis ?? null,
       reasons: c.reasons,
     })),
   };

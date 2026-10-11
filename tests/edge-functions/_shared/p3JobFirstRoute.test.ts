@@ -22,7 +22,7 @@ import { authorisedActorKeys } from "../../../supabase/functions/_shared/gptExec
 import { registeredEngineFields } from "../../../supabase/functions/_shared/providerCallSpec.ts";
 import { canonicalJson } from "../../../supabase/functions/_shared/providerInputFingerprint.ts";
 import { firstInFunctionPhrase } from "../../../supabase/functions/_shared/missionCriteria.ts";
-import { emptyDiscoverySelector } from "./discoverySelectorFixture.ts";
+import { emptyDiscoverySelector, stubDiscoverySelector } from "./discoverySelectorFixture.ts";
 
 globalThis.fetch = () => { throw new Error("P3 route tests must not reach the network"); };
 
@@ -106,11 +106,11 @@ function executionProposal() {
 
 interface Sent { actor: string; input: Record<string, unknown>; spec?: Record<string, unknown> }
 
-function deps(sent: Sent[], opts: { refuseTeam?: boolean; chainOmitsHiring?: boolean; jobRows?: Record<string, unknown>[] } = {}) {
+function deps(sent: Sent[], opts: { refuseTeam?: boolean; chainOmitsHiring?: boolean; jobRows?: Record<string, unknown>[]; discovery?: unknown } = {}) {
   const rows = opts.jobRows ?? JOB_ROWS;
   const byUrl = new Map(rows.map((r) => [(r.company as { linkedinUrl: string }).linkedinUrl, r.company as Record<string, unknown>]));
   return {
-    planDiscovery: emptyDiscoverySelector() as never,
+    planDiscovery: (opts.discovery ?? emptyDiscoverySelector()) as never,
     planExecution: () => Promise.resolve(((p) => opts.chainOmitsHiring
       ? { ...p, steps: p.steps.filter((st) => st.capability !== "hiring_verification") } : p)(executionProposal())),
     invoke: (call: { actorKey: string; input: unknown; providerCallSpec?: Record<string, unknown>;
@@ -143,7 +143,7 @@ function deps(sent: Sent[], opts: { refuseTeam?: boolean; chainOmitsHiring?: boo
   };
 }
 
-async function run(over: Record<string, unknown> = {}, depOpts: { refuseTeam?: boolean; chainOmitsHiring?: boolean; jobRows?: Record<string, unknown>[] } = {}) {
+async function run(over: Record<string, unknown> = {}, depOpts: { refuseTeam?: boolean; chainOmitsHiring?: boolean; jobRows?: Record<string, unknown>[]; discovery?: unknown } = {}) {
   const sent: Sent[] = [];
   const result = await runCapabilityPlan(deps(sent, depOpts) as never, {
     mission: MISSION, plan: GRAPH, maxCandidates: 10,
@@ -408,6 +408,63 @@ Deno.test("a spent job-first pool widens by the next page on continuation, as a 
   assert((jobs[0].spec as { idempotency_key: string }).idempotency_key !== (firstJob.spec as { idempotency_key: string }).idempotency_key,
     "page 2 is not mistaken for the page already bought");
   assertEquals(again.result.state.discovery_source_state?.pages_taken?.apify_linkedin_job_search, 2);
+});
+
+// ── NO PAGE LEFT: DISCOVERY ENDS IN THE SLICE THAT READ THE LAST PAGE ────────
+//
+// Query B rerun (task 255c333f): slice 8 read page 3 of 3, its re-plan was
+// refused with `adaptive_reserve_exhausted`, and it recorded `exhausted: false`
+// because a page HAD been proposed this slice. Slice 9 then reopened discovery,
+// found nothing to read, and was the barren slice the guard had to count.
+const WIDEN_JOBS = stubDiscoverySelector([{ actor_key: "apify_linkedin_job_search", role: "primary",
+  input: { ...GPT_JOB_INPUT, jobTitles: ['"growth lead"'] }, rationale: "widen the pool" } as never]);
+const replenishFrom = (page: number) => ({ reason: "replenishment_required",
+  sources_attempted: ["apify_linkedin_job_search"], pages_taken: { apify_linkedin_job_search: page } });
+// As in production, the frontier is spent (`available_admitted: 0`): every
+// page returns only a placeholder employer page, which is never admitted. The
+// re-plan is then refused for want of reserve, not because the continuation is
+// holding its plan for unworked candidates.
+const PLACEHOLDER_ROW = (() => {
+  const r = structuredClone(FIRST_HIRE_ROW) as { company: Record<string, unknown> };
+  r.company = { ...r.company, name: "Stealth Startup", linkedinUrl: "https://www.linkedin.com/company/stealth-startup-x" };
+  return r as unknown as Record<string, unknown>;
+})();
+const ONE_EMPLOYER = { jobRows: [PLACEHOLDER_ROW], discovery: WIDEN_JOBS };
+async function spentReserveSlice(page: number, reserve = 0) {
+  const first = await run({}, ONE_EMPLOYER);
+  const state = structuredClone(first.result.state);
+  state.spend_ledger.ceilings.adaptive_reserve_usd = reserve;
+  return await run({ state, discoveryReplenishment: replenishFrom(page) }, ONE_EMPLOYER);
+}
+
+Deno.test("NO PAGE LEFT: reading the last page with the reserve spent ends discovery in THAT slice", async () => {
+  const s = await spentReserveSlice(2);
+  assertEquals(s.result.state.discovery_source_state.available_admitted, 0, "fixture: the production frontier");
+  const jobs = byActor(s.sent, "apify_linkedin_job_search");
+  assertEquals(jobs.map((j) => j.input.page), [3], "the last page is still read");
+  const d = s.result.state.discovery_source_state;
+  assertEquals([d.pages_taken.apify_linkedin_job_search, d.exhausted, d.stop_reason], [3, true, "discovery_spent"]);
+});
+
+Deno.test("NO PAGE LEFT: a page still unread after this slice keeps discovery open", async () => {
+  const s = await spentReserveSlice(1);
+  assertEquals(s.result.state.discovery_source_state.available_admitted, 0, "fixture: the production frontier");
+  assertEquals(byActor(s.sent, "apify_linkedin_job_search").map((j) => j.input.page), [2]);
+  const d = s.result.state.discovery_source_state;
+  assertEquals([d.pages_taken.apify_linkedin_job_search, d.exhausted, d.stop_reason], [2, false, "amendment_refused"]);
+});
+
+Deno.test("NO PAGE LEFT: with reserve to pay for a new route, the last page does not end discovery", async () => {
+  const s = await spentReserveSlice(2, 0.30);
+  const d = s.result.state.discovery_source_state;
+  assertFalse(d.exhausted && d.stop_reason === "discovery_spent", JSON.stringify(d));
+});
+
+Deno.test("REPLAY ONLY: a slice that could read nothing new and buys nothing is not useful discovery", async () => {
+  const s = await spentReserveSlice(3);
+  assertEquals(byActor(s.sent, "apify_linkedin_job_search").length, 0, "no page left, nothing bought");
+  const d = s.result.state.discovery_source_state;
+  assertEquals([d.exhausted, d.stop_reason], [true, "discovery_spent"]);
 });
 
 Deno.test("the first-hire check still runs when GPT's chain omits hiring verification (canary 2a215d44)", async () => {

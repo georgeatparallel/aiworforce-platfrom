@@ -123,6 +123,8 @@ export interface TaskOutcomeRow {
   terminal_status: string | null;
   /** `result.lead_lineage_progress.continuations_used`, when the run folded one. */
   lineage_slices?: number | null;
+  /** `result.auto_continuation.decision`, when the run wrote one. */
+  continuation_decision?: string | null;
 }
 export interface MappedOutcome { status: string; terminal: boolean }
 

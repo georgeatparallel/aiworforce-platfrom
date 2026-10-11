@@ -98,7 +98,8 @@ const TASK_TERMINAL_COLUMNS =
  * own slice counter, which tells the release whether a slice actually ran.
  */
 const TASK_OUTCOME_COLUMNS =
-  TASK_TERMINAL_COLUMNS + ",r_lineage_slices:result->lead_lineage_progress->continuations_used";
+  TASK_TERMINAL_COLUMNS + ",r_lineage_slices:result->lead_lineage_progress->continuations_used" +
+  ",r_continuation_decision:result->auto_continuation->>decision";
 
 interface TaskTerminalRow {
   status?: string | null;
@@ -151,12 +152,13 @@ async function main() {
     readTaskOutcome: async (taskId) => {
       const { data } = await db.from("tasks").select(TASK_OUTCOME_COLUMNS).eq("id", taskId).maybeSingle();
       if (!data) return null;
-      const row = data as TaskTerminalRow & { r_lineage_slices?: unknown };
+      const row = data as TaskTerminalRow & { r_lineage_slices?: unknown; r_continuation_decision?: unknown };
       const slices = Number(row.r_lineage_slices);
       return {
         status: row.status ?? null,
         terminal_status: terminalStatusOf(terminalResultOf(row)),
         lineage_slices: row.r_lineage_slices != null && Number.isInteger(slices) ? slices : null,
+        continuation_decision: typeof row.r_continuation_decision === "string" ? row.r_continuation_decision : null,
       };
     },
     log,
@@ -324,6 +326,7 @@ async function main() {
         status: outcome.status, terminal: outcome.terminal, error: outcome.error ?? null,
         aborted: outcome.aborted, abort_reason: outcome.abortReason, worker_id: workerId,
         ceiling_ms: cfg.missionCeilingMs, lineage_slices: outcome.lineageSlices ?? null,
+        continuation_decision: outcome.continuationDecision ?? null,
       },
     });
     if (r.fallback) log("[worker] release: 4-argument fallback", { queue: mission.queueId });

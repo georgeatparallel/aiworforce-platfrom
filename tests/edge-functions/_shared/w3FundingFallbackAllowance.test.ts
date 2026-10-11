@@ -299,11 +299,27 @@ Deno.test("E2E 4: the fallback provider fails — no allowance, no duplicate res
 });
 
 Deno.test("E2E 5: an ineligible company — no hiring verification is bought", async () => {
+  // The discovery row is in range; the company RECORD declares 501-1000, so the
+  // proven band fails it after enrichment.
   const o = await run("ineligible", (rs) => [...atomus(rs, [], false), pvalyou([["Series A", daysAgo(60)]])].map((r) =>
-    r.actor === SEARCH || r.actor === DETAILS
+    r.actor === DETAILS
       ? { ...r, rows: r.rows.map((x) => ({ ...x, employeeCountRange: { start: 501, end: 1000 }, employeeCount: 700 })) }
       : r));
   assertEquals(o.lead?.hard_checks.company_size, "fail");
+  assertFalse(o.bought(JOBS));
+  assertFalse(o.r.qualifiedKeys.includes(ACME));
+});
+
+Deno.test("E2E 5b: a clearly disjoint declared band at discovery — screened out before enrichment, nothing bought for it", async () => {
+  const o = await run("ineligible-early", (rs) => [...atomus(rs, [], false), pvalyou([["Series A", daysAgo(60)]])].map((r) =>
+    r.actor === SEARCH || r.actor === DETAILS
+      ? { ...r, rows: r.rows.map((x) => ({ ...x, employeeCountRange: { start: 501, end: 1000 }, employeeCount: 700 })) }
+      : r));
+  assertEquals(o.lead?.bucket, "screened_out");
+  // Honest about what was read: the discovery band, not a proven record.
+  assertEquals(o.lead?.hard_checks.company_size, "unknown");
+  assertFalse(o.bought(DETAILS));
+  assertFalse(o.bought(ATOMUS));
   assertFalse(o.bought(JOBS));
   assertFalse(o.r.qualifiedKeys.includes(ACME));
 });

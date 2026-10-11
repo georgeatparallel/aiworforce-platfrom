@@ -44,8 +44,11 @@
 //                  discovery row's band is PLAUSIBLE: for a candidate that
 //                  already carries its LinkedIn identity — one cheap enrichment
 //                  away from a proven band — it ranks the company down and
-//                  enrichment decides. The LinkedIn associated-member count is
-//                  never a size gate (companySize.ts).
+//                  enrichment decides, UNLESS the band is the company's own
+//                  declared band on a strong identity and clearly disjoint
+//                  from the range (see "A CLEARLY DISJOINT DECLARED BAND"
+//                  below). The LinkedIn associated-member count is never a
+//                  size gate (companySize.ts).
 //
 // Everything else — a description, an identity, a hiring flag, an industry
 // label — ranks. This is the three-valued discipline the ICP gate already
@@ -63,8 +66,10 @@
 //
 // PURE. No network, provider, model or database access.
 
-import { mayRejectOnReportedSize } from "./evidenceAuthority.ts";
-import { bandSatisfies, sizeBandLabel } from "./companySize.ts";
+import { mayRejectOnReportedSize, type AuthorityDecision } from "./evidenceAuthority.ts";
+import {
+  bandSatisfies, sizeBandLabel, isSizeBand, DECLARED_SIZE_BANDS, type CompanySizeBand,
+} from "./companySize.ts";
 import type {
   NormalizedHiringCompany, FieldTrust,
 } from "./hiringActorNormalizers.ts";
@@ -165,6 +170,90 @@ export interface GenericPrequalificationPolicy {
   size_enforceable?: boolean;
   /** True when the mission's required signals include hiring. Ranking only. */
   mission_requires_hiring?: boolean;
+  /**
+   * What the ENGINE knows about a candidate that its normalized row does not:
+   * an identity conflict, or size observations that disagree or have gone
+   * stale (`discoverySizeRejectBlocker`). A non-null answer keeps a clearly
+   * disjoint band from rejecting at discovery; the company is ranked down and
+   * enrichment decides, exactly as before.
+   */
+  early_size_reject_blocker?: (company: NormalizedHiringCompany) => string | null;
+}
+
+// ── A CLEARLY DISJOINT DECLARED BAND, SETTLED AT DISCOVERY ──────────────────
+//
+// Query B (task 255c333f): 62 job-search employers, 53 rejected on size after
+// enrichment. Each carried its LinkedIn identity and the company's declared
+// `employeeCountRange`, and the company-details read returned the SAME band
+// for 62/62 (96/96 across both runs). Ranking them down bought an enrichment
+// slot, grounding and queue time per company to restate what the row said.
+//
+// So a discovery band may now reject, but only on the strongest evidence the
+// row can carry, and every weaker shape keeps the old path (ranked down; the
+// company record decides):
+//   * the band is the provider's own declared field (`direct`) and one of
+//     LinkedIn's declared bands — not reshaped, not an advisory text;
+//   * the identity is a direct, canonical LinkedIn company URL with a name;
+//   * the band's source is not stale and can speak to size;
+//   * the engine reports no identity conflict and no disagreeing or stale
+//     size observation;
+//   * the band and the range share no value — `bandSatisfies` "fail", the
+//     verdict the post-enrichment hard check reaches on that same band. A
+//     partial overlap is "unknown" there and here, and never rejects.
+
+const CANONICAL_LINKEDIN_COMPANY_URL = /^https:\/\/www\.linkedin\.com\/company\/[a-z0-9][^/?#\s]+$/;
+
+function hasStrongLinkedInIdentity(company: NormalizedHiringCompany): boolean {
+  return company.field_trust?.linkedin_company_url === "direct" &&
+    CANONICAL_LINKEDIN_COMPANY_URL.test(company.linkedin_company_url ?? "") &&
+    (company.company_name ?? "").trim().length > 0;
+}
+
+function isDeclaredLinkedInBand(band: CompanySizeBand): boolean {
+  return band.source === "linkedin_declared" &&
+    DECLARED_SIZE_BANDS.some((b) => b.min === band.min && b.max === band.max);
+}
+
+/** Why this clearly disjoint band may NOT reject at discovery, or null when it may. */
+function discoveryRejectRefusal(
+  company: NormalizedHiringCompany, band: CompanySizeBand,
+  authority: AuthorityDecision, policy: GenericPrequalificationPolicy,
+): string | null {
+  if (company.field_trust?.company_size_band !== "direct") return "band_not_declared_field";
+  if (!isDeclaredLinkedInBand(band)) return "band_not_canonical";
+  if (authority.authority === "insufficient" || /:stale$/.test(authority.rule)) return "size_source_weak_or_stale";
+  if (!hasStrongLinkedInIdentity(company)) return "weak_identity";
+  return policy.early_size_reject_blocker?.(company) ?? null;
+}
+
+/** The slice of an engine candidate the blocker reads. Structural, so the engine passes its own. */
+export interface DiscoveryCandidateContext {
+  identity_conflicts?: readonly unknown[] | null;
+  observations?: ReadonlyArray<{
+    evidence?: ReadonlyArray<{ dimension: string; value: unknown; valid_until?: string | null }>;
+  }> | null;
+}
+
+/**
+ * What would make a discovery-time size rejection unsafe for this candidate:
+ * `identity_conflict` (strong identifiers disagreed), `stale_size_evidence`
+ * (a band past its validity), `size_band_disagreement` (two observations of
+ * this company declare different bands — discovery against a company record
+ * already on file, or two discovery routes). Null when none applies.
+ */
+export function discoverySizeRejectBlocker(
+  c: DiscoveryCandidateContext, now: Date = new Date(),
+): string | null {
+  if ((c.identity_conflicts?.length ?? 0) > 0) return "identity_conflict";
+  const bands = new Set<string>();
+  for (const o of c.observations ?? []) {
+    for (const e of o.evidence ?? []) {
+      if (e.dimension !== "company_size_band" || !isSizeBand(e.value)) continue;
+      if (e.valid_until && Date.parse(e.valid_until) < now.getTime()) return "stale_size_evidence";
+      bands.add(sizeBandLabel(e.value));
+    }
+  }
+  return bands.size > 1 ? "size_band_disagreement" : null;
 }
 
 /**
@@ -210,11 +299,12 @@ export function prequalifyNormalizedCompany(
     : (size.max != null && band.min > size.max) ? "above_max"
     : "below_min";
   const size_fit = size_status === "in_range";
-  // ── A REPORTED BAND RANKS; ONLY A PROVEN ONE MAY REJECT ──────────────────
+  // ── A REPORTED BAND RANKS; A PROVEN OR CLEARLY DISJOINT ONE MAY REJECT ───
   //
   // Whether the band may reject before enrichment is the authority layer's
   // decision: a discovery row's band is PLAUSIBLE, so an out-of-range band
-  // ranks the company down and the company record's band decides.
+  // ranks the company down and the company record's band decides — except a
+  // clearly disjoint declared band on a strong identity (`discoveryRejectRefusal`).
   const sizeAuthority = band === null ? null
     : mayRejectOnReportedSize(company.raw_ref?.actor_key ?? company.source_provenance);
   // CHEAP TO SETTLE: a candidate that already carries its LinkedIn identity is
@@ -222,8 +312,20 @@ export function prequalifyNormalizedCompany(
   // first need a paid identity search (~$0.06), and there the free reported
   // band may still exclude — settling it costs more than the exclusion saves.
   const enrichmentIsCheap = !!company.linkedin_company_url;
-  const sizeMayReject = sizeAuthority?.authority === "proven" || !enrichmentIsCheap;
   const outOfRange = size_status === "above_max" || size_status === "below_min";
+  // Asked only of a clearly disjoint band, and only where a rejection could
+  // actually be enforced: the blocker is the engine's to answer and costs a
+  // walk over the candidate's observations.
+  const discoveryRefusal = band && sizeAuthority && outOfRange && sizeEnforceable &&
+      sizeAuthority.authority !== "proven" && enrichmentIsCheap
+    ? discoveryRejectRefusal(company, band, sizeAuthority, policy) : undefined;
+  const size_exclusion_basis: PrequalifiedCompany["size_exclusion_basis"] =
+    !outOfRange ? null
+    : sizeAuthority?.authority === "proven" ? "proven_band"
+    : !enrichmentIsCheap ? "no_cheap_identity"
+    : discoveryRefusal === null ? "disjoint_declared_band_at_discovery"
+    : null;
+  const sizeMayReject = size_exclusion_basis !== null;
   const bandText = band ? sizeBandLabel(band) : null;
 
   if (size_fit) {
@@ -234,7 +336,14 @@ export function prequalifyNormalizedCompany(
     reasons.push(
       `declared size band ${bandText} is ${size_status === "above_max" ? "above the maximum" : "below the minimum"} — ` +
       `ranked down, not excluded: a discovery row's band is not proof (${sizeAuthority?.rule}), ` +
-      `the company already carries its LinkedIn identity, and the company record's band decides`);
+      `the company already carries its LinkedIn identity, and the company record's band decides` +
+      (discoveryRefusal ? ` (no early rejection: ${discoveryRefusal})` : ""));
+  } else if (size_exclusion_basis === "disjoint_declared_band_at_discovery") {
+    reasons.push(
+      `declared size band ${bandText} is clearly disjoint from the requested range ` +
+      `(${size_status === "above_max" ? "above the maximum" : "below the minimum"}) — excluded at discovery: ` +
+      `the company's own declared band on a strong LinkedIn identity, with no conflict or disagreeing ` +
+      `observation, so enrichment would read the same band and reach the same verdict`);
   } else if (size_status === "above_max") {
     reasons.push(
       `declared size band ${bandText} exceeds the maximum — excluded before ` +
@@ -340,6 +449,7 @@ export function prequalifyNormalizedCompany(
     // question nobody asked the provider.
     eligible: !(sizeEnforceable && sizeMayReject && outOfRange),
     exclusion: (sizeEnforceable && sizeMayReject && outOfRange) ? "employee_size" : null,
+    size_exclusion_basis: (sizeEnforceable && sizeMayReject && outOfRange) ? size_exclusion_basis : null,
     reasons,
     linkedin_identity_status: "unresolved",
     identity_confidence,
@@ -354,6 +464,12 @@ export interface GenericPrequalificationResult {
   excluded: ExcludedArtifact[];
   companies: PrequalifiedCompany[];
   employee_size_excluded: number;
+  /**
+   * Of `employee_size_excluded`, how many a clearly disjoint declared band
+   * settled at discovery — the optimisation's own count, so it can be measured
+   * apart from the proven-band and no-identity exclusions.
+   */
+  employee_size_excluded_at_discovery: number;
   eligible_companies: number;
   /** How many rows carried a trusted declared size band at all. */
   companies_with_trusted_size: number;
@@ -432,6 +548,8 @@ export function prequalifyDiscoveredCompanies(
     excluded,
     companies: out,
     employee_size_excluded: out.filter((c) => c.exclusion === "employee_size").length,
+    employee_size_excluded_at_discovery: out.filter((c) =>
+      c.size_exclusion_basis === "disjoint_declared_band_at_discovery").length,
     eligible_companies: out.filter((c) => c.eligible).length,
     companies_with_trusted_size: withTrustedSize,
     companies_with_description: withDescription,
@@ -469,6 +587,8 @@ export function mergePrequalification(
       yc.companies_with_open_roles + added.filter((c) => c.has_open_roles).length,
     employee_size_excluded: yc.employee_size_excluded +
       added.filter((c) => c.exclusion === "employee_size").length,
+    employee_size_excluded_at_discovery: (yc.employee_size_excluded_at_discovery ?? 0) +
+      added.filter((c) => c.size_exclusion_basis === "disjoint_declared_band_at_discovery").length,
     eligible_companies: yc.eligible_companies +
       added.filter((c) => c.eligible).length,
   };
