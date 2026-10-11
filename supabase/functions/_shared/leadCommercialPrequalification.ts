@@ -133,6 +133,18 @@ export interface PrequalifiedCompany {
   size_status: "in_range" | "below_min" | "above_max" | "size_unverified";
   eligible: boolean;
   exclusion: ExclusionKind | null;
+  /**
+   * WHY an `employee_size` exclusion was allowed to fire before enrichment, so
+   * each basis can be counted on its own. Absent on the YC pass and on every
+   * row that was not size-excluded.
+   *   proven_band                          the band's source proves size;
+   *   no_cheap_identity                    settling it would first need a paid
+   *                                        identity search;
+   *   disjoint_declared_band_at_discovery  a declared band clearly outside the
+   *                                        range, on a strong LinkedIn identity
+   *                                        (leadGenericPrequalification.ts).
+   */
+  size_exclusion_basis?: "proven_band" | "no_cheap_identity" | "disjoint_declared_band_at_discovery" | null;
   reasons: string[];
   /** Domain is sufficient internal identity; LinkedIn is resolved later. */
   linkedin_identity_status: "unresolved";
@@ -162,6 +174,8 @@ export interface PrequalificationResult {
   any_open_role_satisfies_signal: boolean;
   /** Real commercial signal but a KNOWN out-of-range headcount. */
   employee_size_excluded: number;
+  /** Of those, settled at discovery on a clearly disjoint declared band. Absent before 2026-10-11. */
+  employee_size_excluded_at_discovery?: number;
   eligible_companies: number;
 }
 

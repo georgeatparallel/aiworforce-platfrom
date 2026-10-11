@@ -73,6 +73,7 @@ import { normalizeNewsArticle } from "./hiringActorNormalizers.ts";
 import {
   prequalifyDiscoveredCompanies, mergePrequalification,
   genericPrequalificationKey, admittedCandidateCount, isAdmitted, isPlaceholderEmployerName,
+  discoverySizeRejectBlocker,
 } from "./leadGenericPrequalification.ts";
 import {
   assessSignals, verdictsClaimingUninvestigatedSignals,
@@ -575,6 +576,8 @@ export interface PrequalificationRecord {
   /** The vocabulary's OPINION. Ranking only — it excludes nobody. */
   eligible: boolean;
   exclusion: PrequalifiedCompany["exclusion"];
+  /** Why a size exclusion fired before enrichment; null when none did. */
+  size_exclusion_basis?: PrequalifiedCompany["size_exclusion_basis"];
   // `shortlisted` DELETED. Prequalification does not decide the shortlist, so
   // recording its guess here produced a second, contradictory answer to "was
   // this company investigated?" — one that `applyMissionIntelligence` had
@@ -936,6 +939,8 @@ export interface CapabilityExecutionState {
     artifacts_excluded: number;
     eligible_companies: number;
     employee_size_excluded: number;
+    /** Of those, settled at discovery on a clearly disjoint declared band. Absent on older checkpoints. */
+    employee_size_excluded_at_discovery?: number;
     technical_only_companies: number;
     /**
      * HOW MANY COMPANIES THE GENERIC PASS COULD READ.
@@ -3480,9 +3485,14 @@ export async function runCapabilityPlan(
         // outside it. `technical_only` and `insufficient_commercial` come from
         // the role vocabulary and are judgements, so they rank (via `eligible`)
         // and no longer remove anyone from the pool.
-        hard_exclusion: c.prequalified?.exclusion === "employee_size"
-          ? "employee_size"
-          : null,
+        //
+        // A clearly disjoint declared band settled at DISCOVERY carries its own
+        // reason (`…:employee_size_disjoint_at_discovery`), so the optimisation
+        // can be counted apart from size failures the company record decided.
+        hard_exclusion: c.prequalified?.exclusion !== "employee_size" ? null
+          : c.prequalified.size_exclusion_basis === "disjoint_declared_band_at_discovery"
+          ? "employee_size_disjoint_at_discovery"
+          : "employee_size",
         hard_exclusion_source: shortlistBoundSource,
         relevance: c.triage?.relevance ?? null,
         confidence: c.triage?.confidence ?? null,
@@ -10812,6 +10822,7 @@ export function applyPrequalification(
   // not need a second opinion.
   const unscored = companies.filter((c) =>
     c.prequalified === null && c.prequal_key === null);
+  const candidateOf = new Map(unscored.map((c) => [c.company, c]));
   const generic = prequalifyDiscoveredCompanies(
     unscored.map((c) => c.company),
     { min: bounds.min, max: bounds.max },
@@ -10821,6 +10832,14 @@ export function applyPrequalification(
       // remove anyone from it.
       size_enforceable: bounds.enforceable,
       mission_requires_hiring: missionRequiresHiring,
+      // WHAT ONLY THE POOL KNOWS. A clearly disjoint declared band may reject
+      // at discovery only when no identity conflict and no disagreeing or
+      // stale size observation sits on the candidate. A row with no candidate
+      // behind it is refused the shortcut rather than assumed clean.
+      early_size_reject_blocker: (co) => {
+        const c = candidateOf.get(co);
+        return c ? discoverySizeRejectBlocker(c) : "candidate_context_missing";
+      },
     },
   );
 
@@ -10900,6 +10919,7 @@ export function applyPrequalification(
     artifacts_excluded: merged.excluded.length,
     eligible_companies: merged.eligible_companies,
     employee_size_excluded: merged.employee_size_excluded,
+    employee_size_excluded_at_discovery: merged.employee_size_excluded_at_discovery ?? 0,
     technical_only_companies: merged.technical_only_companies,
     // ── WHAT THE FREE PASS ACTUALLY REACHED ───────────────────────────────
     //
@@ -10937,6 +10957,7 @@ export function applyPrequalification(
         .map((j) => j.title),
       eligible: c.eligible,
       exclusion: c.exclusion,
+      size_exclusion_basis: c.size_exclusion_basis ?? null,
       reasons: c.reasons,
     })),
   };

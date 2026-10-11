@@ -92,8 +92,14 @@ Deno.test("1. an out-of-range declared band excludes for free ONLY where settlin
 
   // A row that CARRIES its LinkedIn identity is one company-record read away
   // from a PROVEN band, and its own band is only PLAUSIBLE (evidenceAuthority).
+  // Since 2026-10-11 a CLEARLY DISJOINT declared band on a strong identity is
+  // settled at discovery (earlyDisjointSizeReject.test.ts), under its own basis…
   const big = normalizeLinkedInCompanyCandidate(liRow({ employeeCountRange: band(501, 1000) }));
-  const ranked = prequalifyNormalizedCompany(big, MISSION_10_150);
+  const early = prequalifyNormalizedCompany(big, MISSION_10_150);
+  assertEquals([early.exclusion, early.size_exclusion_basis], ["employee_size", "disjoint_declared_band_at_discovery"]);
+  // …and wherever that shortcut is refused (here: the engine reports an
+  // identity conflict) the band only ranks, and the company record decides.
+  const ranked = prequalifyNormalizedCompany(big, MISSION_10_150, { early_size_reject_blocker: () => "identity_conflict" });
   assertEquals(ranked.size_status, "above_max");
   assertEquals(ranked.exclusion, null);
   assert(ranked.eligible, "ranked down, not out — the company record decides");
