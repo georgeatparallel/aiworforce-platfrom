@@ -168,6 +168,34 @@ Deno.test("wrong-employer discovery posting remains a candidate but cannot prove
   assert(pipewise.mission_evaluation?.decision !== "qualified");
 });
 
+/** Did any observation of this company record a proven `hiring: true`? */
+const discoveryProvedHiring = (
+  c: { observations?: Array<{ evidence?: Array<{ dimension: string; value: unknown }> }> },
+): boolean =>
+  (c.observations ?? []).some((o) => (o.evidence ?? []).some((e) => e.dimension === "hiring" && e.value === true));
+
+// Production Query B (d72bc1ce): a sales-title search returned "Assistant
+// Manager" and "Retail Key Holder" postings, and each proved sales hiring.
+Deno.test("a discovery posting outside the requested role family remains a candidate but proves no hiring", async () => {
+  const off = structuredClone(FIRST_HIRE_ROW);
+  Object.assign(off, { id: "p3-off-family", title: "Assistant Manager - 8323",
+    linkedinUrl: "https://www.linkedin.com/jobs/view/p3-off-family/", descriptionText: "Run the store." });
+  const { result } = await run({}, { jobRows: [off] });
+  const pipewise = result.companies.find((c) => c.company.company_name === "Pipewise")!;
+  assert(pipewise, "the employer stays available for a company-scoped hiring check");
+  assertFalse(discoveryProvedHiring(pipewise), "a non-growth posting is not growth-hiring evidence");
+  assert(pipewise.mission_evaluation?.decision !== "qualified");
+});
+
+Deno.test("an off-family posting does not hide a matching posting from the same employer", async () => {
+  const off = structuredClone(FIRST_HIRE_ROW);
+  Object.assign(off, { id: "p3-off-family-2", title: "Retail Key Holder",
+    linkedinUrl: "https://www.linkedin.com/jobs/view/p3-off-family-2/", descriptionText: "Open and close the store." });
+  const { result } = await run({}, { jobRows: [off, FIRST_HIRE_ROW] });
+  const pipewise = result.companies.find((c) => c.company.company_name === "Pipewise")!;
+  assert(discoveryProvedHiring(pipewise), "the matching posting still proves the requested hiring");
+});
+
 // ── the actor, verified ─────────────────────────────────────────────────────
 
 Deno.test("the probe proves the contract: employer identity arrives on every job row", () => {

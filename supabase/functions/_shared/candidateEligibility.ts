@@ -291,8 +291,10 @@ export function checkCriterion(c: MissionCriterion, graph: CompanyEvidenceGraph)
       // criterion, so an Account Executive opening proved "hiring a growth
       // role". Evidence that says WHICH role it found (the open-role verifier's
       // `{ open_role, role_families }`) must name a family the criterion asked
-      // for. A bare `true` (a posting-sourced company, whose search already
-      // asked for the role) keeps its meaning.
+      // for. A bare `true` comes from a discovery posting, and the search having
+      // ASKED for the role does not mean it returned one (Query B: "Assistant
+      // Manager" for sales), so job discovery only records it when the posting's
+      // title matches the mission's family (`jobProvesRequestedHiring`).
       if (!proven) return { ...base, result: "unknown", reason: `${dim} is reported, not proven`, evidence_ids: ids, provenance };
       if (item.value === false) return { ...base, result: "fail", reason: `${dim} is false`, evidence_ids: ids, provenance };
       const wanted = ((c.value as { qualifier?: { role_families?: unknown } } | null)?.qualifier?.role_families ?? []) as unknown[];
