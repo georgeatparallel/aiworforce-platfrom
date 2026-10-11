@@ -1,33 +1,43 @@
 # DEPLOY A PINNED RELEASE OF THE LEAD V2 EDGE FUNCTIONS — manual, production.
 #
-# Release affc7df0 — pilot-chat ONLY: the Company Brain search note goes before
-# the line's source on the mission card (PR #48), so every card line still ends
-# with its source.
-# Deployment only: no application file changes in this release PR. Measured
-# with `deno info --json` against the LIVE build (bundled local modules ∩ files
-# changed since that build):
-#   pilot-chat   7892e071 (v203) → 1 of 224 bundled modules changed:
-#                _shared/missionCriteria.ts (one line in criteriaSections:
-#                the target note's position, plus comments)
-# 7892e071..affc7df0 changes no other file under supabase/.
+# Release 2f65f6d1 — run-agent ONLY: PR #55, the two Query B (task d72bc1ce)
+# fixes. (1) A job-discovery posting proves only the hiring the mission named:
+# its title must match a requested role family (`jobProvesRequestedHiring`).
+# (2) A replenishment slice that can read no new page and whose re-plan is
+# refused for want of adaptive reserve records discovery exhausted
+# (`discoveryCannotWiden`, stop reason `discovery_spent`).
+# Deployment only: no application file changes in this release PR. The live
+# build is b51ad3dd; b51ad3dd..2f65f6d1 changes exactly three files under
+# supabase/: _shared/hiringActorNormalizers.ts, _shared/leadCapabilityEngine.ts
+# and _shared/candidateEligibility.ts (a comment only). Measured with
+# `deno info --json` (bundled local modules ∩ changed files) and by which
+# function EXECUTES the changed paths — both fixes live in `runCapabilityPlan`:
+#   run-agent    b51ad3dd (v268) → bundles all three and calls
+#                runCapabilityPlan: the Lead V2 engine. DEPLOYED.
 #
-# NOT in this release (they stay on cd9ee4b2, checked before and after):
-#   orchestrate, run-agent  both bundle missionCriteria.ts (1 changed module vs
-#     cd9ee4b2): the hiring time-window line (#44), the optional `targetNote`
-#     (#46, defaults to no note) and its position (#48). Neither renders the
-#     card — only pilot-chat imports missionConfirmationCard.ts — and run-agent
-#     reads `criteriaSections(...).unsupported` alone, which is byte-identical
-#     in output. No execution path changes.
-# The six functions on a08ac0e4 stay there (checked before and after).
-# The Railway worker already runs affc7df0 (its /health build.sha, verified
-# 2026-10-09; it redeploys itself from launch/hardening).
+# NOT in this release (they stay on b51ad3dd, checked before and after):
+#   pilot-chat   bundles all three, but imports only compileFirstProviderCall
+#                from the engine — neither fixed path runs in it.
+#   orchestrate, enqueue-lead-mission, continue-workflow, resume-stalled-leads
+#                bundle hiringActorNormalizers.ts only; the change ADDS two
+#                exports none of them calls. No execution path changes.
+# Also bundling a changed module and not deployed, as in every Lead V2
+# release: generate-company-brain-draft, unlock-founders (normalizers only, the
+# same unused new exports) and run-monitoring-scan (runs the engine for
+# Signals monitoring; its retrieval changes are a monitoring decision —
+# `monitoringRetrievalPort.ts` — never a side effect of Lead V2 work). These
+# three report no build header, so they are not checked by build here.
+# The three functions on a08ac0e4 stay there (checked before and after).
+# The Railway worker runs the Lead V2 queue in-process (it bundles run-agent and
+# all three files) and redeploys itself from launch/hardening; it is verified
+# on 2f65f6d1 separately, not by this workflow.
 #
 # ROLLBACK: the step "Back up the currently deployed function" downloads the
-# LIVE source of pilot-chat before anything changes, encrypts it with
+# LIVE source of run-agent before anything changes, encrypts it with
 # ROLLBACK_ARCHIVE_KEY and uploads it as the artifact
 # `pre-deploy-functions-<run_id>` (30 days). To roll back: download the
 # artifact, `openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ROLLBACK_ARCHIVE_KEY`
-# it, untar, and `supabase --workdir <dir> functions deploy pilot-chat
+# it, untar, and `supabase --workdir <dir> functions deploy run-agent
 # --project-ref ohsdatpvfdjdemstoiuj --use-docker`.
 # Nothing here rolls back automatically: a failed step stops the job and prints
 # which functions are on which build.
@@ -48,7 +58,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_sha:
-        description: "Type the release SHA to deploy: affc7df0"
+        description: "Type the release SHA to deploy: 2f65f6d1"
         required: true
         type: string
 
@@ -60,22 +70,22 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_SHA: affc7df085af52fce4caf220bf6d63f144a2043e
-  # The release the six untouched lead-path functions still run; the preflight
+  RELEASE_SHA: 2f65f6d14da5abff2f3fdf8ba76c38694d4d6603
+  # The release the three untouched a08ac0e4 functions still run; the preflight
   # proves the build check works by reading one of them back.
   PREVIOUS_RELEASE_SHA: a08ac0e4edea6f3aa54314db4efe0073e371b82f
-  # The release orchestrate and run-agent run, and keep running, through this
-  # deploy (pinned release cd9ee4b2, run 37643630558).
-  HELD_RELEASE_SHA: cd9ee4b24327c300508800c677331167e08ae417
-  # What the deployed function runs BEFORE this deploy (pinned release
-  # 7892e071, run 37793444882). The preflight refuses if it has moved, so this
-  # never overwrites a build nobody backed up on purpose.
-  LIVE_PILOT_CHAT_SHA: 7892e0718e50879b15b3dcc8eef672880f92258a
-  LIVE_PILOT_CHAT_VERSION: "203"
-  DEPLOYED_FUNCTIONS: "pilot-chat"
+  # The release the other lead-path functions run, and keep running, through
+  # this deploy (b51ad3dd, PR #54, deployed 2026-10-11 06:46 UTC).
+  HELD_RELEASE_SHA: b51ad3dddf2604f9d218d7c495e17e22d20932db
+  # What the deployed function runs BEFORE this deploy (b51ad3dd, v268). The
+  # preflight refuses if it has moved, so this never overwrites a build nobody
+  # backed up on purpose.
+  LIVE_RUN_AGENT_SHA: b51ad3dddf2604f9d218d7c495e17e22d20932db
+  LIVE_RUN_AGENT_VERSION: "268"
+  DEPLOYED_FUNCTIONS: "run-agent"
   # Lead-path functions this deploy must NOT touch, with the build each runs.
-  UNTOUCHED_ON_HELD: "orchestrate run-agent"
-  UNTOUCHED_ON_PREVIOUS: "enqueue-lead-mission continue-workflow resume-stalled-leads ops-health approve-and-continue send-scheduled-emails"
+  UNTOUCHED_ON_HELD: "pilot-chat orchestrate enqueue-lead-mission continue-workflow resume-stalled-leads"
+  UNTOUCHED_ON_PREVIOUS: "ops-health approve-and-continue send-scheduled-emails"
   PROJECT_REF: ohsdatpvfdjdemstoiuj
   SUPABASE_URL: https://ohsdatpvfdjdemstoiuj.supabase.co
 
@@ -93,11 +103,11 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm_sha }}
         run: |
-          if [ "$CONFIRM" != "affc7df0" ]; then echo "::error::confirm_sha must be affc7df0"; exit 1; fi
+          if [ "$CONFIRM" != "2f65f6d1" ]; then echo "::error::confirm_sha must be 2f65f6d1"; exit 1; fi
 
       - uses: actions/checkout@v4
         with:
-          ref: affc7df085af52fce4caf220bf6d63f144a2043e
+          ref: 2f65f6d14da5abff2f3fdf8ba76c38694d4d6603
           # Full history, so the ancestry check below is never defeated by a
           # shallow clone.
           fetch-depth: 0
@@ -147,9 +157,9 @@ jobs:
         run: |
           # A function this deploy does not touch must read back as the previous
           # release, or the post-deploy checks below could not prove anything.
-          "$RUNNER_TEMP/expect-build.sh" enqueue-lead-mission "$PREVIOUS_RELEASE_SHA"
-          # The held-back pair must be on the previous pinned release now, so
-          # the after-check can prove this deploy left them alone.
+          "$RUNNER_TEMP/expect-build.sh" approve-and-continue "$PREVIOUS_RELEASE_SHA"
+          # The held-back functions must be on the previous pinned release now,
+          # so the after-check can prove this deploy left them alone.
           for fn in $UNTOUCHED_ON_HELD; do
             "$RUNNER_TEMP/expect-build.sh" "$fn" "$HELD_RELEASE_SHA"
           done
@@ -167,7 +177,7 @@ jobs:
               || { echo "::error::$fn is not on the expected version v$version: $meta"; exit 1; }
             echo "$fn: v$version, verify_jwt=true (before)"
           }
-          check_live pilot-chat "$LIVE_PILOT_CHAT_SHA" "$LIVE_PILOT_CHAT_VERSION"
+          check_live run-agent "$LIVE_RUN_AGENT_SHA" "$LIVE_RUN_AGENT_VERSION"
 
       - name: Precondition — FIRECRAWL_USD_PER_CREDIT exists (name only)
         env:
@@ -214,22 +224,22 @@ jobs:
       - name: Stamp the build with the release SHA
         run: scripts/deploy/stamp-build.sh stamp
 
-      # The only function in this release. What it hands work to (orchestrate,
-      # run-agent, the worker) already reads the same mission semantics.
-      - name: Deploy pilot-chat (1 of 1)
+      # The only function in this release: the edge copy of the Lead V2 engine.
+      # Mission compilation (pilot-chat, orchestrate) does not change.
+      - name: Deploy run-agent (1 of 1)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_TARGET: production
-        run: node scripts/supabase-target.mjs production -- functions deploy pilot-chat --use-docker
+        run: node scripts/supabase-target.mjs production -- functions deploy run-agent --use-docker
 
-      - name: Verify pilot-chat
+      - name: Verify run-agent
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          "$RUNNER_TEMP/expect-build.sh" pilot-chat
+          "$RUNNER_TEMP/expect-build.sh" run-agent
           curl -fsS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
-            "https://api.supabase.com/v1/projects/$PROJECT_REF/functions/pilot-chat" | jq -e '.verify_jwt == true' > /dev/null
-          echo "pilot-chat: verify_jwt=true (after)"
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/functions/run-agent" | jq -e '.verify_jwt == true' > /dev/null
+          echo "run-agent: verify_jwt=true (after)"
 
       - name: Untouched functions are still on their existing build
         run: |
