@@ -155,12 +155,24 @@ export function isProfileOrEquityTitle(title: string | null | undefined): boolea
   return PROFILE_OR_EQUITY_RE.test(t);
 }
 
+/**
+ * Titles that carry a sales word without being a quota-carrying sales hire.
+ * Query B (task 255c333f): a PR agency's "Account Executive" (client service),
+ * "Global Sales & Operations Planning Leader" (supply/demand planning) and a
+ * "Customer Service Sales Representative" all matched gtm_sales by the word
+ * "account executive" or "sales". Only TITLE matching reads this; classifying a
+ * request's own wording (`classifyRoleFamily`) is unchanged.
+ */
+const NOT_A_SALES_HIRE_RE =
+  /\b(?:public relations|pr)\b[^,]*\baccount executives?\b|\baccount executives?\b[^,]*,\s*(?:public relations|pr)\b|\bsales\s*(?:&|and)\s*operations planning\b|\bs&op\b|\bcustomer service\b/i;
+
 /** Does a job title belong to the requested role family? */
 export function roleMatchesFamily(title: string | null | undefined, fam: RoleFamily): boolean {
   if (!fam || fam === "custom") return false;
   const t = String(title ?? "");
   if (!t.trim()) return false;
   if (fam === "assistant_founder_support") return SUPPORT_ROLE_RE.test(t);
+  if (fam === "gtm_sales" && NOT_A_SALES_HIRE_RE.test(t)) return false;
   // Title matches if it classifies to this family, or contains one of its aliases.
   if (classifyRoleFamily(t) === fam) return true;
   const lc = t.toLowerCase();
