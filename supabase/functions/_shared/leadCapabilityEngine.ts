@@ -168,7 +168,8 @@ import {
   dedupeJobs, dedupePeople, normalizeHarvestPerson,
   nonCompanyPageReason,
   normalizeLinkedInCompanyCandidate, normalizeLinkedInCompanyEnriched,
-  normalizeLinkedInJob, jobEmployerIdentityConflict, normalizeMemo23Company, normalizeMemo23OpenJobs,
+  normalizeLinkedInJob, jobEmployerIdentityConflict, jobProvesRequestedHiring, requestedHiringFromSignals,
+  normalizeMemo23Company, normalizeMemo23OpenJobs,
   firstHireLanguage, jobEmployerAgencyReason, jobEmployerToCompany, jobIsOpen,
   normalizeSolidcodeCompany,
   type NormalizedHiringCompany, type NormalizedHiringJob, type NormalizedHiringPerson,
@@ -5835,6 +5836,12 @@ export async function runCapabilityPlan(
             const dropped = new Map<string, number>();
             const seenJobs = new Set<string>();
             let jobsKept = 0;
+            // The provider does not guarantee its rows match the titles it was
+            // asked for (Query B: "Assistant Manager" for a sales search), so a
+            // posting proves only the hiring the mission named.
+            const requestedHiring = requestedHiringFromSignals(
+              (opts.mission?.required_signals ?? []).filter(isHiringSignal));
+            let notHiringProof = 0;
             const jobRows = await callProvider(cap, provider, compiled);
             for (const r of jobRows) {
               if (!jobIsOpen(r)) {
@@ -5864,6 +5871,15 @@ export async function runCapabilityPlan(
               const jobKey = job.job_id ?? job.job_url ?? `${employer.linkedin_company_url}|${job.title}`;
               if (seenJobs.has(jobKey)) continue;
               seenJobs.add(jobKey);
+              if (!jobProvesRequestedHiring(job, requestedHiring)) {
+                // The employer stays a candidate with hiring unknown: an
+                // off-role posting is not a "no", and a company-scoped check
+                // (or another posting) can still prove the requested role.
+                notHiringProof++;
+                addCompany(companies, { ...employer, hiring_status: null }, [], null,
+                  undefined, observedBy(cap, provider));
+                continue;
+              }
               jobsKept++;
               // P4: the union absorbs a second posting from the same employer (its
               // job joins the company's list) exactly as it absorbs another route.
@@ -5884,9 +5900,13 @@ export async function runCapabilityPlan(
               cost_units: 0,
               reason: `kept ${jobsKept} open posting(s) with the employer's LinkedIn page` +
                 (dropped.size ? `; dropped ${[...dropped.entries()].map(([why, k]) => `${k} ${why}`).join(", ")}` : "") +
+                (notHiringProof ? `; ${notHiringProof} posting(s) outside the requested role kept their employer without hiring proof` : "") +
                 " — identity taken from the posting, no Company Search",
             });
-            log("job_discovery_rows", { kept: jobsKept, dropped: Object.fromEntries(dropped), employers: companies.length });
+            log("job_discovery_rows", {
+              kept: jobsKept, dropped: Object.fromEntries(dropped), not_hiring_proof: notHiringProof,
+              employers: companies.length,
+            });
           } else if (provider === "apify_funding_rounds_datahyena") {
             // ── DISCOVERY BY FUNDING EVENT ──────────────────────────────────
             //

@@ -12,6 +12,7 @@
 
 import { linkedInAssociatedMemberCount, linkedInDeclaredSizeBand, type CompanySizeBand } from "./companySize.ts";
 import { normalizeCompanyLinkedInUrl, normalizeWebsite, sanitizeUrl } from "./structuredCompanyEnrichment.ts";
+import { ROLE_FAMILY_ALIASES, roleMatchesFamily, type RoleFamily } from "./roleFamilies.ts";
 
 export type FieldTrust = "direct" | "alias" | "transformed" | "semantic" | "unsafe";
 
@@ -560,6 +561,56 @@ export function jobEmployerIdentityConflict(r: Record<string, unknown>):
     .replace(/\s+/g, " ").trim();
   return canonical(explicitEmployer) === canonical(structuredName)
     ? null : "posting_employer_conflict";
+}
+
+/** The hiring a mission asked for: the role families it named, and a window it stated. */
+export interface RequestedHiring {
+  role_families: readonly string[];
+  /** Days, when the mission stated one; null leaves the search's own freshness filter to govern. */
+  window_days: number | null;
+}
+
+/** The requested hiring, read from the mission's hiring signals. Null when it asks for none. */
+export function requestedHiringFromSignals(
+  hiringSignals: ReadonlyArray<{ role_families?: readonly string[] | null; timeframe_days?: number | null }>,
+): RequestedHiring | null {
+  if (hiringSignals.length === 0) return null;
+  const families = [...new Set(hiringSignals.flatMap((sig) => sig.role_families ?? [])
+    .map((f) => String(f).trim()).filter((f) => f.length > 0))];
+  const windows = hiringSignals.map((sig) => Number(sig.timeframe_days))
+    .filter((d) => Number.isFinite(d) && d > 0);
+  return { role_families: families, window_days: windows.length ? Math.min(...windows) : null };
+}
+
+/**
+ * CAN THIS POSTING PROVE THE HIRING THE MISSION ASKED FOR?
+ *
+ * Production Query B (task d72bc1ce): a search asked for sales titles returned
+ * "Assistant Manager" and "Retail Key Holder" postings, and each one proved
+ * sales hiring — the provider does not guarantee its rows match the titles it
+ * was asked for. So a posting proves a named role family only when its title
+ * matches one (the canonical `roleMatchesFamily`), and a stated window only
+ * when it is dated inside it (an undated posting proves no window, as T02).
+ *
+ * A mission that names no recognised family keeps the old meaning: any opening
+ * is the evidence. A posting that fails here is not a "no": its employer stays
+ * a candidate, and hiring stays unknown for a company-scoped check to answer.
+ */
+export function jobProvesRequestedHiring(
+  job: Pick<NormalizedHiringJob, "title" | "posted_date">,
+  requested: RequestedHiring | null,
+  now: Date = new Date(),
+): boolean {
+  if (!requested) return true;
+  const families = requested.role_families.filter((f): f is Exclude<RoleFamily, null | "custom"> =>
+    Object.hasOwn(ROLE_FAMILY_ALIASES, f));
+  if (families.length > 0 && !families.some((f) => roleMatchesFamily(job.title, f))) return false;
+  if (requested.window_days != null && requested.window_days > 0) {
+    const posted = Date.parse(job.posted_date ?? "");
+    if (!Number.isFinite(posted)) return false;
+    if (now.getTime() - posted > requested.window_days * 86_400_000) return false;
+  }
+  return true;
 }
 
 // ── JOB-FIRST DISCOVERY (LEAD V2 P3) ─────────────────────────────────────────
