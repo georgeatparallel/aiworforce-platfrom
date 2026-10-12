@@ -35,10 +35,15 @@ import {
 } from "../supabase/functions/_shared/leadMissionCancellation.ts";
 import { resolvePlanNoticesForQueueEnd, supabaseNoticeDb } from "../supabase/functions/_shared/runNotices.ts";
 import { createLeadMissionRunner } from "./leadMissionRunner.ts";
+import { installTimestampedConsole } from "./logTimestamps.ts";
 import { newStatus, healthView, startHealthServer } from "./health.ts";
 import { buildInfo } from "../supabase/functions/_shared/buildStamp.ts";
 import { mountApi } from "./api/server.ts";
 import { sealFunctionListeners } from "./api/routes.ts";
+
+// EVERY LINE CARRIES ITS TIME — the worker's and run-agent's (in-process) alike.
+// Query B d22d9ee6 had a 5.5-minute stretch no log line could place.
+installTimestampedConsole();
 
 const env = (k: string) => Deno.env.get(k);
 const num = (k: string, d: number) => { const v = Number(env(k)); return Number.isFinite(v) && v > 0 ? v : d; };

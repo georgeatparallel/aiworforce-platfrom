@@ -433,6 +433,7 @@ import {
   AUTO_CONTINUATION_VERSION, LINEAGE_PROGRESS_KEY, type LineageProgress,
 } from "../_shared/leadAutoContinuation.ts";
 import { guardProgressWrite, resolveLineageProgress } from "../_shared/lineageProgressGuard.ts";
+import { retryTransient } from "../_shared/retryTransient.ts";
 import {
   continuingCheckpointContent, continuingResultsContent, noticeIsOpen, publishResultsNotice,
   RUN_NOTICE_VERSION, runEndingOf, supabaseNoticeDb, type NoticeMessage, type RunEnding,
@@ -1243,11 +1244,28 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
       const line = {
         at: new Date().toISOString(), task_id: task?.id ?? null, ...d,
         queue_continuations: inProcess.queueContinuations ?? null,
+        // THE SIZE OF WHAT IS WRITTEN. Query B d22d9ee6's slice-5 writes hit
+        // statement timeouts on a multi-megabyte row; this says how big.
+        result_bytes: (() => { try { return JSON.stringify(g.result).length; } catch { return null; } })(),
       };
       if (d.restored) console.warn("[run-agent][lineage-progress-write] prevented a decrease", line);
       else console.log("[run-agent][lineage-progress-write]", line);
     }
     return g.result;
+  };
+  // ── WHERE A SLICE SPENDS ITS TIME ──────────────────────────────────────────
+  //
+  // One line per major phase, with time since the invocation started and since
+  // the previous phase. Query B d22d9ee6's slice 4 ran 6.5 minutes against a
+  // 300-second ceiling and nothing said where.
+  let lastPhaseAt = invocationStartMs;
+  const markPhase = (name: string, extra: Record<string, unknown> = {}) => {
+    const now = Date.now();
+    console.log("[run-agent][phase]", {
+      at: new Date(now).toISOString(), task_id: task?.id ?? null, phase: name,
+      since_start_ms: now - invocationStartMs, since_prev_ms: now - lastPhaseAt, ...extra,
+    });
+    lastPhaseAt = now;
   };
   // The lease taken on the RPC path lives in COLUMNS, so it must be released
   // explicitly when the round ends. Held here because the claim is taken in this
@@ -1457,6 +1475,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   console.log("[run-agent][lineage-lease]", {
     task_id: task.id, lineage_id: lineageRootId, ...leaseGate.observation,
   });
+  markPhase("startup_lease", { lease: leaseOutcome.acquired ? "acquired" : "not_acquired" });
   // THE VERSION THIS GENERATION READ. Its write must quote it back, or the
   // compare-and-swap cannot tell a fresh write from a stale one.
   const leaseVersion = leaseOutcome.acquired ? leaseOutcome.stateVersion : null;
@@ -4233,6 +4252,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             try {
               capabilityRun = await executeRound(
                 persistedMission, missionPlan, leadResumeRecords, restoredPoolResults);
+              markPhase("engine", { companies: capabilityRun?.companies.length ?? 0 });
             } catch (e) {
               if (!(e instanceof DiscoveryStrategyBlockedError)) throw e;
               console.log("[run-agent][discovery-refused]", {
@@ -5410,6 +5430,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   },
                   log: verifierLog,
                 });
+                markPhase("claim_verification");
                 vState.verifier_pending_runs = phase.pending;
                 console.log("[run-agent][claim-verifier]", {
                   task_id: task.id, order: phase.order, ran: phase.ran, stopped: phase.stopped, irrelevant: phase.irrelevant,
@@ -7068,6 +7089,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               : { error: routeResolution.ok ? null : routeResolution.errors },
           }),
         }).eq("id", task.id);
+        markPhase("slice_result_write");
 
         // RELEASE THE DURABLE LEASE. `releaseClaim` above only strips the
         // `result` key the compatibility path writes; the RPC's lease lives in
@@ -7076,11 +7098,20 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // Best-effort: the outcome is already committed, so a failure here costs
         // one lease interval, never a result.
         if (heldClaim?.viaRpc) {
-          const released = await releaseContinuationViaRpc({
-            db: supabase as unknown as RpcDb,
-            taskId: task.id, workspaceId: workspace_id,
-            claimId: heldClaim.claimId, rowStatus: statuses.rowStatus,
-          });
+          // RETRIED ON A TRANSIENT FAILURE. Query B d22d9ee6's slice-5 release
+          // hit a statement timeout (57014); the claim stayed held and slice 6
+          // was refused (409). The release is keyed by claim id, so a repeat is
+          // safe. Bounded at ~4 s: it must run even past the paid-work deadline.
+          const { result: released, attempts: claimReleaseAttempts } = await retryTransient(
+            () => releaseContinuationViaRpc({
+              db: supabase as unknown as RpcDb,
+              taskId: task.id, workspaceId: workspace_id,
+              claimId: heldClaim.claimId, rowStatus: statuses.rowStatus,
+            }),
+            (r) => !r.released && (r.category === "transport" || r.category === "database" || r.category === "unknown"),
+            { attempts: 3, delaysMs: [1_000, 3_000] },
+          );
+          markPhase("claim_release", { released: released.released, attempts: claimReleaseAttempts });
           if (!released.released) {
             console.error("[run-agent][company-first] claim release failed", {
               task_id: task.id, claim_path: "rpc",
@@ -7225,15 +7256,27 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           // makes `acquire_lineage_lease` refuse outright, so a ceiling or a
           // provider failure must NOT arrive here: those stay `active` and
           // remain claimable, which is what keeps the sweeper working.
-          const leaseReleased = await releaseLineageLease({
-            db: supabase as unknown as LeaseRpcDb,
-            lineageId: lineageRootId, workspaceId: workspace_id,
-            holderTaskId: task.id, expectedVersion: leaseVersion,
-            nextState: merged.state,
-            madeProgress,
-            ...(lineageIsFinished(autoDecision)
-              ? { terminalReason: autoDecision.reason }
-              : {}),
+          // RETRIED ON `release_unavailable` (an RPC that never answered — a
+          // statement timeout in d22d9ee6). The version compare-and-swap makes a
+          // repeat safe: a release that did land answers `not_lease_holder` or
+          // `version_conflict`, which is final, not retried.
+          const { result: leaseReleased, attempts: leaseReleaseAttempts } = await retryTransient(
+            () => releaseLineageLease({
+              db: supabase as unknown as LeaseRpcDb,
+              lineageId: lineageRootId, workspaceId: workspace_id,
+              holderTaskId: task.id, expectedVersion: leaseVersion,
+              nextState: merged.state,
+              madeProgress,
+              ...(lineageIsFinished(autoDecision)
+                ? { terminalReason: autoDecision.reason }
+                : {}),
+            }),
+            (r) => !r.released && "reason" in r && r.reason === "release_unavailable",
+            { attempts: 3, delaysMs: [1_000, 3_000] },
+          );
+          markPhase("lineage_release", {
+            released: leaseReleased.released, attempts: leaseReleaseAttempts,
+            state_bytes: (() => { try { return JSON.stringify(merged.state).length; } catch { return null; } })(),
           });
           if (!leaseReleased.released) {
             // A `version_conflict` here means something else advanced this
