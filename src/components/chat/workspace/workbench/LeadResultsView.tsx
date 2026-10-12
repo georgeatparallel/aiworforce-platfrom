@@ -530,7 +530,9 @@ export default function LeadResultsView({
       <RunSummaryHero
         summary={summary}
         funnel={evaluationRows.length > 0
-          ? workbenchFunnelCounts(evaluationRows, partition.qualified.length)
+          // QUALIFIED COMPANIES, not contact-ready leads: a company with no
+          // contact yet is still qualified (Query B d22d9ee6 read "0 qualified").
+          ? workbenchFunnelCounts(evaluationRows, Math.max(partition.qualified.length, summary.qualifiedCompanies.value))
           : null}
         cta={isRecommendationDispatchable(recommendation) ? {
           label: recommendation.label,
