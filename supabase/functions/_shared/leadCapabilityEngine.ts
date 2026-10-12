@@ -49,7 +49,7 @@ import {
   compileHarvestCompanyDetailsInput, compileHarvestCompanyEmployeesInput,
   compileHarvestCompanySearchInput,
   compileHarvestJobDiscoveryInput, compileHarvestJobSearchInput, compileHarvestProfileSearchInput,
-  JOB_DISCOVERY_LIMITS,
+  JOB_DISCOVERY_LIMITS, boundJobDiscoveryTitles,
   compileDatahyenaFundingInput, compileMemo23YcInput, fanOutSolidcodeTeamSizes,
   type CompiledActorCall, type CompileResult,
 } from "./hiringActorInputs.ts";
@@ -3796,6 +3796,16 @@ export async function runCapabilityPlan(
   };
 
   /** One provider call: idempotency, cost, attempt record, never off-graph. */
+  /** A job-discovery proposal with its titles bounded (`boundJobDiscoveryTitles`); logged when it changes. */
+  const boundJobDiscoveryProposal = (input: Record<string, unknown>): Record<string, unknown> => {
+    const titles = input.jobTitles;
+    if (!Array.isArray(titles)) return input;
+    const bounded = boundJobDiscoveryTitles(titles.map(String), requestedHiringFromSignals(
+      (opts.mission?.required_signals ?? []).filter(isHiringSignal)), JOB_DISCOVERY_LIMITS.jobTitles);
+    if (canonicalJson(bounded) === canonicalJson(titles)) return input;
+    log("job_discovery_titles_bounded", { before: titles, after: bounded, limit: JOB_DISCOVERY_LIMITS.jobTitles });
+    return { ...input, jobTitles: bounded };
+  };
   const callProvider = async (
     capability: CapabilityId, provider: string, compiled: CompileResult<unknown>,
     company?: EngineCompany,
@@ -3892,9 +3902,16 @@ export async function runCapabilityPlan(
       const discoveryBound = candidatesLeft === null
         ? opts.maxCandidates
         : Math.min(candidatesLeft, opts.maxCandidates ?? candidatesLeft);
+      const plannerProposed = entry ? (entry.kind === "route" ? entry.route.proposed_input : entry.stage.proposed_input) : null;
       callSpec = compileProviderCallSpec({
         actorKey: provider, capability, purpose,
-        proposed: entry ? (entry.kind === "route" ? entry.route.proposed_input : entry.stage.proposed_input) : null,
+        // THE PLANNER'S TITLES, BOUNDED TO THE ACTOR'S LIMIT. The spec keeps the
+        // planner's query and rejects engine rewrites, so the bound must hold on
+        // the proposal itself — or four titles reach a three-title actor, and
+        // "account manager" reaches a sales search (Query B a9a6791a).
+        proposed: plannerProposed && provider === "apify_linkedin_job_search" && purpose === "discovery"
+          ? boundJobDiscoveryProposal(plannerProposed as Record<string, unknown>)
+          : plannerProposed,
         engine: engineInput, policy: criteriaPolicy,
         plan: {
           plan_id: plan?.plan_id ?? null, version: plan?.version ?? null, route_id: route?.route_id ?? null,
@@ -5044,6 +5061,8 @@ export async function runCapabilityPlan(
       const pendingFor = (provider: string) =>
         state.provider_attempts.some(
           (a) => a.capability === cap && a.provider === provider && a.outcome === "pending");
+      const boundedJobDiscoveryInput = (input: Record<string, unknown> | undefined): Record<string, unknown> =>
+        boundJobDiscoveryProposal({ ...(input ?? {}) });
       const compileFailedFor = (provider: string) =>
         state.provider_attempts.some(
           (a) => a.capability === cap && a.provider === provider && a.outcome === "compile_failed");
@@ -5526,6 +5545,12 @@ export async function runCapabilityPlan(
           return;
         }
         if (!("route" in decision)) return;
+        // THE ACTOR'S LIMITS HOLD BEFORE THE AMENDMENT IS RECORDED, so the plan
+        // states the question that is actually asked (Query B a9a6791a: four
+        // titles to a three-title actor became the slice's schema_failure).
+        if (decision.route.actor_key === "apify_linkedin_job_search" && cap === "job_discovery") {
+          decision.route.input = boundedJobDiscoveryInput(decision.route.input);
+        }
         const amended = p2AcceptAmendment(executionPlan, decision.trigger, [{
           capability: cap, provider: decision.route.actor_key, input: decision.route.input,
         }], { availableAdmitted: availableAdmittedNow() });
@@ -5880,18 +5905,18 @@ export async function runCapabilityPlan(
             // the engine adds only a row bound when none was proposed. Each
             // open, non-agency posting brings its employer WITH a LinkedIn
             // company record, so identity is never searched for these.
-            const compiled = compileHarvestJobDiscoveryInput({
-              maxItems: Math.min(maxCandidates, JOB_DISCOVERY_LIMITS.maxItems),
-              ...sel.input,
-            } as never);
-            const dropped = new Map<string, number>();
-            const seenJobs = new Set<string>();
-            let jobsKept = 0;
             // The provider does not guarantee its rows match the titles it was
             // asked for (Query B: "Assistant Manager" for a sales search), so a
             // posting proves only the hiring the mission named.
             const requestedHiring = requestedHiringFromSignals(
               (opts.mission?.required_signals ?? []).filter(isHiringSignal));
+            const compiled = compileHarvestJobDiscoveryInput({
+              maxItems: Math.min(maxCandidates, JOB_DISCOVERY_LIMITS.maxItems),
+              ...boundedJobDiscoveryInput(sel.input),
+            } as never);
+            const dropped = new Map<string, number>();
+            const seenJobs = new Set<string>();
+            let jobsKept = 0;
             let notHiringProof = 0;
             const jobRows = await callProvider(cap, provider, compiled);
             for (const r of jobRows) {

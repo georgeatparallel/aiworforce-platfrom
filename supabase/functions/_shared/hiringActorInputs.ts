@@ -265,6 +265,7 @@ function canonical(v: unknown): string {
 }
 
 import { providerInputFingerprint } from "./providerInputFingerprint.ts";
+import { classifyRoleFamily, ROLE_FAMILY_ALIASES, type RoleFamily, roleMatchesFamily } from "./roleFamilies.ts";
 
 const LINKEDIN_COMPANY_URL =
   /^https?:\/\/([a-z0-9-]+\.)?linkedin\.com\/(company|school|showcase)\/[A-Za-z0-9_\-%.]+\/?$/i;
@@ -610,6 +611,71 @@ export function compileHarvestJobSearchInput(
 
 /** Bounds for a discovery call: titles × locations × maxItems is the bill. */
 export const JOB_DISCOVERY_LIMITS = Object.freeze({ jobTitles: 3, locations: 2, maxItems: 50, industryIds: 10 });
+
+/**
+ * THE TITLES A JOB-DISCOVERY CALL MAY SEND, BOUNDED BEFORE IT IS COMPILED.
+ *
+ * Query B a9a6791a: route control proposed FOUR titles to an actor that accepts
+ * three. The compiler refused it (correctly), the refusal became the slice's
+ * `schema_failure`, and the query was never asked. The slice-2 selector also
+ * searched "account manager" for a sales mission — an account-care title the
+ * role filter then rejected, 22 of 30 rows at a time. Both are fixed here, in
+ * one deterministic pass, before `compileHarvestJobDiscoveryInput` sees them:
+ *
+ *   1. every entry is split into its LinkedIn boolean terms (`a OR "b c"`);
+ *   2. a term that names a DIFFERENT known role family than the mission asked
+ *      for is dropped ("Account Manager" / "Customer Success Manager" for
+ *      gtm_sales); a term no family recognises is kept — the post-filter
+ *      decides it, the query is not narrowed on a guess;
+ *   3. duplicates are removed (case-insensitive) BEFORE anything is counted;
+ *   4. entries beyond the limit are FOLDED into the last allowed entry as one
+ *      OR expression — never truncated, so every surviving title is asked.
+ *
+ * Order is the planner's (first appearance), so the answer is a pure function
+ * of the input. An input that needs none of this is returned unchanged, which
+ * keeps its input hash — and its idempotency key — exactly as before.
+ */
+export function boundJobDiscoveryTitles(
+  titles: readonly string[],
+  requested: { role_families: readonly string[] } | null,
+  limit: number,
+): string[] {
+  const families = (requested?.role_families ?? []).filter((f): f is Exclude<RoleFamily, null | "custom"> =>
+    Object.hasOwn(ROLE_FAMILY_ALIASES, f));
+  const offFamily = (term: string): boolean => {
+    if (families.length === 0) return false;
+    const fam = classifyRoleFamily(term);
+    if (!fam || fam === "custom" || families.includes(fam as never)) return false;
+    return !families.some((f) => roleMatchesFamily(term, f));
+  };
+  const terms = (entry: string) => String(entry).split(/\s+OR\s+/)
+    .map((t) => t.trim().replace(/^[("']+|[)"']+$/g, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  let changed = false;
+  const kept: string[][] = [];
+  for (const entry of titles) {
+    const all = terms(entry);
+    const out: string[] = [];
+    for (const t of all) {
+      const key = t.toLowerCase();
+      if (seen.has(key) || offFamily(t)) { changed = true; continue; }
+      seen.add(key);
+      out.push(t);
+    }
+    if (out.length) kept.push(out);
+    else changed = true;
+  }
+  // Nothing in the mission's family survived: keep the planner's question (deduped)
+  // rather than send none — the post-filter still decides every row.
+  if (kept.length === 0) return titles.length <= limit ? [...titles] : boundJobDiscoveryTitles(titles, null, limit);
+  if (!changed && kept.length <= limit) return [...titles];
+  const quote = (t: string) => /\s/.test(t) ? `"${t}"` : t;
+  const join = (ts: string[]) => ts.length === 1 ? ts[0] : ts.map(quote).join(" OR ");
+  const head = kept.slice(0, Math.max(0, limit - 1));
+  const tail = kept.slice(head.length).flat();
+  return [...head.map(join), ...(tail.length ? [join(tail)] : [])];
+}
 
 export function compileHarvestJobDiscoveryInput(
   i: HarvestJobDiscoveryInput & { company?: unknown },

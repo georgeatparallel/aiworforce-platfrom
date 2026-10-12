@@ -224,7 +224,7 @@ Deno.test("[matrix] 17 duplicate provider page: identical rows are a duplicate; 
 Deno.test("[matrix] 18 provider input limit: four titles compile within the actor's limit of three", () => {
   const titles = actorInputs.boundJobDiscoveryTitles(["account executive", "sales development representative", "business development representative", "sales manager"], SALES, actorInputs.JOB_DISCOVERY_LIMITS.jobTitles);
   assert(titles.length <= actorInputs.JOB_DISCOVERY_LIMITS.jobTitles);
-  const c = actorInputs.compileHarvestJobDiscoveryInput({ jobTitles: titles, locations: ["United States"], maxItems: 30 } as never);
+  const c = actorInputs.compileHarvestJobDiscoveryInput({ jobTitles: titles, locations: ["United States"], postedLimit: "month", maxItems: 30 } as never);
   assert(c.ok, c.ok ? "" : c.errors.join("; "));
 });
 
