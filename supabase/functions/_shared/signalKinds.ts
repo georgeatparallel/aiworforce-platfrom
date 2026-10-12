@@ -25,7 +25,7 @@
 // Pure. No network, no model, no database.
 
 import {
-  describeSignal, readSignalPhrase, readSignalsFromQuery,
+  describeSignal, OPEN_ROLES_RE, POSTED_JOBS_RE, readSignalPhrase, readSignalsFromQuery,
   type MissionSignalDescriptor, type SignalEvent, type SignalQualifier, type SignalSubject,
 } from "./missionSignalDescriptor.ts";
 
@@ -205,7 +205,9 @@ const OPEN_ROLE_VERB = /\b(?:hiring|recruiting|looking for|seeking|searching for
  */
 const HIRING_INDUSTRY_NOUN =
   /\b(?:recruit\w*|staffing|talent acquisition|headhunting|hiring)\s+(?:agenc\w*|firms?|compan\w*|platforms?|software|industry|businesses|services?|partners?|marketplaces?|tools?)\b/gi;
-const REAL_HIRING_CUE = /\bhiring\b|\brecruit(?:ing|s|ed)?\b|\bopen roles?\b|\bjob (?:postings?|openings?)\b|\bhires?\b|\bsellers?\b/i;
+const REAL_HIRING_CUE = new RegExp(
+  String.raw`\bhiring\b|\brecruit(?:ing|s|ed)?\b|\bopen roles?\b|\bjob (?:postings?|openings?)\b|\bhires?\b|\bsellers?\b|` +
+  `${OPEN_ROLES_RE.source}|${POSTED_JOBS_RE.source}`, "i");
 
 interface AliasRule { re: RegExp; kind: CanonicalSignalKind; subkind?: string; name: string }
 
