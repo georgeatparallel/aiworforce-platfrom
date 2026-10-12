@@ -101,6 +101,8 @@ export async function reconcileTerminalRows(
   reason: string,
   ids: TerminalIds,
   nowIso: string,
+  /** Kept on the task result (`v2_terminal.detail`) when given. */
+  detail?: string | null,
 ): Promise<ReconcileResult> {
   const rows: TerminalRows = { task: null, lineage: null, plan: null };
   // THE CHEAP READ FIRST. `readTaskTerminalFields` returns the same task shape
@@ -113,7 +115,7 @@ export async function reconcileTerminalRows(
   if (ids.lineageId) rows.lineage = await db.readLineage(ids.lineageId);
   if (ids.planId) rows.plan = await db.readPlan(ids.planId);
 
-  let patch = planTerminalReconciliation(queueStatus, reason, rows, nowIso);
+  let patch = planTerminalReconciliation(queueStatus, reason, rows, nowIso, detail);
   const written: ReconcileResult["written"] = [];
   if (patch.violations.length === 0) {
     return { violations: [], written, remaining: [] };
@@ -123,7 +125,7 @@ export async function reconcileTerminalRows(
   // Re-decided on the full row so the projection can never change an outcome.
   if (projected && ids.taskId) {
     rows.task = await db.readTask(ids.taskId);
-    patch = planTerminalReconciliation(queueStatus, reason, rows, nowIso);
+    patch = planTerminalReconciliation(queueStatus, reason, rows, nowIso, detail);
     if (patch.violations.length === 0) return { violations: [], written, remaining: [] };
   }
   if (patch.task && ids.taskId) {
@@ -215,4 +217,73 @@ export async function sweepCancelledMissions(
     out.details.push({ queue_id: row.id, violations: r.violations, written: r.written, remaining: r.remaining });
   }
   return out;
+}
+
+// ── CANCEL AND FINALIZE, IN ONE SUPPORTED CALL ─────────────────────────────
+//
+// Query B d22d9ee6 (2026-10-12): `cancel_lead_mission` set the queue row and
+// nothing else; the task read `ready` and the plan `partial` until a running
+// worker's sweep reconciled them a minute later. With no worker running they
+// would have stayed so. This applies the sweep's own reconcile at once — but
+// only to a mission no worker holds. A claimed mission is flagged and left to
+// its worker: the heartbeat answers `mission_cancelled`, the slice stops
+// starting paid work, and the release reconciles (finalizing under a live
+// slice would race the slice's own writes).
+
+export interface CancelMissionDb extends TerminalRowsDb {
+  readQueueRow: (queueId: string) => Promise<{
+    id: string; workspace_id: string; status: string; claimed_by: string | null;
+    task_id: string | null; lineage_id: string | null; plan_id?: string | null;
+    request?: Record<string, unknown> | null;
+  } | null>;
+  /** `cancel_lead_mission(queue, workspace)`. */
+  cancelQueueRow: (queueId: string, workspaceId: string) => Promise<{ cancelled: boolean; reason: string }>;
+}
+
+export interface CancelMissionResult {
+  /** This call moved the queue row to `cancelled`. */
+  cancelled: boolean;
+  /** The terminal status the row already had, when it had one. */
+  already: string | null;
+  /** The task, lineage and plan were reconciled by this call. */
+  finalized: boolean;
+  reconcile: ReconcileResult | null;
+}
+
+export async function cancelAndFinalizeMission(
+  db: CancelMissionDb,
+  o: { queueId: string; workspaceId: string; nowIso: string; reason?: string | null },
+): Promise<CancelMissionResult> {
+  const before = await db.readQueueRow(o.queueId);
+  if (!before || before.workspace_id !== o.workspaceId) {
+    return { cancelled: false, already: null, finalized: false, reconcile: null };
+  }
+  // A FINISHED MISSION IS NOT REOPENED BY A CANCEL, AND NOT REWRITTEN.
+  if (before.status === "complete" || before.status === "failed") {
+    return { cancelled: false, already: before.status, finalized: false, reconcile: null };
+  }
+  let cancelled = false;
+  if (before.status !== "cancelled") {
+    cancelled = (await db.cancelQueueRow(o.queueId, o.workspaceId)).cancelled;
+  }
+  const row = await db.readQueueRow(o.queueId);
+  if (!row || row.status !== "cancelled") {
+    return { cancelled, already: row?.status ?? null, finalized: false, reconcile: null };
+  }
+  // RUNNING: the worker finalizes at release.
+  if (row.claimed_by) {
+    return { cancelled, already: before.status === "cancelled" ? "cancelled" : null, finalized: false, reconcile: null };
+  }
+  const planId = typeof row.plan_id === "string" && row.plan_id
+    ? row.plan_id
+    : (typeof row.request?.plan_id === "string" ? row.request.plan_id : null);
+  const reconcile = await reconcileTerminalRows(db, "cancelled", CANCELLED_REASON, {
+    taskId: row.task_id, lineageId: row.lineage_id ?? row.task_id, planId,
+  }, o.nowIso, o.reason ?? null);
+  return {
+    cancelled,
+    already: before.status === "cancelled" ? "cancelled" : null,
+    finalized: reconcile.remaining.length === 0,
+    reconcile,
+  };
 }

@@ -250,6 +250,8 @@ export function planTerminalReconciliation(
   reason: string,
   rows: TerminalRows,
   nowIso: string,
+  /** An operator's free-text reason (e.g. a cancellation's), kept on the task result. No schema change. */
+  detail?: string | null,
 ): TerminalPatch {
   const violations = terminalViolations(queue, rows);
   const patch: TerminalPatch = { violations };
@@ -278,7 +280,7 @@ export function planTerminalReconciliation(
             decision: terminal,
             detail: `the Lead V2 queue ended this mission (${queue}: ${reason})`,
           },
-          v2_terminal: { queue_status: queue, reason, reconciled_at: nowIso },
+          v2_terminal: { queue_status: queue, reason, reconciled_at: nowIso, ...(detail ? { detail } : {}) },
         },
       };
     }
