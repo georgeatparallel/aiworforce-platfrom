@@ -24,6 +24,11 @@ export function buildInfo(env: (k: string) => string | undefined = (k) => {
   if (BUILD.sha !== "unstamped") return { sha: BUILD.sha, built_at: BUILD.built_at, source: "stamp" };
   const railway = env("RAILWAY_GIT_COMMIT_SHA");
   if (railway) return { sha: railway, built_at: "unknown", source: "railway" };
+  // A LOCAL RUN SAYS SO. The temporary local production worker (Railway down,
+  // 2026-10-12) reported "unstamped"; an operator who starts one from a checkout
+  // sets this to that checkout's commit, and it is labelled `local`, never Railway.
+  const local = env("AGENTORY_LOCAL_GIT_SHA");
+  if (local && /^[0-9a-f]{7,40}$/i.test(local)) return { sha: local, built_at: "unknown", source: "local" };
   return { sha: "unstamped", built_at: "unknown", source: "none" };
 }
 
