@@ -85,7 +85,9 @@ Deno.test("counts aggregate every attempt the projection carries", () => {
 Deno.test("the Workbench hero renders the six counts", () => {
   const view = Deno.readTextFileSync(new URL(
     "../../src/components/chat/workspace/workbench/LeadResultsView.tsx", import.meta.url));
-  assert(view.includes("workbenchFunnelCounts(evaluationRows, partition.qualified.length)"));
+  // Since Query B d22d9ee6 the funnel counts qualified COMPANIES (a company with
+  // no contact yet is still qualified) — qualifiedCompanyVsContact.test.ts.
+  assert(view.includes("workbenchFunnelCounts(evaluationRows, Math.max(partition.qualified.length, summary.qualifiedCompanies.value))"));
   const hero = Deno.readTextFileSync(new URL(
     "../../src/components/chat/workspace/workbench/RunSummaryHero.tsx", import.meta.url));
   assert(hero.includes("{funnelCaption(funnel)}"));

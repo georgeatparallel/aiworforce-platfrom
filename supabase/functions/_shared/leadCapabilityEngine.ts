@@ -745,7 +745,12 @@ export interface CapabilityExecutionState {
       /** A replenishment left no page unread, no route unattempted, and the re-plan's reserve is spent (`discoveryCannotWiden`). */
       | "discovery_spent"
       /** A page returned exactly the rows of the page before it: the route has nothing further (`discoveryPageFingerprint`). */
-      | "duplicate_page";
+      | "duplicate_page"
+      /**
+       * No page left to read and the re-plan this slice bought admitted no new
+       * candidate: the strategy has nothing useful left to ask (Query B d22d9ee6).
+       */
+      | "replan_unproductive";
     /** Per actor, the row-identity fingerprint of the last page read. */
     page_fingerprints?: Record<string, string>;
   };
@@ -6197,6 +6202,8 @@ export async function runCapabilityPlan(
        * again — that is the correct move after a zero-row result — but not with
        * the identical input, which would buy the identical nothing.
        */
+      /** The last re-plan this invocation ran: did it reach a provider, and what did it admit? */
+      let lastReplan: { ran: boolean; admittedGain: number } | null = null;
       const askedQuestions = new Set<string>([
         ...strategy.selections.map((sel) =>
           `${sel.actor_key}|${inputFingerprint(sel.input ?? {})}`),
@@ -6377,7 +6384,16 @@ export async function runCapabilityPlan(
         log("discovery_replan_running", {
           pass, actors: next.selections.map((s) => s.actor_key),
         });
+        const admittedBeforeReplan = admittedNow();
+        const attemptsBeforeReplan = state.provider_attempts.length;
         await executeSelections(next.selections);
+        // WHAT THE RE-PLAN BOUGHT, IN THE ONLY CURRENCY THAT MATTERS: admitted
+        // candidates. Rows, employers and re-found companies are not progress.
+        lastReplan = {
+          ran: state.provider_attempts.slice(attemptsBeforeReplan).some((a) =>
+            a.capability === cap && PAGE_COMMITTING_OUTCOMES.has(String(a.outcome))),
+          admittedGain: admittedNow() - admittedBeforeReplan,
+        };
         for (const sel of next.selections) {
           askedQuestions.add(`${sel.actor_key}|${inputFingerprint(sel.input ?? {})}`);
           actorsRun.push(sel.actor_key);
@@ -6422,6 +6438,25 @@ export async function runCapabilityPlan(
         })) {
           discoveryStop = "discovery_spent";
         }
+        // ── AN UNPRODUCTIVE RE-PLAN WITH NO PAGE LEFT ENDS DISCOVERY ────────
+        //
+        // Query B d22d9ee6: page 3 — the last the actor allows — was read in
+        // slice 3, the re-plan then bought a fresh query that admitted nobody,
+        // and discovery stopped on `pass_limit`, which reads as "routes remain".
+        // Every later slice bought one more query (66 → 71 → 73 employers, still
+        // 4 in band) until the operator cancelled at 29 minutes. Exhaustion was
+        // measured by whether a re-plan was REFUSED; it is now measured by
+        // whether the search can still produce an admitted candidate. Only when
+        // no strategy actor has an unread page — an unread page is a real route
+        // — and the re-plan this slice actually ran admitted nobody.
+        if (lastReplan?.ran && lastReplan.admittedGain <= 0 &&
+            !strategyActors.some((a) => unreadDiscoveryPage(a) !== null) &&
+            ["pass_limit", "no_further_actor_proposed", "amendment_refused"].includes(discoveryStop)) {
+          log("discovery_replan_unproductive", {
+            stop_was: discoveryStop, admitted_gain: lastReplan.admittedGain, pages_taken: { ...pagesTaken },
+          });
+          discoveryStop = "replan_unproductive";
+        }
         // A DUPLICATE PAGE IS THE BINDING FACT when nothing else is left to
         // read: the route did not run out of pages, it ran out of rows.
         if (duplicatePageActors.size > 0 &&
@@ -6447,7 +6482,8 @@ export async function runCapabilityPlan(
           exhausted: (discoveryStop === "no_further_actor_proposed" &&
               !strategyActors.some((a) => unreadDiscoveryPage(a) !== null)) ||
             discoveryStop === "raw_row_ceiling" || discoveryStop === "candidate_budget_spent" ||
-            discoveryStop === "discovery_spent" || discoveryStop === "duplicate_page",
+            discoveryStop === "discovery_spent" || discoveryStop === "duplicate_page" ||
+            discoveryStop === "replan_unproductive",
           stop_reason: discoveryStop,
         };
         log("discovery_source_state", state.discovery_source_state);

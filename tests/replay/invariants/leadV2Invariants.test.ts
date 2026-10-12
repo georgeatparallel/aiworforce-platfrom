@@ -226,3 +226,98 @@ Deno.test("[invariant] 18 a stale checkpoint must not downgrade durable evidence
   read(restored, DESCRIPTION_ONLY());
   assertEquals([businessModel(restored).status, industry(restored)], ["proven", "pass"]);
 });
+
+// ══════════ 19–25: TERMINATION AND STATE (Query B d22d9ee6, 2026-10-12) ═════
+
+import { type LineageFixture, replayLineage as replayD22 } from "../lib/lineage.ts";
+import { claimProgressCount } from "../../../supabase/functions/_shared/leadAutoContinuation.ts";
+import { guardProgressWrite, resolveLineageProgress } from "../../../supabase/functions/_shared/lineageProgressGuard.ts";
+import { LINEAGE_PROGRESS_KEY, readLineageProgress } from "../../../supabase/functions/_shared/leadAutoContinuation.ts";
+import { DEFAULT_WORKER_CONFIG } from "../../../supabase/functions/_shared/leadMissionWorkerCore.ts";
+import { createExecutionDeadline } from "../../../supabase/functions/_shared/leadExecutionFinalizer.ts";
+import { cancelAndFinalizeMission, type CancelMissionDb } from "../../../supabase/functions/_shared/leadMissionCancellation.ts";
+import { buildRunSummary } from "../../../src/lib/workbench/runSummary.ts";
+import { workbenchFunnelCounts } from "../../../src/lib/workbench/evaluationRows.ts";
+import { loadFixture as loadD22 } from "../lib/fixture.ts";
+
+const D22 = () => loadD22("queryBd22d9ee6.loop") as LineageFixture;
+
+Deno.test("[invariant] 19 all pages consumed + an unproductive re-plan + no unseen route ⇒ discovery exhausted", async () => {
+  const r = await replayD22(D22(), { maxSlices: 10 });
+  const last = r.slices.at(-1)!.discovery!;
+  assertEquals([last.exhausted, last.stop_reason, last.pages_taken.apify_linkedin_job_search], [true, "replan_unproductive", 3]);
+  assert(r.terminal !== null);
+});
+
+Deno.test("[invariant] 20 companies rejected at discovery are not progress", () => {
+  const screened = Array.from({ length: 200 }, () => ({ bucket: "screened_out", hard_check_details: [{ result: "fail" }, { result: "pass" }] }));
+  assertEquals(claimProgressCount({ leads: screened, attemptedRoutesPerCompany: [] }), 0);
+  assert(claimProgressCount({ leads: [...screened, { bucket: "pending", hard_check_details: [] }], attemptedRoutesPerCompany: [] }) > 0);
+});
+
+Deno.test("[invariant] 21 lineage progress counters never decrease, whichever copy is lost or stale", () => {
+  const P = (n: number) => ({ ...readLineageProgress({}), continuations_used: n });
+  for (const [stored, lineage, queue] of [[3, null, 3], [null, 3, 2], [2, 4, 3], [4, 1, 0], [null, null, 3]] as const) {
+    const r = resolveLineageProgress({
+      stored: stored === null ? undefined : P(stored),
+      lineageState: lineage === null ? null : { [LINEAGE_PROGRESS_KEY]: P(lineage) },
+      queueContinuations: queue,
+    });
+    assertEquals(r.progress.continuations_used, Math.max(stored ?? 0, lineage ?? 0, queue ?? 0));
+  }
+  for (const next of [{}, { [LINEAGE_PROGRESS_KEY]: P(1) }, { [LINEAGE_PROGRESS_KEY]: "garbage" }]) {
+    const g = guardProgressWrite("any", { [LINEAGE_PROGRESS_KEY]: P(3) }, next as never);
+    assertEquals((g.result[LINEAGE_PROGRESS_KEY] as { continuations_used: number }).continuations_used, 3);
+  }
+});
+
+Deno.test("[invariant] 22 an active slice never silently outlives its lineage lease", async () => {
+  // The worker heartbeats well inside the lease, and the heartbeat renews the lineage lease too.
+  assert(DEFAULT_WORKER_CONFIG.heartbeatIntervalMs * 2 < DEFAULT_WORKER_CONFIG.leaseSeconds * 1000);
+  const sql = await Deno.readTextFile(new URL("../../../supabase/migrations-held/20260910140000_lead_mission_v2_claim.sql", import.meta.url));
+  const hb = sql.slice(sql.indexOf("function public.heartbeat_lead_mission"));
+  assert(/renew_lineage_lease\(v_q\.lineage_id/.test(hb), "the heartbeat renews the lineage lease");
+});
+
+Deno.test("[invariant] 23 an exhausted deadline starts no paid work and leaves a resumable slice; resuming buys nothing twice", async () => {
+  const fx = D22();
+  // A real deadline whose budget cannot fit a single provider call.
+  const deadline = createExecutionDeadline({ budgetMs: 1 });
+  assert(deadline.expired(), "the deadline reads as exhausted");
+  const { replayEngineSlice: slice } = await import("../lib/engine.ts");
+  const dead = await slice(fx, { deps: { deadline } });
+  assertEquals(dead.provider.calls.length, 0, "nothing bought after the deadline");
+  const resumed = await slice(fx, { resume: { state: dead.state, records: dead.resume_records } });
+  assert(resumed.provider.calls.length > 0, "the resumed slice does the work the exhausted one deferred");
+  const keys = resumed.provider.calls.filter((c) => !c.adopted).map((c) => c.idempotency_key);
+  assertEquals(new Set(keys).size, keys.length, "and buys nothing twice");
+});
+
+Deno.test("[invariant] 24 a supported cancellation leaves queue, task, lineage and plan mutually consistent", async () => {
+  const st: Record<string, Record<string, unknown>> = {
+    q: { id: "q", workspace_id: "w", status: "resumable", claimed_by: null, task_id: "t", lineage_id: "t", plan_id: "p" },
+    t: { status: "ready", result: { terminal_status: "continuation_required" } }, l: { status: "active" }, p: { status: "partial" },
+  };
+  const db: CancelMissionDb = {
+    readQueueRow: () => Promise.resolve(structuredClone(st.q) as never),
+    cancelQueueRow: () => { st.q.status = "cancelled"; return Promise.resolve({ cancelled: true, reason: "cancelled" }); },
+    readTask: () => Promise.resolve(structuredClone(st.t) as never), readLineage: () => Promise.resolve(structuredClone(st.l) as never),
+    readPlan: () => Promise.resolve(structuredClone(st.p) as never),
+    writeTask: (_i, x) => { st.t = { ...x }; return Promise.resolve(); }, writeLineage: (_i, x) => { st.l = { ...x }; return Promise.resolve(); },
+    writePlan: (_i, x) => { st.p = { ...x }; return Promise.resolve(); },
+  };
+  const r = await cancelAndFinalizeMission(db, { queueId: "q", workspaceId: "w", nowIso: "2026-10-12T14:36:48Z" });
+  assertEquals([st.q.status, st.t.status, (st.t.result as Record<string, unknown>).terminal_status, st.l.status, st.p.status],
+    ["cancelled", "failed", "cancelled", "cancelled", "failed"]);
+  assertEquals(r.reconcile?.remaining, []);
+});
+
+Deno.test("[invariant] 25 the qualified-company count is independent of contact readiness", () => {
+  const s = buildRunSummary({
+    qualifiedLeads: 0, leadsInReview: 3, quota: { requested: 3 } as never, portfolio: null,
+    progress: { in_progress: false, qualified_companies: 1, evaluated: 47 } as never, rows: { total: 3, qualified: 0, pending: 3 },
+    canonical: { qualifiedCompanies: 1, reviewed: 47, pending: 3, unverifiable: 3 },
+  } as never);
+  assertEquals([s.qualified.value, s.qualifiedCompanies.value, s.shortfall], [0, 1, 2]);
+  assertEquals(workbenchFunnelCounts([], Math.max(s.qualified.value, s.qualifiedCompanies.value)).qualified, 1);
+});

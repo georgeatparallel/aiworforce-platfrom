@@ -246,7 +246,9 @@ export function buildRunSummary(i: RunSummaryInput): RunSummary {
       unverifiable: Math.min(pd.value, Math.max(0, Math.trunc(i.canonical.unverifiable ?? 0))),
       notAFit: one(rv.value - qc.value - pd.value),
       requested: req,
-      shortfall: req != null ? Math.max(0, req - qualified.value) : 0,
+      // A QUALIFIED COMPANY COUNTS TOWARD THE REQUEST; a missing contact is a
+      // separate step (Query B d22d9ee6 read "3 short" with a company qualified).
+      shortfall: req != null ? Math.max(0, req - Math.max(qualified.value, qc.value)) : 0,
       inProgress: progress?.in_progress === true,
       hasDisagreement: false,
     };
@@ -271,8 +273,10 @@ export function buildRunSummary(i: RunSummaryInput): RunSummary {
   const notAFitValue = Math.max(0, reviewed.value - qualifiedCompanies.value - pending.value);
 
   const requested = num(quota?.requested);
-  // The request is for LEADS, so the shortfall is measured in leads.
-  const shortfall = requested != null ? Math.max(0, requested - qualified.value) : 0;
+  // Measured against what QUALIFIED: a company that matched everything counts
+  // toward the request even before it has a contact (Query B d22d9ee6).
+  const shortfall = requested != null
+    ? Math.max(0, requested - Math.max(qualified.value, qualifiedCompanies.value)) : 0;
 
   return {
     version: RUN_SUMMARY_VERSION,
@@ -298,6 +302,11 @@ export function buildRunSummary(i: RunSummaryInput): RunSummary {
  */
 export function summaryCaption(s: RunSummary): string {
   const parts = [`${s.reviewed.value} ${s.reviewed.value === 1 ? 'company' : 'companies'} reviewed`];
+  // COMPANY QUALIFICATION IS NOT CONTACT READINESS. Companies that matched
+  // everything but have no contact yet are said plainly, so a run with a
+  // qualified company never reads as one that qualified nothing.
+  const needContact = Math.max(0, s.qualifiedCompanies.value - s.qualified.value);
+  if (needContact > 0) parts.push(`${needContact} ${needContact === 1 ? 'company' : 'companies'} qualified · needs a contact`);
   // A pending company nothing will check again is not "being checked"
   // (Query B a9a6791a: four such companies after the lineage ended).
   const unverifiable = Math.min(s.unverifiable ?? 0, s.pending.value);

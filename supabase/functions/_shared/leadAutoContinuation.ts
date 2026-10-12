@@ -544,14 +544,25 @@ export function sliceWasBarren(
  *
  * Both only grow as work is done, and both are bounded — a route is answered
  * once per company — so a lineage that is genuinely stuck still reads barren.
+ *
+ * ── A COMPANY THE DISCOVERY GATE REJECTED IS NOT PROGRESS ──────────────────
+ *
+ * Query B d22d9ee6 (2026-10-12): every re-plan found a few more employers, all
+ * outside 11–50, and each brought a resolved (failed) size check — so the
+ * count grew every slice, `barren_slices` stayed 0 for six slices, and the
+ * no-progress guard never fired. A screened-out lead now contributes nothing;
+ * every other lead counts once for being admitted (a new admitted candidate is
+ * progress before any of its claims resolve) plus its resolved checks.
  */
 export function claimProgressCount(i: {
-  leads: ReadonlyArray<{ hard_check_details?: ReadonlyArray<{ result: string }> | null }>;
+  leads: ReadonlyArray<{ bucket?: string | null; hard_check_details?: ReadonlyArray<{ result: string }> | null }>;
   /** Verifier routes answered, per company in the working set. */
   attemptedRoutesPerCompany: ReadonlyArray<number>;
 }): number {
   let n = 0;
   for (const l of i.leads) {
+    if (l.bucket === "screened_out") continue;
+    n += 1; // admitted past discovery
     for (const h of l.hard_check_details ?? []) if (h.result === "pass" || h.result === "fail") n++;
   }
   for (const a of i.attemptedRoutesPerCompany) n += Math.max(0, Math.trunc(a));

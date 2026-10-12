@@ -12,7 +12,7 @@ npm run test:lead-v2-regression    # the Lab + the targeted Lead V2 edge/UI test
 
 `matrix/` is the query regression matrix (20 request categories and wording
 variants, hand-written expectations); `invariants/leadV2Invariants.test.ts`
-asserts the eighteen properties every mission must keep.
+asserts the twenty-five properties every mission must keep (19–25: termination, progress, leases, deadlines, cancellation, qualified-company counts).
 
 ```
 Golden missions:                 PASS  (6/6)
@@ -81,6 +81,7 @@ reconstruction that drifted from production fails before any expectation is read
 | I | a9a6791a | four companies "still being checked" after the lineage ended | same fixture, canonical view |
 | J | f6133796 (Citian) | a stale Stage-2 restore replaced website proof | `lib/citian.ts` (production shapes) |
 | K | a9a6791a | role precision and size filtering on every production title / band | same fixture |
+| L | d22d9ee6 (Query B) | a lineage that could not stop: re-plan after the last page every slice, barren never counted, 29 min until cancelled | `queryBd22d9ee6.loop` (production's four in-band companies and per-call employer growth; out-of-band synthetic), driven by `lib/lineage.ts` |
 
 Each fixture lists its sources and sanitization in `provenance`; extraction
 queries live in `fixtures/queries/` (read-only).

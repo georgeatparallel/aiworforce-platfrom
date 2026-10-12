@@ -78,7 +78,9 @@ const code = RUN_AGENT.split("\n").filter((l) => {
 
 Deno.test("THE OUTCOME IS COMPUTED BEFORE THE LEASE IS RELEASED", () => {
   const built = code.indexOf("const runOutcome = buildRunOutcome({");
-  const released = code.indexOf("const leaseReleased = await releaseLineageLease({");
+  // Since Query B d22d9ee6 the release is retried on a transient failure
+  // (`retryTransient(() => releaseLineageLease(...))`); the order is unchanged.
+  const released = code.indexOf("() => releaseLineageLease({");
   assert(built > -1 && released > -1, "both sites must exist");
   assert(built < released,
     "computing the outcome after the release is exactly the production bug");

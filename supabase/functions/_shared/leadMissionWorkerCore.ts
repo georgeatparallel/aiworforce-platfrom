@@ -28,6 +28,12 @@ export interface ClaimedMission {
   /** A previous run already bound a task — this run resumes it. */
   isResume: boolean;
   heldUntil: string | null;
+  /**
+   * The queue row's `continuations` at claim time: the slices the queue has
+   * accepted as continuations. Passed to the handler as a floor for the
+   * lineage's own counter (`resolveLineageProgress`). Null when unread.
+   */
+  continuations?: number | null;
 }
 
 export type ClaimOutcome =
