@@ -1,50 +1,42 @@
 # DEPLOY A PINNED RELEASE OF THE LEAD V2 EDGE FUNCTIONS — manual, production.
 #
-# Release d2aca524 — run-agent ONLY: PR #57, the Query B (task 255c333f)
-# improvement wave. (1) Sales role precision: a PR-agency Account Executive,
-# S&OP or customer-service sales title no longer proves gtm_sales hiring
-# (`roleMatchesFamily`). (2) A clearly disjoint declared size band on a strong
-# LinkedIn identity is excluded at discovery, before enrichment
-# (`size_exclusion_basis: disjoint_declared_band_at_discovery`). (3) A
-# replenishment slice that leaves no page unread, no route unattempted and
-# whose re-plan is refused for want of reserve records discovery exhausted in
-# THAT slice (`discoveryCannotWiden`, measured after page commits). (4) The
-# worker states a productive continuation's dispatch; inert until the HELD
-# migration 20261011120000 is applied — that migration is NOT part of this
-# release and nothing here touches the database.
+# Release 9179acd0 — run-agent ONLY: PR #59, Lead V2 evidence monotonicity.
+# Live Query B (task f6133796): a later slice restored a Stage-2 grounding
+# checkpointed before the website re-read and recorded its weaker,
+# description-only business-model reading under the same observation id; the
+# old always-replace store erased the website proof and Citian and Coval fell
+# from qualified to pending. Released: (1) `recordObservation` is monotonic — a
+# re-read replaces only when at least as strong (claim state, confidence,
+# first-party page), a decisive contradiction always replaces, expired proof
+# yields; (2) the website re-read keeps the registry it was grounded against,
+# so the claim names its page; (3) later slices rebuild that verified website
+# statement from the checkpointed observation (no page bodies, no new state).
 # Deployment only: no application file changes in this release PR. The live
-# build is 2f65f6d1; 2f65f6d1..d2aca524 changes eight modules under
-# supabase/functions/_shared/: leadAutoContinuation, leadCapabilityEngine,
-# leadCommercialPrequalification, leadGenericPrequalification,
-# leadMissionTerminal, leadMissionV2Request, leadMissionWorkerCore and
-# roleFamilies (plus held migrations and worker/, neither deployed here).
-# Measured with `deno info --json` (bundled local modules ∩ changed files) and
-# by which function EXECUTES the changed paths:
-#   run-agent    2f65f6d1 (v269) → bundles six of them and calls
-#                runCapabilityPlan (fixes 2, 3) and roleMatchesFamily (fix 1).
-#                DEPLOYED.
+# build is d2aca524; d2aca524..9179acd0 changes exactly three files under
+# supabase/functions: _shared/leadCapabilityEngine.ts,
+# _shared/webEvidenceRegrounding.ts and run-agent/index.ts, and nothing under
+# worker/ or the migrations. Measured with `deno info --json` (bundled local
+# modules ∩ changed files) and by which function EXECUTES the changed paths:
+#   run-agent    d2aca524 (v270) → bundles all three: Phase C re-grounding,
+#                qualification grounding and the observation store. DEPLOYED.
 #
 # NOT in this release (they stay on b51ad3dd, checked before and after):
-#   pilot-chat   bundles the engine, both prequalification modules and
-#                roleFamilies, but imports only compileFirstProviderCall from
-#                the engine (no changed hunk) and never calls roleMatchesFamily
-#                (`filterHiringCandidates` is named in a comment only).
-#   orchestrate, enqueue-lead-mission, continue-workflow
-#                bundle leadMissionV2Request (one optional TYPE field) and
-#                roleFamilies (not called). No execution path changes.
-#   resume-stalled-leads
-#                as above, plus leadAutoContinuation (one new exported
-#                constant it does not read). No execution path changes.
-# Also bundling a changed module and not deployed, as in every Lead V2
-# release: generate-company-brain-draft, unlock-founders (roleFamilies only,
-# not called) and run-monitoring-scan (runs the engine for Signals monitoring;
-# its retrieval changes are a monitoring decision — `monitoringRetrievalPort.ts`
-# — never a side effect of Lead V2 work). These three report no build header,
-# so they are not checked by build here.
+#   pilot-chat   bundles the engine but imports only compileFirstProviderCall,
+#                which references none of the changed code.
+#   orchestrate, enqueue-lead-mission, continue-workflow, resume-stalled-leads
+#                bundle none of the three changed files.
+# Also bundling the engine and NOT deployed: run-monitoring-scan. It runs the
+# engine without spec mode, grounding or the re-read, so no website-grounding
+# path is reachable; the store rule reaches only its own enrichment/funding ids
+# in its own `monitoring_runs.state`, which Lead V2 never reads, and its shared
+# Signals V2 writes are insert-or-ignore. No shared-record version skew. It
+# reports no build header, so it is not checked by build here.
 # The three functions on a08ac0e4 stay there (checked before and after).
 # The Railway worker runs the Lead V2 queue in-process (it bundles run-agent and
 # the changed modules) and redeploys itself from launch/hardening; it is
-# verified on d2aca524 separately, not by this workflow.
+# verified on 9179acd0 separately, not by this workflow.
+# The held migration 20261011120000 (productive-continuation hold) stays HELD:
+# nothing here touches the database.
 #
 # ROLLBACK: the step "Back up the currently deployed function" downloads the
 # LIVE source of run-agent before anything changes, encrypts it with
@@ -72,7 +64,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_sha:
-        description: "Type the release SHA to deploy: d2aca524"
+        description: "Type the release SHA to deploy: 9179acd0"
         required: true
         type: string
 
@@ -84,18 +76,18 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_SHA: d2aca5242eec725d4a92d7899531ff59b11ca9b6
+  RELEASE_SHA: 9179acd0512819a0fab753de60801f3f5f74cc10
   # The release the three untouched a08ac0e4 functions still run; the preflight
   # proves the build check works by reading one of them back.
   PREVIOUS_RELEASE_SHA: a08ac0e4edea6f3aa54314db4efe0073e371b82f
   # The release the other lead-path functions run, and keep running, through
   # this deploy (b51ad3dd, PR #54, deployed 2026-10-11 06:46 UTC).
   HELD_RELEASE_SHA: b51ad3dddf2604f9d218d7c495e17e22d20932db
-  # What the deployed function runs BEFORE this deploy (2f65f6d1, v269, PR #55,
-  # deployed 2026-10-11 10:47 UTC). The preflight refuses if it has moved, so
+  # What the deployed function runs BEFORE this deploy (d2aca524, v270, PR #57,
+  # deployed 2026-10-11 16:01 UTC). The preflight refuses if it has moved, so
   # this never overwrites a build nobody backed up on purpose.
-  LIVE_RUN_AGENT_SHA: 2f65f6d14da5abff2f3fdf8ba76c38694d4d6603
-  LIVE_RUN_AGENT_VERSION: "269"
+  LIVE_RUN_AGENT_SHA: d2aca5242eec725d4a92d7899531ff59b11ca9b6
+  LIVE_RUN_AGENT_VERSION: "270"
   DEPLOYED_FUNCTIONS: "run-agent"
   # Lead-path functions this deploy must NOT touch, with the build each runs.
   UNTOUCHED_ON_HELD: "pilot-chat orchestrate enqueue-lead-mission continue-workflow resume-stalled-leads"
@@ -117,11 +109,11 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm_sha }}
         run: |
-          if [ "$CONFIRM" != "d2aca524" ]; then echo "::error::confirm_sha must be d2aca524"; exit 1; fi
+          if [ "$CONFIRM" != "9179acd0" ]; then echo "::error::confirm_sha must be 9179acd0"; exit 1; fi
 
       - uses: actions/checkout@v4
         with:
-          ref: d2aca5242eec725d4a92d7899531ff59b11ca9b6
+          ref: 9179acd0512819a0fab753de60801f3f5f74cc10
           # Full history, so the ancestry check below is never defeated by a
           # shallow clone.
           fetch-depth: 0
