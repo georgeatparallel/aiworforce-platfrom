@@ -41,7 +41,7 @@ export interface WorkbenchProgress {
    * the run wrote one. Its presence is what makes the view AUTHORITATIVE for the
    * run summary — see `summaryCanonicalInput`.
    */
-  canonical?: { qualified_companies: number; reviewed: number; pending: number };
+  canonical?: { qualified_companies: number; reviewed: number; pending: number; unverifiable?: number };
 }
 
 export interface ProgressLine {
@@ -82,7 +82,10 @@ export function readWorkbenchProgress(result: unknown): WorkbenchProgress | null
     evaluated: c.qualified + c.pending + c.ineligible,
     qualified_companies: c.qualified,
     identity_unresolved: view.counts.identity_unresolved,
-    canonical: { qualified_companies: c.qualified, reviewed: c.qualified + c.pending + c.ineligible, pending: c.pending },
+    canonical: {
+      qualified_companies: c.qualified, reviewed: c.qualified + c.pending + c.ineligible, pending: c.pending,
+      unverifiable: view.pending_unverifiable,
+    },
   };
 }
 

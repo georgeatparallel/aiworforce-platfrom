@@ -81,6 +81,8 @@ export interface RunSummary {
   reviewed: SummaryNumber;
   /** Judged, but still waiting on something before they can qualify. */
   pending: SummaryNumber;
+  /** Of `pending`, those nothing further will check in this run. 0 on legacy runs. */
+  unverifiable: number;
   /** Looked at and ruled out. */
   notAFit: SummaryNumber;
   /** What the user asked for. Null when the request named no number. */
@@ -154,7 +156,7 @@ export interface RunSummaryInput {
    * consistent (portfolio: 0 qualified; canonical: 1). Absent on legacy runs,
    * which reconcile exactly as before.
    */
-  canonical?: { qualifiedCompanies: number; reviewed: number; pending: number } | null;
+  canonical?: { qualifiedCompanies: number; reviewed: number; pending: number; unverifiable?: number } | null;
 }
 
 /**
@@ -183,6 +185,7 @@ export function summaryCanonicalInput(
       qualifiedCompanies: progress.canonical.qualified_companies,
       reviewed: progress.canonical.reviewed,
       pending: progress.canonical.pending,
+      unverifiable: progress.canonical.unverifiable ?? 0,
     };
   }
   return tab.canonical && progress
@@ -240,6 +243,7 @@ export function buildRunSummary(i: RunSummaryInput): RunSummary {
     return {
       version: RUN_SUMMARY_VERSION,
       qualified, qualifiedCompanies: qc, reviewed: rv, pending: pd,
+      unverifiable: Math.min(pd.value, Math.max(0, Math.trunc(i.canonical.unverifiable ?? 0))),
       notAFit: one(rv.value - qc.value - pd.value),
       requested: req,
       shortfall: req != null ? Math.max(0, req - qualified.value) : 0,
@@ -276,6 +280,7 @@ export function buildRunSummary(i: RunSummaryInput): RunSummary {
     qualifiedCompanies,
     reviewed,
     pending,
+    unverifiable: 0,
     notAFit: { value: notAFitValue, source: reviewed.source, disagreements: [] },
     requested,
     shortfall,
@@ -293,7 +298,12 @@ export function buildRunSummary(i: RunSummaryInput): RunSummary {
  */
 export function summaryCaption(s: RunSummary): string {
   const parts = [`${s.reviewed.value} ${s.reviewed.value === 1 ? 'company' : 'companies'} reviewed`];
-  if (s.pending.value > 0) parts.push(`${s.pending.value} still being checked`);
+  // A pending company nothing will check again is not "being checked"
+  // (Query B a9a6791a: four such companies after the lineage ended).
+  const unverifiable = Math.min(s.unverifiable ?? 0, s.pending.value);
+  const checking = s.pending.value - unverifiable;
+  if (checking > 0) parts.push(`${checking} still being checked`);
+  if (unverifiable > 0) parts.push(`${unverifiable} could not be verified`);
   if (s.inProgress) parts.push('still running');
   return parts.join(' · ');
 }

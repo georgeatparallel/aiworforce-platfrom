@@ -85,7 +85,7 @@ Deno.test("SALVO: the canonical view is authoritative — no disagreement, one q
 });
 
 Deno.test("progress carries the canonical counts exactly when a mission view exists", () => {
-  assertEquals(readWorkbenchProgress(SALVO)?.canonical, { qualified_companies: 1, reviewed: 1, pending: 0 });
+  assertEquals(readWorkbenchProgress(SALVO)?.canonical, { qualified_companies: 1, reviewed: 1, pending: 0, unverifiable: 0 });
   const { workbench_mission_view: _v, ...legacy } = SALVO;
   assertEquals(readWorkbenchProgress(legacy)?.canonical, undefined);
 });

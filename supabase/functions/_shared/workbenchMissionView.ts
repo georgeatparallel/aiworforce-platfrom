@@ -24,7 +24,7 @@
 // Pure.
 
 import type { ReadinessPolicy } from "./routeReadiness.ts";
-import { evidenceGapsFor, summarizeGaps, type EvidenceGap, type GapSummary } from "./evidenceGapRouter.ts";
+import { canStillQualify, evidenceGapsFor, summarizeGaps, type EvidenceGap, type GapSummary } from "./evidenceGapRouter.ts";
 import type { CompanyEvidenceGraph } from "./evidenceGraph.ts";
 import type { MissionCriterion } from "./missionCriteria.ts";
 import type { ResearchWaveSummary } from "./researchFeedback.ts";
@@ -96,6 +96,14 @@ export interface WorkbenchLead {
    * it — or why nothing can (`evidenceGapRouter`). Empty for every other bucket.
    */
   evidence_gaps: EvidenceGap[];
+  /**
+   * Pending leads only (null otherwise): `verifying` while every unknown hard
+   * claim still has an executable route; `unverifiable` when nothing more will
+   * be bought for it in this run. Still pending — never a rejection — but no
+   * longer "being checked" (Query B a9a6791a showed four such companies as
+   * "still being checked" after the lineage ended).
+   */
+  pending_state: "verifying" | "unverifiable" | null;
 }
 
 export interface WorkbenchCounts {
@@ -124,6 +132,8 @@ export interface WorkbenchMissionView {
     unsupported: string[];
   };
   stage: MissionStage;
+  /** Pending leads nothing more will be bought for (`pending_state: "unverifiable"`). A subset of `counts.pending`. */
+  pending_unverifiable: number;
   counts: WorkbenchCounts;
   leads: WorkbenchLead[];
   /** The canonical evidence gaps across pending leads — what continuation reads. */
@@ -325,6 +335,10 @@ export function buildWorkbenchMissionView(i: ViewInput): WorkbenchMissionView {
     const bucket = bucketOf(c, eligibility, reasoned.label);
     counts[bucket] += 1;
     const hardChecks = eligibility.checks.filter((x) => x.kind === "hard");
+    const gaps = bucket === "pending"
+      ? evidenceGapsFor(hardChecks, c.graph, undefined, new Set(c.attempted_routes ?? []), i.readiness,
+        new Set(c.unaffordable_routes ?? []))
+      : [];
 
     leads.push({
       company: { key: c.company_key, name: c.name, domain: c.domain, linkedin_url: c.linkedin_url },
@@ -349,10 +363,10 @@ export function buildWorkbenchMissionView(i: ViewInput): WorkbenchMissionView {
       evidence_coverage: ceiling.evidence_coverage,
       signal_strength: ceiling.signal_strength,
       next_action: c.next_action ?? null,
-      evidence_gaps: bucket === "pending"
-        ? evidenceGapsFor(hardChecks, c.graph, undefined, new Set(c.attempted_routes ?? []), i.readiness,
-          new Set(c.unaffordable_routes ?? []))
-        : [],
+      evidence_gaps: gaps,
+      pending_state: bucket === "pending"
+        ? (!c.paid_verification_blocked && canStillQualify(gaps) ? "verifying" : "unverifiable")
+        : null,
     });
   }
 
@@ -393,6 +407,9 @@ export function buildWorkbenchMissionView(i: ViewInput): WorkbenchMissionView {
     },
     stage: i.stage,
     counts,
+    // A SUBSET OF `counts.pending`, never a bucket: the buckets still sum to
+    // `discovered`. See `WorkbenchLead.pending_state`.
+    pending_unverifiable: leads.filter((l) => l.pending_state === "unverifiable").length,
     leads,
     // A pending lead whose paid verification triage withheld is not a route a
     // verification slice could take — the verifiers would refuse to buy for it.
