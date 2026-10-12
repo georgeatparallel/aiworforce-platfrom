@@ -140,4 +140,3 @@ export const businessModel = (c: EngineCompany) =>
 export const industry = (c: EngineCompany) =>
   evaluateEligibility(CRITERIA, missionCandidatesFrom({ companies: [c] }, { missionId: TASK, now: NOW })[0].graph)
     .hard_checks.industry;
-

@@ -55,8 +55,9 @@ interface Hard {
 function hardOf(query: string, o: Record<string, unknown> = {}): Hard {
   const mission = compileLeadMission({ originalUserQuery: query, proposal: proposal(o) as never }).final_mission;
   const crit = deriveMissionCriteria(mission);
-  const hard = (dim: string) => crit.find((c) => c.kind === "hard" && c.dimension === dim)?.value as Record<string, any> | undefined;
-  const sig = (event: string) => (mission.required_signals ?? []).find((s) => s.event === event) as Record<string, any> | undefined;
+  type Qualified = { qualifier?: { role_families?: string[]; round_type?: string } };
+  const hard = (dim: string) => crit.find((c) => c.kind === "hard" && c.dimension === dim)?.value as (Qualified & Record<string, unknown>) | undefined;
+  const sig = (event: string) => (mission.required_signals ?? []).find((s) => s.event === event) as { timeframe_days?: number | null } | undefined;
   const hiring = hard("hiring");
   const funding = hard("funding");
   return {
