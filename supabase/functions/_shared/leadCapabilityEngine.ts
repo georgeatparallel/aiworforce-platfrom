@@ -5063,8 +5063,18 @@ export async function runCapabilityPlan(
           (a) => a.capability === cap && a.provider === provider && a.outcome === "pending");
       const boundedJobDiscoveryInput = (input: Record<string, unknown> | undefined): Record<string, unknown> =>
         boundJobDiscoveryProposal({ ...(input ?? {}) });
-      const compileFailedFor = (provider: string) =>
-        state.provider_attempts.some(
+      // ── A COMPILE FAILURE BELONGS TO THE PROPOSAL THAT FAILED ──────────────
+      //
+      // `provider_attempts` is the LINEAGE's history: a resumed slice restores
+      // it. Read whole, one invalid proposal in slice 1 (Query B a9a6791a: four
+      // titles to a three-title actor) stopped slices 2 and 3 with
+      // `schema_failure` after each had validly bought its page — and kept the
+      // stop reason the next slice reads. So a failure counts only for the
+      // selection that produced it (`since`), and the capability-level check
+      // below only for this invocation.
+      const attemptsAtStart = state.provider_attempts.length;
+      const compileFailedFor = (provider: string, since: number) =>
+        state.provider_attempts.slice(since).some(
           (a) => a.capability === cap && a.provider === provider && a.outcome === "compile_failed");
       // ── WHICH ACTORS, AND WHAT EACH IS ASKED ────────────────────────────────
       //
@@ -5572,6 +5582,7 @@ export async function runCapabilityPlan(
       ): Promise<void> => {
         for (const sel of sels) {
           const provider = sel.actor_key;
+          const attemptsBeforeSelection = state.provider_attempts.length;
           if (schemaFailure) break;
           if (discoveryStoppedByControl) break;
           // ── CONTAINMENT IS CHECKED BEFORE THE CALL, NOT BY THROWING ──────
@@ -6037,7 +6048,7 @@ export async function runCapabilityPlan(
           // the back of a call we never validly made, and the whole point of
           // catching this locally is that nothing downstream gets to reinterpret
           // it as "the source came back empty".
-          if (compileFailedFor(provider)) { schemaFailure = true; break; }
+          if (compileFailedFor(provider, attemptsBeforeSelection)) { schemaFailure = true; break; }
           if (pendingFor(provider)) { runPending = true; break; }
         }
         if (sels.length > 0 && !runPending && !schemaFailure) await researchWave();
@@ -6061,6 +6072,8 @@ export async function runCapabilityPlan(
        * `actor -> { page, attemptsBefore }`.
        */
       const proposedPages = new Map<string, { page: number; before: number }>();
+      /** Questions earlier slices already read (pages before the one proposed). */
+      const alreadyReadQuestions = new Set<string>();
       /**
        * The next page this actor has not read, or null when it cannot page or
        * has read its limit. ONE definition, read both where a page is proposed
@@ -6084,6 +6097,14 @@ export async function runCapabilityPlan(
         for (const sel of strategy.selections) {
           const next = unreadDiscoveryPage(sel.actor_key);
           if (!next) continue;
+          // THE PAGES BEFORE IT ARE ALREADY-ASKED QUESTIONS. Without this the
+          // re-plan below, proposing the same query unpaged, re-asks page 1
+          // after page N was bought — masked in Query B a9a6791a only because
+          // a stale schema_failure stopped every later slice first.
+          for (let p = 1; p < next.page; p++) {
+            const { [next.field]: _drop, ...unpaged } = sel.input ?? {};
+            alreadyReadQuestions.add(`${sel.actor_key}|${inputFingerprint(p === 1 ? unpaged : { ...unpaged, [next.field]: p })}`);
+          }
           // THE INPUT CARRIES THE NEXT PAGE; THE CURSOR DOES NOT MOVE YET.
           sel.input = { ...sel.input, [next.field]: next.page };
           proposedPages.set(sel.actor_key, {
@@ -6146,10 +6167,11 @@ export async function runCapabilityPlan(
        * again — that is the correct move after a zero-row result — but not with
        * the identical input, which would buy the identical nothing.
        */
-      const askedQuestions = new Set<string>(
-        strategy.selections.map((sel) =>
+      const askedQuestions = new Set<string>([
+        ...strategy.selections.map((sel) =>
           `${sel.actor_key}|${inputFingerprint(sel.input ?? {})}`),
-      );
+        ...alreadyReadQuestions,
+      ]);
       const passLimit = Math.max(1, opts.maxDiscoveryPasses ?? DEFAULT_DISCOVERY_PASSES);
       // WHY DISCOVERY STOPPED, recorded as it happens rather than reconstructed
       // afterwards. A stop reason inferred from the final counts cannot tell
@@ -6380,7 +6402,12 @@ export async function runCapabilityPlan(
           available_admitted: availableAdmittedNow(),
           raw_rows: companies.length,
           pool_target: admittedTarget,
-          exhausted: discoveryStop === "no_further_actor_proposed" ||
+          // "THE PLANNER HAD NOTHING NEW" IS NOT "NOTHING IS LEFT" while a
+          // strategy actor still has an unread page: the next slice reads it
+          // (replenishment pages before it re-plans). Masked in Query B
+          // a9a6791a by the stale schema_failure, which read as open.
+          exhausted: (discoveryStop === "no_further_actor_proposed" &&
+              !strategyActors.some((a) => unreadDiscoveryPage(a) !== null)) ||
             discoveryStop === "raw_row_ceiling" || discoveryStop === "candidate_budget_spent" ||
             discoveryStop === "discovery_spent",
           stop_reason: discoveryStop,
@@ -6406,7 +6433,7 @@ export async function runCapabilityPlan(
         // nothing — which is how a schema failure became a LinkedIn Jobs sweep
         // and five people searches. A source that was never validly asked has
         // not answered, and the mission stops here.
-        const invalid = state.provider_attempts.filter(
+        const invalid = state.provider_attempts.slice(attemptsAtStart).filter(
           (a) => a.capability === cap && a.outcome === "compile_failed");
         if (invalid.length > 0) {
           state.terminal_reason = "provider_input_validation_failed";

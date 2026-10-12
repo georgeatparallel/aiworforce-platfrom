@@ -119,10 +119,21 @@ Deno.test("[historical] G FIX 1: slice 1's compile failure is not slice 2's or s
 });
 
 Deno.test("[historical] G FIX 1: a compile failure in THIS slice still stops discovery", async () => {
-  const bad = { ...fx.engine.model_responses.plan_discovery[0].input, maxItems: 500 };
+  const bad = { ...(fx.engine.model_responses.plan_discovery[0] as { input: Record<string, unknown> }).input, postedLimit: "decade" };
   const s = await replayEngineSlice(fx, { deps: selectingInput(fx, bad) });
   assertEquals(jobSearchCalls(s).length, 0, "nothing is bought on an invalid input");
   assertEquals(s.state.terminal_reason, "provider_input_validation_failed");
+  assertEquals(discoveryState(s).stop_reason, "schema_failure");
+});
+
+Deno.test("[historical] G FIX 1 (unmasked): with no stale stop, slice 1 is not 'exhausted' while pages 2–3 are unread", async () => {
+  const s1 = await replayEngineSlice(fx, { deps: { controlRoutes: recordedRouteControl(fx) } });
+  assertFalse(discoveryState(s1).exhausted, JSON.stringify(discoveryState(s1)));
+});
+
+Deno.test("[historical] G FIX 1 (unmasked): a replenishment slice buys its page and never re-asks page 1", async () => {
+  const { s2 } = await replayLineage(fx);
+  assertEquals(jobSearchCalls(s2).map((c) => c.input.page), [2], JSON.stringify(jobSearchCalls(s2).map((c) => c.input)));
 });
 
 // ══════════ FIX 4 — a replayed page exhausts the route ══════════════════════
