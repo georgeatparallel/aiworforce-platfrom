@@ -49,7 +49,7 @@ import {
   compileHarvestCompanyDetailsInput, compileHarvestCompanyEmployeesInput,
   compileHarvestCompanySearchInput,
   compileHarvestJobDiscoveryInput, compileHarvestJobSearchInput, compileHarvestProfileSearchInput,
-  JOB_DISCOVERY_LIMITS,
+  JOB_DISCOVERY_LIMITS, boundJobDiscoveryTitles,
   compileDatahyenaFundingInput, compileMemo23YcInput, fanOutSolidcodeTeamSizes,
   type CompiledActorCall, type CompileResult,
 } from "./hiringActorInputs.ts";
@@ -279,6 +279,7 @@ import { ACTOR_INPUT_CONTRACTS as P2_ACTOR_CONTRACTS } from "./actorInputContrac
 import { hashInput as p2HashInput } from "./hiringActorInputs.ts";
 import { toRepoKey } from "./actorIdentity.ts";
 import { canonicalJson } from "./planHash.ts";
+import { sha256Hex } from "./providerInputFingerprint.ts";
 import { tightenCeilings, type RunBudget } from "./runBudget.ts";
 import {
   nextUnreadPage, screenAdmissionOrder, type FundingScreenPlan, type ScreenVerdict,
@@ -742,7 +743,11 @@ export interface CapabilityExecutionState {
       /** The funding screen has read its pool: its one priced Atomus read is spent. */
       | "screen_complete"
       /** A replenishment left no page unread, no route unattempted, and the re-plan's reserve is spent (`discoveryCannotWiden`). */
-      | "discovery_spent";
+      | "discovery_spent"
+      /** A page returned exactly the rows of the page before it: the route has nothing further (`discoveryPageFingerprint`). */
+      | "duplicate_page";
+    /** Per actor, the row-identity fingerprint of the last page read. */
+    page_fingerprints?: Record<string, string>;
   };
   /**
    * Stage removals the chain PROPOSED and containment refused.
@@ -2328,6 +2333,8 @@ export interface CapabilityEngineOpts {
     pages_taken: Record<string, number>;
     /** Actors this lineage has already asked. */
     sources_attempted: string[];
+    /** The last page's row-identity fingerprint per actor, restored from the checkpoint. */
+    page_fingerprints?: Record<string, string>;
   } | null;
   rolePacks?: readonly RolePack[];
   postedLimit?: "1h" | "24h" | "week" | "month";
@@ -3796,6 +3803,16 @@ export async function runCapabilityPlan(
   };
 
   /** One provider call: idempotency, cost, attempt record, never off-graph. */
+  /** A job-discovery proposal with its titles bounded (`boundJobDiscoveryTitles`); logged when it changes. */
+  const boundJobDiscoveryProposal = (input: Record<string, unknown>): Record<string, unknown> => {
+    const titles = input.jobTitles;
+    if (!Array.isArray(titles)) return input;
+    const bounded = boundJobDiscoveryTitles(titles.map(String), requestedHiringFromSignals(
+      (opts.mission?.required_signals ?? []).filter(isHiringSignal)), JOB_DISCOVERY_LIMITS.jobTitles);
+    if (canonicalJson(bounded) === canonicalJson(titles)) return input;
+    log("job_discovery_titles_bounded", { before: titles, after: bounded, limit: JOB_DISCOVERY_LIMITS.jobTitles });
+    return { ...input, jobTitles: bounded };
+  };
   const callProvider = async (
     capability: CapabilityId, provider: string, compiled: CompileResult<unknown>,
     company?: EngineCompany,
@@ -3892,9 +3909,16 @@ export async function runCapabilityPlan(
       const discoveryBound = candidatesLeft === null
         ? opts.maxCandidates
         : Math.min(candidatesLeft, opts.maxCandidates ?? candidatesLeft);
+      const plannerProposed = entry ? (entry.kind === "route" ? entry.route.proposed_input : entry.stage.proposed_input) : null;
       callSpec = compileProviderCallSpec({
         actorKey: provider, capability, purpose,
-        proposed: entry ? (entry.kind === "route" ? entry.route.proposed_input : entry.stage.proposed_input) : null,
+        // THE PLANNER'S TITLES, BOUNDED TO THE ACTOR'S LIMIT. The spec keeps the
+        // planner's query and rejects engine rewrites, so the bound must hold on
+        // the proposal itself — or four titles reach a three-title actor, and
+        // "account manager" reaches a sales search (Query B a9a6791a).
+        proposed: plannerProposed && provider === "apify_linkedin_job_search" && purpose === "discovery"
+          ? boundJobDiscoveryProposal(plannerProposed as Record<string, unknown>)
+          : plannerProposed,
         engine: engineInput, policy: criteriaPolicy,
         plan: {
           plan_id: plan?.plan_id ?? null, version: plan?.version ?? null, route_id: route?.route_id ?? null,
@@ -5044,8 +5068,20 @@ export async function runCapabilityPlan(
       const pendingFor = (provider: string) =>
         state.provider_attempts.some(
           (a) => a.capability === cap && a.provider === provider && a.outcome === "pending");
-      const compileFailedFor = (provider: string) =>
-        state.provider_attempts.some(
+      const boundedJobDiscoveryInput = (input: Record<string, unknown> | undefined): Record<string, unknown> =>
+        boundJobDiscoveryProposal({ ...(input ?? {}) });
+      // ── A COMPILE FAILURE BELONGS TO THE PROPOSAL THAT FAILED ──────────────
+      //
+      // `provider_attempts` is the LINEAGE's history: a resumed slice restores
+      // it. Read whole, one invalid proposal in slice 1 (Query B a9a6791a: four
+      // titles to a three-title actor) stopped slices 2 and 3 with
+      // `schema_failure` after each had validly bought its page — and kept the
+      // stop reason the next slice reads. So a failure counts only for the
+      // selection that produced it (`since`), and the capability-level check
+      // below only for this invocation.
+      const attemptsAtStart = state.provider_attempts.length;
+      const compileFailedFor = (provider: string, since: number) =>
+        state.provider_attempts.slice(since).some(
           (a) => a.capability === cap && a.provider === provider && a.outcome === "compile_failed");
       // ── WHICH ACTORS, AND WHAT EACH IS ASKED ────────────────────────────────
       //
@@ -5359,6 +5395,25 @@ export async function runCapabilityPlan(
       const pagesTaken: Record<string, number> = {
         ...(opts.discoveryReplenishment?.pages_taken ?? {}),
       };
+      // ── A PAGE THAT REPEATS THE ONE BEFORE IT ENDS ITS ROUTE ─────────────
+      //
+      // Query B a9a6791a slice 3 bought page 3 of the job search and got page
+      // 2 back — the same counts, no new employer — and the route still read
+      // as open. Compared on the provider's stable row ids, never on counts:
+      // the same number of DIFFERENT rows is a real page.
+      const pageFingerprints: Record<string, string> = {
+        ...(opts.discoveryReplenishment?.page_fingerprints ?? {}),
+      };
+      const duplicatePageActors = new Set<string>();
+      const noteDiscoveryPage = (actor: string, rows: readonly Record<string, unknown>[]): void => {
+        const fp = discoveryPageFingerprint(rows);
+        if (!fp) return;
+        if (pageFingerprints[actor] === fp) {
+          duplicatePageActors.add(actor);
+          log("discovery_duplicate_page", { actor, rows: rows.length, note: "same provider row ids as the previous page — route exhausted" });
+        }
+        pageFingerprints[actor] = fp;
+      };
 
       /**
        * DID THIS ACTOR ACTUALLY REACH THE PROVIDER ON THIS PAGE?
@@ -5526,6 +5581,12 @@ export async function runCapabilityPlan(
           return;
         }
         if (!("route" in decision)) return;
+        // THE ACTOR'S LIMITS HOLD BEFORE THE AMENDMENT IS RECORDED, so the plan
+        // states the question that is actually asked (Query B a9a6791a: four
+        // titles to a three-title actor became the slice's schema_failure).
+        if (decision.route.actor_key === "apify_linkedin_job_search" && cap === "job_discovery") {
+          decision.route.input = boundedJobDiscoveryInput(decision.route.input);
+        }
         const amended = p2AcceptAmendment(executionPlan, decision.trigger, [{
           capability: cap, provider: decision.route.actor_key, input: decision.route.input,
         }], { availableAdmitted: availableAdmittedNow() });
@@ -5547,6 +5608,7 @@ export async function runCapabilityPlan(
       ): Promise<void> => {
         for (const sel of sels) {
           const provider = sel.actor_key;
+          const attemptsBeforeSelection = state.provider_attempts.length;
           if (schemaFailure) break;
           if (discoveryStoppedByControl) break;
           // ── CONTAINMENT IS CHECKED BEFORE THE CALL, NOT BY THROWING ──────
@@ -5842,7 +5904,9 @@ export async function runCapabilityPlan(
             const compiled = compileHarvestCompanySearchInput(
               merged.input as never);
             const droppedPages = new Map<string, number>();
-            for (const r of await callProvider(cap, provider, compiled)) {
+            const searchRows = await callProvider(cap, provider, compiled);
+            noteDiscoveryPage(provider, searchRows);
+            for (const r of searchRows) {
               // A SHOWCASE PAGE IS NOT A COMPANY. Dropped HERE, at the pool
               // boundary, because everything downstream treats a pool row as
               // something worth paying to resolve — and a showcase row has no
@@ -5880,20 +5944,21 @@ export async function runCapabilityPlan(
             // the engine adds only a row bound when none was proposed. Each
             // open, non-agency posting brings its employer WITH a LinkedIn
             // company record, so identity is never searched for these.
-            const compiled = compileHarvestJobDiscoveryInput({
-              maxItems: Math.min(maxCandidates, JOB_DISCOVERY_LIMITS.maxItems),
-              ...sel.input,
-            } as never);
-            const dropped = new Map<string, number>();
-            const seenJobs = new Set<string>();
-            let jobsKept = 0;
             // The provider does not guarantee its rows match the titles it was
             // asked for (Query B: "Assistant Manager" for a sales search), so a
             // posting proves only the hiring the mission named.
             const requestedHiring = requestedHiringFromSignals(
               (opts.mission?.required_signals ?? []).filter(isHiringSignal));
+            const compiled = compileHarvestJobDiscoveryInput({
+              maxItems: Math.min(maxCandidates, JOB_DISCOVERY_LIMITS.maxItems),
+              ...boundedJobDiscoveryInput(sel.input),
+            } as never);
+            const dropped = new Map<string, number>();
+            const seenJobs = new Set<string>();
+            let jobsKept = 0;
             let notHiringProof = 0;
             const jobRows = await callProvider(cap, provider, compiled);
+            noteDiscoveryPage(provider, jobRows);
             for (const r of jobRows) {
               if (!jobIsOpen(r)) {
                 dropped.set("posting_closed", (dropped.get("posting_closed") ?? 0) + 1);
@@ -6012,7 +6077,7 @@ export async function runCapabilityPlan(
           // the back of a call we never validly made, and the whole point of
           // catching this locally is that nothing downstream gets to reinterpret
           // it as "the source came back empty".
-          if (compileFailedFor(provider)) { schemaFailure = true; break; }
+          if (compileFailedFor(provider, attemptsBeforeSelection)) { schemaFailure = true; break; }
           if (pendingFor(provider)) { runPending = true; break; }
         }
         if (sels.length > 0 && !runPending && !schemaFailure) await researchWave();
@@ -6036,6 +6101,8 @@ export async function runCapabilityPlan(
        * `actor -> { page, attemptsBefore }`.
        */
       const proposedPages = new Map<string, { page: number; before: number }>();
+      /** Questions earlier slices already read (pages before the one proposed). */
+      const alreadyReadQuestions = new Set<string>();
       /**
        * The next page this actor has not read, or null when it cannot page or
        * has read its limit. ONE definition, read both where a page is proposed
@@ -6049,6 +6116,7 @@ export async function runCapabilityPlan(
         const field = card && acceptedInputFields(card).includes("startPage") ? "startPage"
           : card && cap === "job_discovery" && acceptedInputFields(card).includes("page") ? "page" : null;
         if (!card || !field) return null;
+        if (duplicatePageActors.has(actorKey)) return null;
         const limit = Number(card.input_limits?.[field === "page" ? "pages_discovery" : "takePages"] ?? 0);
         const taken = pagesTaken[actorKey] ??
           (field === "page" && attemptCountFor(actorKey) > 0 ? 1 : 0);
@@ -6059,6 +6127,14 @@ export async function runCapabilityPlan(
         for (const sel of strategy.selections) {
           const next = unreadDiscoveryPage(sel.actor_key);
           if (!next) continue;
+          // THE PAGES BEFORE IT ARE ALREADY-ASKED QUESTIONS. Without this the
+          // re-plan below, proposing the same query unpaged, re-asks page 1
+          // after page N was bought — masked in Query B a9a6791a only because
+          // a stale schema_failure stopped every later slice first.
+          for (let p = 1; p < next.page; p++) {
+            const { [next.field]: _drop, ...unpaged } = sel.input ?? {};
+            alreadyReadQuestions.add(`${sel.actor_key}|${inputFingerprint(p === 1 ? unpaged : { ...unpaged, [next.field]: p })}`);
+          }
           // THE INPUT CARRIES THE NEXT PAGE; THE CURSOR DOES NOT MOVE YET.
           sel.input = { ...sel.input, [next.field]: next.page };
           proposedPages.set(sel.actor_key, {
@@ -6121,10 +6197,11 @@ export async function runCapabilityPlan(
        * again — that is the correct move after a zero-row result — but not with
        * the identical input, which would buy the identical nothing.
        */
-      const askedQuestions = new Set<string>(
-        strategy.selections.map((sel) =>
+      const askedQuestions = new Set<string>([
+        ...strategy.selections.map((sel) =>
           `${sel.actor_key}|${inputFingerprint(sel.input ?? {})}`),
-      );
+        ...alreadyReadQuestions,
+      ]);
       const passLimit = Math.max(1, opts.maxDiscoveryPasses ?? DEFAULT_DISCOVERY_PASSES);
       // WHY DISCOVERY STOPPED, recorded as it happens rather than reconstructed
       // afterwards. A stop reason inferred from the final counts cannot tell
@@ -6345,9 +6422,17 @@ export async function runCapabilityPlan(
         })) {
           discoveryStop = "discovery_spent";
         }
+        // A DUPLICATE PAGE IS THE BINDING FACT when nothing else is left to
+        // read: the route did not run out of pages, it ran out of rows.
+        if (duplicatePageActors.size > 0 &&
+            !strategyActors.some((a) => unreadDiscoveryPage(a) !== null) &&
+            ["no_further_actor_proposed", "pass_limit", "amendment_refused", "discovery_spent"].includes(discoveryStop)) {
+          discoveryStop = "duplicate_page";
+        }
         state.discovery_source_state = {
           sources_attempted: [...actorsRun],
           pages_taken: { ...pagesTaken },
+          ...(Object.keys(pageFingerprints).length ? { page_fingerprints: { ...pageFingerprints } } : {}),
           // LIFETIME admitted, kept for the record and the funnel. The number
           // discovery DECIDES on is `available_admitted` beside it — see
           // `availableAdmittedNow`.
@@ -6355,9 +6440,14 @@ export async function runCapabilityPlan(
           available_admitted: availableAdmittedNow(),
           raw_rows: companies.length,
           pool_target: admittedTarget,
-          exhausted: discoveryStop === "no_further_actor_proposed" ||
+          // "THE PLANNER HAD NOTHING NEW" IS NOT "NOTHING IS LEFT" while a
+          // strategy actor still has an unread page: the next slice reads it
+          // (replenishment pages before it re-plans). Masked in Query B
+          // a9a6791a by the stale schema_failure, which read as open.
+          exhausted: (discoveryStop === "no_further_actor_proposed" &&
+              !strategyActors.some((a) => unreadDiscoveryPage(a) !== null)) ||
             discoveryStop === "raw_row_ceiling" || discoveryStop === "candidate_budget_spent" ||
-            discoveryStop === "discovery_spent",
+            discoveryStop === "discovery_spent" || discoveryStop === "duplicate_page",
           stop_reason: discoveryStop,
         };
         log("discovery_source_state", state.discovery_source_state);
@@ -6381,7 +6471,7 @@ export async function runCapabilityPlan(
         // nothing — which is how a schema failure became a LinkedIn Jobs sweep
         // and five people searches. A source that was never validly asked has
         // not answered, and the mission stops here.
-        const invalid = state.provider_attempts.filter(
+        const invalid = state.provider_attempts.slice(attemptsAtStart).filter(
           (a) => a.capability === cap && a.outcome === "compile_failed");
         if (invalid.length > 0) {
           state.terminal_reason = "provider_input_validation_failed";
@@ -11694,6 +11784,23 @@ function withVerifiedWebStatements<P extends { source_url: string }>(
 ): Array<P | ReturnType<typeof verifiedWebStatements>[number]> {
   const supplied = new Set(pages.map((p) => p.source_url));
   return [...pages, ...verifiedWebStatements(c).filter((v) => !supplied.has(v.source_url))];
+}
+
+/**
+ * A discovery page's identity: the provider's stable row ids (a job's or a
+ * company's `id`, else its LinkedIn URL), order-insensitive. Empty when the
+ * page has no rows or a row has no stable id — an unidentifiable page is never
+ * called a duplicate.
+ */
+export function discoveryPageFingerprint(rows: readonly Record<string, unknown>[]): string {
+  if (rows.length === 0) return "";
+  const ids: string[] = [];
+  for (const r of rows) {
+    const id = r.id ?? r.linkedinUrl ?? r.url;
+    if (id === undefined || id === null || String(id) === "") return "";
+    ids.push(String(id));
+  }
+  return sha256Hex(ids.sort().join("\n"));
 }
 
 /** Does this re-reading of the same source replace the observation held? */

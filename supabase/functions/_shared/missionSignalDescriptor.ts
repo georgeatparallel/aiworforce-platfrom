@@ -274,20 +274,40 @@ const LEADERSHIP_RE =
   /\b(?:founders?|co-?founders?|ceos?|ctos?|cfos?|coos?|cmos?|owners?|presidents?|partners?|executives?|execs?|leadership|leaders?|vps?|heads? of \w+|decision[- ]makers?)\b/;
 const EMPLOYEE_RE = /\b(?:employees?|staff|team members?|workers?)\b/;
 
+/**
+ * A JOB OPENING NAMED AS THE OBJECT OF THE SENTENCE — "open sales roles",
+ * "posted sales jobs", "open sales positions".
+ *
+ * Both used to be lost. "with open sales roles" matched no hiring marker (only
+ * the bare "open roles" did), so the request compiled with NO hiring
+ * requirement at all; "posted sales jobs" matched the social `post` marker
+ * first, so it became an EMPLOYEE'S POST about the US — the hiring requirement
+ * gone and the company's geography softened into the post's topic. Same intent
+ * as "hiring sales", which compiled correctly. "Open source" is a kind of
+ * software, never an opening.
+ */
+const JOB_OBJECT = String.raw`(?:(?:new|open|several|multiple|\d+)\s+)?(?:(?!about\b|on\b|regarding\b|that\b|source\b)[a-z][a-z/&-]*\s+){0,3}(?:jobs?|roles?|openings?|positions?|vacanc(?:y|ies)|job ads?|job listings?)\b`;
+export const OPEN_ROLES_RE = new RegExp(String.raw`\bopen\s+(?!source\b)(?:[a-z][a-z/&-]*\s+){0,3}(?:roles?|positions?|jobs?|openings?|reqs?|vacanc(?:y|ies))\b`, "i");
+export const POSTED_JOBS_RE = new RegExp(String.raw`\bpost(?:ed|s|ing)?\s+${JOB_OBJECT}`, "i");
+const POST_MARKER_RE = new RegExp(
+  String.raw`\bpost(?:ed|s|ing)?\b(?!\s+${JOB_OBJECT})|\bshar(?:ed|ing) (?:a|an|their)\b|\bwrote about\b|\bdiscuss(?:ed|ing|es)\b|\btalking about\b|\bannounc(?:ed|ing)\b`);
+const HIRING_MARKER_RE = new RegExp(
+  String.raw`\bhiring\b|\brecruit\w*\b|\bopen roles?\b|\bjob postings?\b|\bsellers?\b|\bhires?\b|${OPEN_ROLES_RE.source}|${POSTED_JOBS_RE.source}`);
+
 /** Event markers, in precedence order. FIRST MATCH WINS, so order is meaning. */
 const EVENT_MARKERS: ReadonlyArray<readonly [SignalEvent, RegExp]> = Object.freeze([
   // Engagement before authorship: "commented on a post" is a comment, and it
   // contains the word "post". Reading it as a post would claim the subject
   // authored content they only replied to.
   ["comment", /\bcomment(?:ed|s|ing)?\b|\breplied to\b|\bengag(?:ed|ing|ement) with\b/],
-  ["post", /\bpost(?:ed|s|ing)?\b|\bshar(?:ed|ing) (?:a|an|their)\b|\bwrote about\b|\bdiscuss(?:ed|ing|es)\b|\btalking about\b|\bannounc(?:ed|ing)\b/],
+  ["post", POST_MARKER_RE],
   ["funding", /\bfund(?:ed|ing)\b|\braised\b|\bseries [a-e]\b|\bpre-?seed\b|\bseed round\b/],
   ["headcount_change", /\bheadcount\b|\bteam growth\b|\bgrowing (?:their|the) (?:team|headcount)\b|\bgtm growth\b|\bheadcount growth\b/],
   ["product_launch", /\bproduct launch\w*\b|\bnew product\b|\b(?:just|recently) launched\b|\blaunch(?:ed|ing) an? \w+/],
   ["leadership_change", /\bnew (?:ceo|cto|cfo|coo|cmo|vp|head of|exec\w*)\b|\bjust hired an? \w+|\bappointed\b|\bleadership change\b/],
   ["expansion", /\bexpan(?:d|ding|sion)\w*\b|\bopening (?:an? )?(?:office|location)\b|\bentering\b|\bnew market\b/],
   ["technology", /\btech(?:nology)? stack\b|\bbuilt on\b|\bpowered by\b|\badopt(?:ion|ed|ing)\b|\busing \w+/],
-  ["hiring", /\bhiring\b|\brecruit\w*\b|\bopen roles?\b|\bjob postings?\b|\bsellers?\b|\bhires?\b/],
+  ["hiring", HIRING_MARKER_RE],
 ]);
 
 /**
@@ -377,6 +397,10 @@ function extractRoleQualifier(t: string): Pick<SignalQualifier, "role_families" 
   // "hiring X" is the far more common ordering.
   if (terms.length === 0) {
     keep(t.match(/\b((?:[a-z][a-z0-9/&-]*\s+){0,2}[a-z][a-z0-9/&-]*)\s+(?:hiring|hires|recruitment)\b/)?.[1]);
+  }
+  // THE ROLE NAMED AS THE OPENING ITSELF: "open sales roles", "posted sales jobs".
+  if (terms.length === 0) {
+    keep(t.match(/\b(?:open|post(?:ed|s|ing)?(?:\s+(?:new|open))?)\s+((?:[a-z][a-z0-9/&-]*\s+){0,2}?[a-z][a-z0-9/&-]*)\s+(?:jobs?|roles?|openings?|positions?|reqs?|vacanc(?:y|ies))\b/)?.[1]);
   }
 
   // NO ALIAS, BUT A NAMED DISCIPLINE. "Hiring a sales role" matches no title

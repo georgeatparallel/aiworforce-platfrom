@@ -90,6 +90,8 @@ export interface EvaluationRow {
     /** What could close each unknown hard check, or why nothing can yet. */
     evidence_gaps?: CanonicalEvidenceGap[];
     caveats: string[];
+    /** Pending only: whether anything can still prove it (`CanonicalLead.pending_state`). */
+    pending_state?: 'verifying' | 'unverifiable' | null;
   };
 }
 
@@ -139,6 +141,8 @@ export function canonicalEvaluationRows(view: CanonicalMissionView): EvaluationR
       const failing = l.hard_check_details.filter((h) => h.result === 'fail');
       const explanation = bucket === 'ineligible'
         ? `Ruled out: ${failing.map((h) => h.reason).join('; ') || 'a hard requirement is verified false'}`
+        : bucket === 'pending' && l.pending_state === 'unverifiable'
+        ? `Could not be verified: ${l.missing_evidence.slice(0, 2).join('; ') || 'a hard requirement is not established'} — nothing further could prove it in this run.`
         : bucket === 'pending'
         ? `Needs verification: ${l.missing_evidence.slice(0, 2).join('; ') || 'a hard requirement is not yet established'}`
         : bucket === 'screened_out'
@@ -180,6 +184,7 @@ export function canonicalEvaluationRows(view: CanonicalMissionView): EvaluationR
         canonical: {
           bucket: l.bucket, hard_check_details: l.hard_check_details,
           missing_evidence: l.missing_evidence, caveats: l.caveats, evidence_gaps: l.evidence_gaps,
+          pending_state: l.pending_state,
         },
       };
     });

@@ -687,6 +687,8 @@ export interface Checkpoint {
     pool_target: number;
     exhausted: boolean;
     stop_reason: string;
+    /** Per actor, the row-identity fingerprint of the last page read (duplicate-page detection). */
+    page_fingerprints?: Record<string, string>;
   } | null;
 }
 
@@ -941,6 +943,13 @@ export function readCheckpointDiscoveryState(
     // lineage keeps spending; the safe direction for this one field is to stop.
     exhausted: d.exhausted !== false,
     stop_reason: typeof d.stop_reason === "string" ? d.stop_reason : "unknown",
+    ...(() => {
+      const fps: Record<string, string> = {};
+      for (const [k, v] of Object.entries(asRecord(d.page_fingerprints) ?? {})) {
+        if (typeof v === "string" && v) fps[k] = v;
+      }
+      return Object.keys(fps).length ? { page_fingerprints: fps } : {};
+    })(),
   };
 }
 

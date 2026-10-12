@@ -62,6 +62,12 @@ export interface CanonicalLead {
   caveats: string[];
   evidence_coverage: number;
   evidence_gaps: CanonicalEvidenceGap[];
+  /**
+   * Pending leads only: `verifying` while every unknown hard check still has a
+   * route; `unverifiable` when nothing more will be tried this run. Null for
+   * every other bucket, and on views written before the field existed.
+   */
+  pending_state: 'verifying' | 'unverifiable' | null;
 }
 
 export interface CanonicalCounts {
@@ -74,6 +80,8 @@ export interface CanonicalMissionView {
   version: string;
   stage: string;
   counts: CanonicalCounts;
+  /** Pending leads nothing more will be tried for — a subset of `counts.pending`, never a bucket. */
+  pending_unverifiable: number;
   leads: CanonicalLead[];
 }
 
@@ -159,9 +167,13 @@ export function readMissionView(result: unknown): CanonicalMissionView | null {
             };
           })
           : [],
+        pending_state: l.pending_state === 'verifying' || l.pending_state === 'unverifiable' ? l.pending_state : null,
       };
     });
-  return { version: String(r.version ?? ''), stage: String(r.stage ?? ''), counts, leads };
+  return {
+    version: String(r.version ?? ''), stage: String(r.stage ?? ''), counts,
+    pending_unverifiable: Math.min(num(r.pending_unverifiable), counts.pending), leads,
+  };
 }
 
 /** The numbers the Workbench header shows, straight from the canonical counts. */

@@ -11,6 +11,8 @@
 //   [provider-spec]  Provider-spec invariants
 //   [budget]         Budget invariants
 //   [continuation]   Continuation invariants
+//   [matrix]         Query regression matrix (request types, wording variants)
+//   [invariant]      Lead V2 invariants (the eighteen direct properties)
 //   [known-gap]      documented gaps (ignored tests) — listed, never hidden
 //
 // SAFE FOR PRODUCTION SMOKE is YES only when every category ran and passed and
@@ -23,6 +25,8 @@ const CATEGORIES: Array<[tag: string, label: string]> = [
   ["provider-spec", "Provider-spec invariants"],
   ["budget", "Budget invariants"],
   ["continuation", "Continuation invariants"],
+  ["matrix", "Query regression matrix"],
+  ["invariant", "Lead V2 invariants"],
 ];
 
 const root = new URL("../", import.meta.url);

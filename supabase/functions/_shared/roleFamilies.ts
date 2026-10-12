@@ -162,9 +162,11 @@ export function isProfileOrEquityTitle(title: string | null | undefined): boolea
  * "Customer Service Sales Representative" all matched gtm_sales by the word
  * "account executive" or "sales". Only TITLE matching reads this; classifying a
  * request's own wording (`classifyRoleFamily`) is unchanged.
+ * Query B a9a6791a added "Inside Sales Support Specialist": it supports the
+ * sellers and carries no quota.
  */
 const NOT_A_SALES_HIRE_RE =
-  /\b(?:public relations|pr)\b[^,]*\baccount executives?\b|\baccount executives?\b[^,]*,\s*(?:public relations|pr)\b|\bsales\s*(?:&|and)\s*operations planning\b|\bs&op\b|\bcustomer service\b/i;
+  /\b(?:public relations|pr)\b[^,]*\baccount executives?\b|\baccount executives?\b[^,]*,\s*(?:public relations|pr)\b|\bsales\s*(?:&|and)\s*operations planning\b|\bs&op\b|\bcustomer service\b|\bsales support\b/i;
 
 /** Does a job title belong to the requested role family? */
 export function roleMatchesFamily(title: string | null | undefined, fam: RoleFamily): boolean {
