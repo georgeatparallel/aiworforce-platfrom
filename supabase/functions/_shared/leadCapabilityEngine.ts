@@ -278,6 +278,7 @@ import { appendTrace, newMissionTrace, type MissionTrace } from "./missionTrace.
 import { ACTOR_INPUT_CONTRACTS as P2_ACTOR_CONTRACTS } from "./actorInputContracts.ts";
 import { hashInput as p2HashInput } from "./hiringActorInputs.ts";
 import { toRepoKey } from "./actorIdentity.ts";
+import { canonicalJson } from "./planHash.ts";
 import { tightenCeilings, type RunBudget } from "./runBudget.ts";
 import {
   nextUnreadPage, screenAdmissionOrder, type FundingScreenPlan, type ScreenVerdict,
@@ -2743,8 +2744,10 @@ export async function runCapabilityPlan(
         ? [{ source: "discovery_declared_band", value: sizeBandLabel(c.company.company_size_band) }]
         : [],
     // The pages P2 bought, when a second look is asking about them. Empty on
-    // the first pass, which runs before any page has been fetched.
-    web_pages: webPages,
+    // the first pass, which runs before any page has been fetched — except for
+    // the company's OWN verified words a website re-read already proved, which
+    // a later slice must still see (`verifiedWebStatements`).
+    web_pages: withVerifiedWebStatements(c, webPages),
   });
   // STAGE 2 state, captured inside the qualification capability and read after
   // the plan finishes — ranking compares the whole pool, so it cannot run until
@@ -8796,7 +8799,12 @@ export async function runCapabilityPlan(
         if (specOn) {
           const bmItem = groundedBusinessModelItem(c, opts.identity?.task_id ?? null, new Date().toISOString());
           if (bmItem) {
-            recordObservation(c, {
+            // A RESTORED GROUNDING MAY PREDATE A STRONGER RE-READ. Stage 2's
+            // checkpoint is written before Phase C re-reads the company's own
+            // pages, so on resume this item can be the description-only reading
+            // that re-read superseded (Query B f6133796, Citian and Coval). The
+            // store keeps the stronger observation; this says so.
+            const recorded = recordObservation(c, {
               version: CANDIDATE_OBSERVATION_VERSION,
               observation_id: observationIdFor("obs_grd_", bmItem.evidence_id),
               capability: "company_brain_qualification", actor_key: "grounded_evidence_evaluation",
@@ -8806,6 +8814,12 @@ export async function runCapabilityPlan(
               entity_hint: entityHintFromCompany(c.company),
               evidence: [bmItem],
             });
+            if (recorded === "kept") {
+              log("grounded_business_model_kept_stronger", {
+                company_key: c.key, incoming_status: bmItem.status,
+                incoming_decision: (bmItem.assessment as { business_model_decision?: string } | undefined)?.business_model_decision ?? null,
+              });
+            }
           }
         }
 
@@ -11603,19 +11617,128 @@ function legacyObservationId(o: CandidateObservation): string | null {
   return legacy === o.observation_id ? null : legacy;
 }
 
-function recordObservation(c: EngineCompany, o: CandidateObservation): void {
+// ── EVIDENCE IS MONOTONIC UNLESS IT IS CONTRADICTED ─────────────────────────
+//
+// Live Query B (task f6133796, 2026-10-11): slice 3 re-read Citian's and
+// Coval's own websites and PROVED their business models. Slice 4 restored the
+// Stage-2 grounding checkpointed before that re-read, rebuilt the item from the
+// LinkedIn description alone (`review`) and recorded it under the same
+// observation id — and the old "always replace" rule erased the proof. Both
+// fell to pending; which companies qualified depended on execution order.
+//
+// So a re-reading replaces the held observation only when it is at least as
+// strong, or when it is a decisive answer that disagrees with it:
+//
+//   strength      the primary item's claim state (proven / disproven over
+//                 plausible over unknown), then its confidence, then its source:
+//                 a reading derived from the company's own fetched page outranks
+//                 one that is not (click5, f6133796: a website `review` replaced
+//                 by a description-only `review`). Proof past its `valid_until`
+//                 counts as nothing: freshness may require the re-read.
+//   contradiction a decisive (proven / disproven) answer whose status or value
+//                 differs from the held one. It ALWAYS enters — verified
+//                 "consumer-only" must still fail a B2B rule — and existing
+//                 policy resolves it. A weaker, undecided contrary reading is
+//                 not a contradiction; it is a weaker re-read.
+//   equal         the newest wins, as before.
+//
+// Generic over every stable-id writer (grounded business model, claim
+// verifiers, discovered funding, enrichment), because the defect is in the
+// store, not in one claim.
+const OBSERVATION_STATUS_RANK: Readonly<Record<string, number>> = Object.freeze({ proven: 2, disproven: 2, plausible: 1 });
+const OBSERVATION_CONFIDENCE_RANK: Readonly<Record<string, number>> = Object.freeze({ high: 3, medium: 2, low: 1 });
+
+function observationStrength(e: EvidenceItem | undefined, now: number): [number, number, number] {
+  if (!e) return [0, 0, 0];
+  if (e.valid_until && Date.parse(e.valid_until) < now) return [0, 0, 0];
+  const firstParty = (e.derived_from ?? []).some((id) => id.startsWith("web_page:")) ? 1 : 0;
+  return [OBSERVATION_STATUS_RANK[e.status] ?? 0, OBSERVATION_CONFIDENCE_RANK[e.confidence] ?? 0, firstParty];
+}
+
+/**
+ * WEBSITE PROOF A LATER SLICE MUST STILL SEE — from the checkpoint, not the page.
+ *
+ * Page bodies are never checkpointed (the result is already multi-MB). What
+ * survives is the proven grounded business-model observation: its page URL and
+ * the verified quotes it rests on. Re-entered as that page's registry item —
+ * same URL, so same evidence id — a later grounding reads the company's own
+ * words instead of only its LinkedIn description, and the "pages already read"
+ * guard (`grounded_source_urls`) knows the page was read, so it is neither
+ * bought nor re-read again. Nothing new is stored to make this possible.
+ */
+export function verifiedWebStatements(c: Pick<EngineCompany, "observations">): Array<{
+  source_url: string; page_intent: string; source_text: string; fetched_at: string | null;
+}> {
+  const out = new Map<string, { source_url: string; page_intent: string; source_text: string; fetched_at: string | null }>();
+  for (const o of c.observations ?? []) {
+    for (const e of o.evidence) {
+      if (e.source?.actor !== "grounded_evidence_evaluation" || e.dimension !== "business_model") continue;
+      if (e.status !== "proven" && e.status !== "disproven") continue;
+      const url = e.source.url;
+      if (!url || /(^|\.)linkedin\.com\//i.test(url.replace(/^https?:\/\//i, ""))) continue;
+      const quotes = ((e.assessment as { business_model_quotes?: Array<{ evidence_id: string; excerpt: string }> } | undefined)
+        ?.business_model_quotes ?? [])
+        .filter((q) => q.evidence_id.startsWith("web_page:") && q.excerpt.trim().length > 0)
+        .map((q) => q.excerpt.trim());
+      const text = [...new Set([...(e.source.excerpt ? [e.source.excerpt.trim()] : []), ...quotes])].join("\n");
+      if (!text) continue;
+      out.set(url, { source_url: url, page_intent: "verified_statement", source_text: text, fetched_at: e.observed_at ?? null });
+    }
+  }
+  return [...out.values()];
+}
+
+/** The pages a registry is built with: the ones supplied, then verified statements for any other page. */
+function withVerifiedWebStatements<P extends { source_url: string }>(
+  c: Pick<EngineCompany, "observations">, pages: readonly P[],
+): Array<P | ReturnType<typeof verifiedWebStatements>[number]> {
+  const supplied = new Set(pages.map((p) => p.source_url));
+  return [...pages, ...verifiedWebStatements(c).filter((v) => !supplied.has(v.source_url))];
+}
+
+/** Does this re-reading of the same source replace the observation held? */
+export function observationMayReplace(
+  held: CandidateObservation, incoming: CandidateObservation, now: number = Date.now(),
+): boolean {
+  const h = held.evidence[0];
+  const n = incoming.evidence[0];
+  // Not the same claim (or nothing to compare): a different question, not a re-read.
+  if (!h || !n || h.dimension !== n.dimension) return true;
+  const decisive = OBSERVATION_STATUS_RANK[n.status] === 2;
+  if (decisive && (h.status !== n.status || canonicalJson(h.value) !== canonicalJson(n.value))) return true;
+  const incomingStrength = observationStrength(n, now);
+  const heldStrength = observationStrength(h, now);
+  for (let i = 0; i < incomingStrength.length; i++) {
+    if (incomingStrength[i] !== heldStrength[i]) return incomingStrength[i] > heldStrength[i];
+  }
+  return true; // equal: the newest reading wins, as before
+}
+
+/**
+ * Record an observation under its stable id. `kept` means the held observation
+ * was stronger and stands (`observationMayReplace`); `dropped` means a new id
+ * found the company's observation list full (unchanged behaviour).
+ */
+function recordObservation(c: EngineCompany, o: CandidateObservation): "added" | "replaced" | "kept" | "dropped" {
   const obs = c.observations ?? [];
-  // REPLACED, NOT SKIPPED. An observation id is stable per source, so a second
-  // recording is a RE-reading of the same source — re-grounding a claim on
-  // pages the first reading never saw (Phase C). `companyEvidenceItems` lists
-  // observation items before the live ones and the graph keeps the first of an
-  // evidence id, so leaving the old copy in place would let the stale reading
-  // win over the fresh one.
+  // REPLACED WHEN NOT WEAKER. An observation id is stable per source, so a
+  // second recording is a RE-reading of the same source — re-grounding a claim
+  // on pages the first reading never saw (Phase C). `companyEvidenceItems`
+  // lists observation items before the live ones and the graph keeps the first
+  // of an evidence id, so the held copy is the one that counts: a fresher,
+  // stronger or contradicting reading must replace it, and a weaker one must not.
   const legacy = legacyObservationId(o);
   const at = obs.findIndex((x) => x.observation_id === o.observation_id || (legacy !== null && x.observation_id === legacy));
-  if (at >= 0) obs[at] = withCompanyKey(o, c.key);
-  else if (obs.length < MAX_OBSERVATIONS_PER_COMPANY + 2) obs.push(withCompanyKey(o, c.key));
+  let outcome: "added" | "replaced" | "kept" | "dropped" = "dropped";
+  if (at >= 0) {
+    outcome = observationMayReplace(obs[at], o) ? "replaced" : "kept";
+    if (outcome === "replaced") obs[at] = withCompanyKey(o, c.key);
+  } else if (obs.length < MAX_OBSERVATIONS_PER_COMPANY + 2) {
+    obs.push(withCompanyKey(o, c.key));
+    outcome = "added";
+  }
   c.observations = obs;
+  return outcome;
 }
 
 /**
@@ -11717,11 +11840,19 @@ export function recordDiscoveredFunding(
 
 export function applyRegroundedVerification(
   c: EngineCompany, verification: GroundedVerification, missionId: string | null, at: string,
-): { item: EvidenceItem | null; decision: string | null } {
+  /**
+   * The registry this verification was grounded against — the company's facts
+   * plus the pages re-read. Becomes the company's registry, so the item names
+   * the page its quote came from (provenance a later slice relies on) and the
+   * "pages already read" guard sees exactly what this reading saw.
+   */
+  registry?: EvidenceRegistry | null,
+): { item: EvidenceItem | null; decision: string | null; kept?: boolean } {
   c.grounded = verification;
+  if (registry) c.evidence_registry = registry;
   const item = groundedBusinessModelItem(c, missionId, at);
   if (!item) return { item: null, decision: null };
-  recordObservation(c, {
+  const outcome = recordObservation(c, {
     version: CANDIDATE_OBSERVATION_VERSION,
     observation_id: observationIdFor("obs_grd_", item.evidence_id),
     capability: "web_evidence_verification", actor_key: "grounded_evidence_evaluation",
@@ -11731,6 +11862,13 @@ export function applyRegroundedVerification(
     entity_hint: entityHintFromCompany(c.company),
     evidence: [item],
   });
+  // A WEAKER RE-READ DID NOT CHANGE THE CLAIM. Report what stands, so a caller
+  // counting "resolved / still pending" reads the claim, not the refused reading.
+  if (outcome === "kept") {
+    const held = (c.observations ?? []).flatMap((o) => o.evidence).find((e) => e.evidence_id === item.evidence_id) ?? item;
+    const ha = held.assessment as { business_model_decision?: string } | undefined;
+    return { item: held, decision: ha?.business_model_decision ?? null, kept: true };
+  }
   const a = item.assessment as { business_model_decision?: string } | undefined;
   return { item, decision: a?.business_model_decision ?? null };
 }

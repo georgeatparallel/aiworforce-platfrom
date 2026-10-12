@@ -5041,11 +5041,12 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                               registry: registry as never, requiresCommercialSignal,
                             }))
                           : null,
-                        apply: (key, verification) => {
+                        apply: (key, verification, registry) => {
                           const c = engineRun.companies.find((x) => x.key === key);
                           if (!c) return { item: null, decision: null };
                           return applyRegroundedVerification(
-                            c, verification, String(task.id), new Date().toISOString());
+                            c, verification, String(task.id), new Date().toISOString(),
+                            registry as Parameters<typeof applyRegroundedVerification>[4]);
                         },
                         log: (event, meta) => console.log(`[run-agent][phase-c][${event}]`, { task_id: task.id, ...meta }),
                       },
@@ -5286,10 +5287,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             registry: registry as never, requiresCommercialSignal,
                           }))
                           : null,
-                        apply: (k, verification) => {
+                        apply: (k, verification, registry) => {
                           const c = engineRun.companies.find((x) => x.key === k);
                           if (!c) return { item: null, decision: null };
-                          return applyRegroundedVerification(c, verification, String(task.id), new Date().toISOString());
+                          return applyRegroundedVerification(c, verification, String(task.id), new Date().toISOString(),
+                            registry as Parameters<typeof applyRegroundedVerification>[4]);
                         },
                         log: (event, meta) => verifierLog(`reground:${event}`, meta),
                       },
