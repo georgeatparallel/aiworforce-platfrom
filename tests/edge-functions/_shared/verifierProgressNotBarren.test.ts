@@ -129,9 +129,11 @@ Deno.test("claimProgressCount: resolved hard checks (pass or fail) plus answered
     { hard_check_details: [{ result: "unknown" }, { result: "unknown" }] },
     { hard_check_details: null },
   ];
-  assertEquals(claimProgressCount({ leads, attemptedRoutesPerCompany: [2, 0, 1] }), 3 + 3);
+  // Each admitted (not screened-out) lead also counts once for its admission
+  // (Query B d22d9ee6 — see meaningfulLineageProgress.test.ts): 3 leads → +3.
+  assertEquals(claimProgressCount({ leads, attemptedRoutesPerCompany: [2, 0, 1] }), 3 + 3 + 3);
   // A verifier answering inconclusively still closes a route — that is progress.
-  assertEquals(claimProgressCount({ leads, attemptedRoutesPerCompany: [2, 1, 1] }), 3 + 4);
+  assertEquals(claimProgressCount({ leads, attemptedRoutesPerCompany: [2, 1, 1] }), 3 + 3 + 4);
 });
 
 Deno.test("sliceWasBarren: claim progress alone prevents a barren slice; absent, the old rule is unchanged", () => {
