@@ -63,8 +63,12 @@ export interface RegroundDeps {
     | ((i: { registry: unknown; requiresCommercialSignal: boolean; company_key: string })
       => Promise<GroundedVerification | null>)
     | null;
-  /** The engine writes the result: `applyRegroundedVerification`. */
-  apply: (company_key: string, verification: GroundedVerification)
+  /**
+   * The engine writes the result: `applyRegroundedVerification`. `registry` is
+   * the one the verification was grounded against, so the claim can name the
+   * page its quote came from.
+   */
+  apply: (company_key: string, verification: GroundedVerification, registry: unknown)
     => { item: { status: string } | null; decision: string | null };
   log?: (event: string, meta?: Record<string, unknown>) => void;
 }
@@ -140,7 +144,7 @@ export async function regroundPendingClaims(i: {
       });
       if (!verification) { outcome.skipped = "ground_failed"; report.outcomes.push(outcome); continue; }
 
-      const applied = i.deps.apply(c.company_key, verification);
+      const applied = i.deps.apply(c.company_key, verification, registry);
       report.regrounded++;
       outcome.decision = applied.decision;
       outcome.status = applied.item?.status ?? null;

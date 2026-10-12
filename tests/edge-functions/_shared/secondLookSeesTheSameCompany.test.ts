@@ -89,8 +89,11 @@ Deno.test("3. the engine exposes that builder, and it takes the fetched pages", 
     new URL("../../../supabase/functions/_shared/leadCapabilityEngine.ts", import.meta.url),
   );
   assert(src.includes("rebuild_registry:"), "the run must carry the builder across the boundary");
-  assert(src.includes("web_pages: webPages"),
-    "one builder serves both passes: the second supplies pages, the first supplies none");
+  // Since 2026-10-11 the first pass also carries the company's verified
+  // website statements from the checkpoint (evidenceMonotonicity.test.ts) —
+  // still one builder, still the second look's pages taking precedence.
+  assert(src.includes("web_pages: withVerifiedWebStatements(c, webPages)"),
+    "one builder serves both passes: the second supplies pages, the first only what a website re-read already proved");
   // And the builder is reachable from the run's own scope, not trapped inside a
   // stage that a resumed slice might never enter.
   const decl = src.indexOf("const registryFor = (");
