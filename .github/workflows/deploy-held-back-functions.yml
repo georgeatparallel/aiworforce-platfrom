@@ -1,40 +1,50 @@
 # DEPLOY A PINNED RELEASE OF THE LEAD V2 EDGE FUNCTIONS — manual, production.
 #
-# Release 9179acd0 — run-agent ONLY: PR #59, Lead V2 evidence monotonicity.
-# Live Query B (task f6133796): a later slice restored a Stage-2 grounding
-# checkpointed before the website re-read and recorded its weaker,
-# description-only business-model reading under the same observation id; the
-# old always-replace store erased the website proof and Citian and Coval fell
-# from qualified to pending. Released: (1) `recordObservation` is monotonic — a
-# re-read replaces only when at least as strong (claim state, confidence,
-# first-party page), a decisive contradiction always replaces, expired proof
-# yields; (2) the website re-read keeps the registry it was grounded against,
-# so the claim names its page; (3) later slices rebuild that verified website
-# statement from the checkpointed observation (no page bodies, no new state).
+# Release e2e8014e — run-agent ONLY: PR #61, Lead V2 discovery, hiring
+# evidence and replay coverage (latest Query B, task a9a6791a). Released:
+# (1) a compile failure counts only for the proposal that produced it, so a
+# historical one no longer stops later slices (`schema_failure`); (2) job-
+# discovery titles are bounded to the actor's limit before compile, and terms
+# from another role family ("account manager" for sales) are dropped
+# (`boundJobDiscoveryTitles`); (3) a discovery page that repeats the previous
+# one exhausts its route (`duplicate_page`, row-id fingerprint carried in the
+# checkpoint); (4) a posting made for a client ("on behalf of …") proves no
+# hiring for the poster (`agency_client_posting`); (5) pending leads say
+# whether anything can still prove them (`pending_state`); (6) "sales support"
+# titles no longer prove a sales hire.
 # Deployment only: no application file changes in this release PR. The live
-# build is d2aca524; d2aca524..9179acd0 changes exactly three files under
-# supabase/functions: _shared/leadCapabilityEngine.ts,
-# _shared/webEvidenceRegrounding.ts and run-agent/index.ts, and nothing under
-# worker/ or the migrations. Measured with `deno info --json` (bundled local
-# modules ∩ changed files) and by which function EXECUTES the changed paths:
-#   run-agent    d2aca524 (v270) → bundles all three: Phase C re-grounding,
-#                qualification grounding and the observation store. DEPLOYED.
+# build is 9179acd0; 9179acd0..e2e8014e changes eight _shared modules
+# (hiringActorInputs, hiringActorNormalizers, leadCapabilityEngine,
+# leadResumeState, missionSignalDescriptor, roleFamilies, signalKinds,
+# workbenchMissionView) and run-agent/index.ts, and nothing under worker/ or
+# the migrations. Measured with `deno info --json` (bundled local modules ∩
+# changed files) and by which function EXECUTES the changed paths:
+#   run-agent    9179acd0 (v271) → bundles all nine: discovery dispatch, route
+#                control, page commits, employer checks, the mission view and
+#                the replenishment carry-over. DEPLOYED.
 #
 # NOT in this release (they stay on b51ad3dd, checked before and after):
-#   pilot-chat   bundles the engine but imports only compileFirstProviderCall,
-#                which references none of the changed code.
+#   pilot-chat   COMPILES missions: the hiring-wording fix ("open sales roles",
+#                "posted sales jobs" → a hiring requirement, in
+#                missionSignalDescriptor / signalKinds) only reaches production
+#                when pilot-chat is deployed. Deliberately left to a separate
+#                decision: deploying it also ships b51ad3dd..e2e8014e to
+#                pilot-chat (PRs #55–#61). Until then those wordings compile as
+#                before.
 #   orchestrate, enqueue-lead-mission, continue-workflow, resume-stalled-leads
-#                bundle none of the three changed files.
-# Also bundling the engine and NOT deployed: run-monitoring-scan. It runs the
-# engine without spec mode, grounding or the re-read, so no website-grounding
-# path is reachable; the store rule reaches only its own enrichment/funding ids
-# in its own `monitoring_runs.state`, which Lead V2 never reads, and its shared
-# Signals V2 writes are insert-or-ignore. No shared-record version skew. It
-# reports no build header, so it is not checked by build here.
+#                bundle the signal readers and role families; left held, as in
+#                every Lead V2 release since b51ad3dd.
+# Also bundling changed modules and NOT deployed, as in every Lead V2 release:
+# run-monitoring-scan, unlock-founders, generate-company-brain-draft,
+# daily-brief, run-lead-action, setup-company-brain. They report no build
+# header, so they are not checked by build here.
 # The three functions on a08ac0e4 stay there (checked before and after).
-# The Railway worker runs the Lead V2 queue in-process (it bundles run-agent and
-# the changed modules) and redeploys itself from launch/hardening; it is
-# verified on 9179acd0 separately, not by this workflow.
+# THE WORKER runs the Lead V2 queue in-process (it bundles run-agent and the
+# changed modules), so the queue only runs this release once a worker runs
+# e2e8014e. Railway is DOWN for this release (trial expired) and the temporary
+# local worker is STOPPED; the queue is idle. The post-deploy health step
+# therefore does not check the Railway worker (see that step); the worker is
+# started from e2e8014e and verified separately, not by this workflow.
 # The held migration 20261011120000 (productive-continuation hold) stays HELD:
 # nothing here touches the database.
 #
@@ -64,7 +74,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_sha:
-        description: "Type the release SHA to deploy: 9179acd0"
+        description: "Type the release SHA to deploy: e2e8014e"
         required: true
         type: string
 
@@ -76,18 +86,18 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_SHA: 9179acd0512819a0fab753de60801f3f5f74cc10
+  RELEASE_SHA: e2e8014e916ba2502bc61e4c8529e23e8890ea8a
   # The release the three untouched a08ac0e4 functions still run; the preflight
   # proves the build check works by reading one of them back.
   PREVIOUS_RELEASE_SHA: a08ac0e4edea6f3aa54314db4efe0073e371b82f
   # The release the other lead-path functions run, and keep running, through
   # this deploy (b51ad3dd, PR #54, deployed 2026-10-11 06:46 UTC).
   HELD_RELEASE_SHA: b51ad3dddf2604f9d218d7c495e17e22d20932db
-  # What the deployed function runs BEFORE this deploy (d2aca524, v270, PR #57,
-  # deployed 2026-10-11 16:01 UTC). The preflight refuses if it has moved, so
+  # What the deployed function runs BEFORE this deploy (9179acd0, v271, PR #59,
+  # deployed 2026-10-12 07:54 UTC). The preflight refuses if it has moved, so
   # this never overwrites a build nobody backed up on purpose.
-  LIVE_RUN_AGENT_SHA: d2aca5242eec725d4a92d7899531ff59b11ca9b6
-  LIVE_RUN_AGENT_VERSION: "270"
+  LIVE_RUN_AGENT_SHA: 9179acd0512819a0fab753de60801f3f5f74cc10
+  LIVE_RUN_AGENT_VERSION: "271"
   DEPLOYED_FUNCTIONS: "run-agent"
   # Lead-path functions this deploy must NOT touch, with the build each runs.
   UNTOUCHED_ON_HELD: "pilot-chat orchestrate enqueue-lead-mission continue-workflow resume-stalled-leads"
@@ -109,11 +119,11 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm_sha }}
         run: |
-          if [ "$CONFIRM" != "9179acd0" ]; then echo "::error::confirm_sha must be 9179acd0"; exit 1; fi
+          if [ "$CONFIRM" != "e2e8014e" ]; then echo "::error::confirm_sha must be e2e8014e"; exit 1; fi
 
       - uses: actions/checkout@v4
         with:
-          ref: 9179acd0512819a0fab753de60801f3f5f74cc10
+          ref: e2e8014e916ba2502bc61e4c8529e23e8890ea8a
           # Full history, so the ancestry check below is never defeated by a
           # shallow clone.
           fetch-depth: 0
@@ -231,7 +241,7 @@ jobs:
         run: scripts/deploy/stamp-build.sh stamp
 
       # The only function in this release: the edge copy of the Lead V2 engine.
-      # Mission compilation (pilot-chat, orchestrate) does not change.
+      # Mission compilation (pilot-chat, orchestrate) stays on b51ad3dd here.
       - name: Deploy run-agent (1 of 1)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -278,11 +288,17 @@ jobs:
           echo "$queue" | jq -e '.stuck_running == 0 and .unclaimed_waiting == 0' > /dev/null \
             || { echo "::error::the Lead V2 queue has stuck or unclaimed missions"; exit 1; }
 
-      - name: Ops health and Railway worker health (fails on warnings too)
+      # RAILWAY IS DOWN FOR THIS RELEASE (trial expired; the temporary local
+      # worker is stopped and the queue is idle), so the worker is deliberately
+      # NOT checked here: `check-health.ts` reads an unreachable worker as
+      # critical and would fail the job after a successful deploy. Without
+      # WORKER_HEALTH_URL it logs "the worker is not checked"; ops-health and
+      # the queue gate above still run. The worker is verified separately when
+      # it is started from RELEASE_SHA.
+      - name: Ops health (fails on warnings too; Railway worker not checked — down)
         env:
           OPS_HEALTH_URL: ${{ secrets.OPS_HEALTH_URL }}
           OPS_HEALTH_TOKEN: ${{ secrets.OPS_HEALTH_TOKEN }}
-          WORKER_HEALTH_URL: ${{ secrets.WORKER_HEALTH_URL }}
         run: deno run --allow-net --allow-env scripts/ops/check-health.ts --fail-on warn
 
       - name: On failure — where every function stands (no automatic rollback)
