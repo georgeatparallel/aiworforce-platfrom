@@ -207,6 +207,17 @@ async function main() {
       isResume: !!row.task_id,
       heldUntil: (row.held_until as string | null) ?? null,
     };
+    // THE QUEUE'S OWN SLICE COUNT, read beside the claim (the claim RPC does
+    // not return it). A floor for the lineage counter: a resumed slice whose
+    // task row lost `lead_lineage_progress` must not restart it (Query B
+    // d22d9ee6). Best effort — an unreadable count simply sets no floor.
+    try {
+      const { data: q } = await db.from("lead_mission_queue").select("continuations").eq("id", mission.queueId).maybeSingle();
+      const n = Number((q as { continuations?: unknown } | null)?.continuations);
+      mission.continuations = Number.isInteger(n) && n >= 0 ? n : null;
+    } catch {
+      mission.continuations = null;
+    }
     return { claimed: true, mission };
   };
 

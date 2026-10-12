@@ -142,6 +142,10 @@ Deno.test("7. no writer in run-agent may replace tasks.result wholesale", async 
     const after = body.slice(at + "result:".length, at + 120);
     // Merged forms: `{ ...prior`, `{\n ...x`, or a variable (`result: cf`).
     if (/^\s*\{\s*(\/\/[^\n]*\n\s*)*\.\.\./.test(after)) continue;
+    // The lineage-progress guard (Query B d22d9ee6) wraps the same merge:
+    // `guardResult("path", prior, { ...prior, … })` — its object must still
+    // begin with a spread.
+    if (/^\s*guardResult\("[^"]+",[\s\S]*?,\s*\{\s*(\/\/[^\n]*\n\s*)*\.\.\./.test(body.slice(at + "result:".length))) continue;
     if (/^\s*[A-Za-z_$][\w$]*\s*[,}]/.test(after)) continue;
     const line = src.slice(0, m.index).split("\n").length;
     offenders.push(`line ${line}: ${after.replace(/\s+/g, " ").slice(0, 70)}`);

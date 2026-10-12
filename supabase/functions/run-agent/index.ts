@@ -432,6 +432,7 @@ import {
   claimProgressCount, resolveMaxContinuations, resolveMaxLineageCostUnits,
   AUTO_CONTINUATION_VERSION, LINEAGE_PROGRESS_KEY, type LineageProgress,
 } from "../_shared/leadAutoContinuation.ts";
+import { guardProgressWrite, resolveLineageProgress } from "../_shared/lineageProgressGuard.ts";
 import {
   continuingCheckpointContent, continuingResultsContent, noticeIsOpen, publishResultsNotice,
   RUN_NOTICE_VERSION, runEndingOf, supabaseNoticeDb, type NoticeMessage, type RunEnding,
@@ -897,6 +898,13 @@ export interface RunAgentRunOptions {
    * edge's own provider keys — beside the queue's re-claim.
    */
   continuationOwner?: "v2_queue";
+  /**
+   * The queue row's `continuations` as the worker read it at claim time — the
+   * queue's own record of the slices it accepted as continuations. A floor for
+   * `lead_lineage_progress.continuations_used` (`resolveLineageProgress`), so a
+   * lost task-row copy cannot reset the lineage (Query B d22d9ee6).
+   */
+  queueContinuations?: number | null;
   onExecutionBound?: (ids: { taskId: string; lineageId: string; holdsLease: boolean }) =>
     void | Promise<void>;
 }
@@ -1220,6 +1228,27 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // inserts. Refusals are explicit — a bad token never degrades into a new
   // (billable) round-1 run.
   let task: { id: string } | null = null;
+  // ── NO TASK-RESULT WRITE MAY TAKE LINEAGE PROGRESS BACKWARDS ──────────────
+  //
+  // Query B d22d9ee6: slice 4 found `lead_lineage_progress` missing and reset
+  // the lineage to 1. Every result write goes through this guard, which keeps
+  // the prior progress when a write would drop or lower it, and reports what
+  // each write did to it in one structured line (no payloads).
+  const guardResult = (
+    path: string, prior: Record<string, unknown> | null, next: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const g = guardProgressWrite(path, prior, next);
+    const d = g.diagnostic;
+    if (d.present_before || d.present_in_write) {
+      const line = {
+        at: new Date().toISOString(), task_id: task?.id ?? null, ...d,
+        queue_continuations: inProcess.queueContinuations ?? null,
+      };
+      if (d.restored) console.warn("[run-agent][lineage-progress-write] prevented a decrease", line);
+      else console.log("[run-agent][lineage-progress-write]", line);
+    }
+    return g.result;
+  };
   // The lease taken on the RPC path lives in COLUMNS, so it must be released
   // explicitly when the round ends. Held here because the claim is taken in this
   // block but released after the sourcing outcome is written, far below.
@@ -2872,7 +2901,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // no second read and cannot race: the parent has already finished
             // and released the lease by the time a successor exists. For a
             // fresh task it is `{}`, so this is identical to the old behaviour.
-            result: {
+            result: guardResult("paid_preflight", resumedTaskResult as Record<string, unknown> | null, {
               ...resumedTaskResult,
               paid_execution_preflight: paidPreflight,
               // ONE ROW ANSWERS "WHICH CODE DID THIS?". Persisted alongside the
@@ -2884,7 +2913,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 contract: contractCheck,
                 intelligence_mode: intelligence.mode,
               },
-            },
+            }),
           }).eq("id", task.id);
         } catch (e) {
           console.log("[run-agent][paid-preflight][persist-error]", String(e));
@@ -3476,7 +3505,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                       const prior = (cur?.result && typeof cur.result === "object")
                         ? cur.result as Record<string, unknown> : {};
                       await supabase.from("tasks").update({
-                        result: {
+                        result: guardResult("stage_checkpoint", prior as Record<string, unknown> | null, {
                           ...prior,
                           [POOL_EVAL_RESULT_KEY]: buildPoolCheckpoint({
                             missionHash: poolFingerprint,
@@ -3484,7 +3513,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             evaluated, next_offset,
                             accounting: poolBinding.accounting,
                           }),
-                        },
+                        }),
                       }).eq("id", task.id);
                     } catch (e) {
                       console.log("[run-agent][stage2][checkpoint-error]", String(e));
@@ -3620,7 +3649,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   const prior = (cur?.result && typeof cur.result === "object")
                     ? cur.result as Record<string, unknown> : {};
                   await supabase.from("tasks").update({
-                    result: { ...prior, workbench_progress: p },
+                    result: guardResult("progress_publish", prior as Record<string, unknown> | null, { ...prior, workbench_progress: p }),
                   }).eq("id", task.id);
                 } catch (e) {
                   console.log("[run-agent][capability-engine][progress-error]", String(e));
@@ -3671,7 +3700,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                     return { written: false, reason: `prior_terminal:${priorTerminal}` };
                   }
                   await supabase.from("tasks").update({
-                    result: {
+                    result: guardResult("stage_boundary", prior as Record<string, unknown> | null, {
                       ...prior,
                       task_status: "partial",
                       terminal_status: "continuation_required",
@@ -3719,7 +3748,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             persistedMission.original_user_query ?? routeUserRequest,
                         }
                         : {}),
-                    },
+                    }),
                     // ── THE ROW STATUS TRAVELS WITH THE CHECKPOINT ──────────
                     //
                     // This wrote `result` alone and left `tasks.status` at
@@ -5543,7 +5572,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 const prior = (cur?.result && typeof cur.result === "object")
                   ? cur.result as Record<string, unknown> : {};
                 await supabase.from("tasks").update({
-                  result: {
+                  result: guardResult("final_snapshot", prior as Record<string, unknown> | null, {
                     ...prior,
                     workbench_progress: finalProgress,
                     // A SEPARATE KEY, deliberately not merged into any lead
@@ -5831,7 +5860,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                       shortfall: portfolio.shortfall,
                       entries: portfolio.entries,
                     },
-                  },
+                  }),
                 }).eq("id", task.id);
               }
             } catch (e) {
@@ -6557,9 +6586,22 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         const p5Decision = p5View ? decisionSummary(p5View.counts) : null;
         const priorTaskRow = await supabase
           .from("tasks").select("result").eq("id", task.id).maybeSingle();
-        const priorProgress = readLineageProgress(
-          (((priorTaskRow.data as { result?: Record<string, unknown> } | null)
-            ?.result ?? {}) as Record<string, unknown>)[LINEAGE_PROGRESS_KEY]);
+        // THE MAXIMUM OF EVERY DURABLE COPY: the task row, the lineage's own
+        // state (written at release) and the queue's continuation count. A
+        // missing or stale task copy can no longer reset the lineage.
+        const resolvedPrior = resolveLineageProgress({
+          stored: (((priorTaskRow.data as { result?: Record<string, unknown> } | null)
+            ?.result ?? {}) as Record<string, unknown>)[LINEAGE_PROGRESS_KEY],
+          lineageState: leaseState,
+          queueContinuations: inProcess.queueContinuations ?? null,
+        });
+        if (resolvedPrior.floored) {
+          console.warn("[run-agent][lineage-progress] task copy behind a durable copy — using the maximum", {
+            at: new Date().toISOString(), task_id: task.id, ...resolvedPrior.sources,
+            effective: resolvedPrior.progress.continuations_used,
+          });
+        }
+        const priorProgress = resolvedPrior.progress;
         // ── COMPANIES AND AUTHORISATIONS ARE DIFFERENT QUANTITIES ──────────
         //
         // `investigation_selected` is a SPEND counter — it re-counts work
@@ -6816,7 +6858,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
 
         await supabase.from("tasks").update({
           status: statuses.rowStatus,
-          result: {
+          result: guardResult("slice_result", priorTaskResult as Record<string, unknown> | null, {
             ...priorTaskResult,
             task_status: statuses.taskStatus,
             terminal_status: statuses.terminalStatus,
@@ -7024,7 +7066,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             hiring_route: routeRecord
               ? { ...routeRecord, drift: routeDrift(routeRecord) }
               : { error: routeResolution.ok ? null : routeResolution.errors },
-          },
+          }),
         }).eq("id", task.id);
 
         // RELEASE THE DURABLE LEASE. `releaseClaim` above only strips the
@@ -7119,7 +7161,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           });
           {
             const { error: outcomeErr } = await supabase.from("tasks")
-              .update({ result: { ...committedResult, [RUN_OUTCOME_RESULT_KEY]: runOutcome } })
+              .update({ result: guardResult("run_outcome", committedResult, { ...committedResult, [RUN_OUTCOME_RESULT_KEY]: runOutcome }) })
               .eq("id", task.id);
             if (outcomeErr) {
               // BEST EFFORT, AND SAID SO. The outcome describes a run that has
@@ -7157,6 +7199,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // BY VALUE. Re-reading `committedResult` here is exactly the bug:
             // that snapshot predates the write above.
             [RUN_OUTCOME_RESULT_KEY]: runOutcome,
+            // THE LINEAGE'S OWN COPY OF ITS PROGRESS, so the next slice can
+            // resolve it even if the task row loses it (`resolveLineageProgress`).
+            [LINEAGE_PROGRESS_KEY]: progress,
           });
           if (merged.merge.refused.length > 0) {
             // A REFUSED REGRESSION IS THE INTERESTING EVENT IN THIS FUNCTION.
@@ -7270,14 +7315,14 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             .select("result").eq("id", task.id).maybeSingle();
           const prior = ((cur as { result?: Record<string, unknown> } | null)?.result ?? {});
           const { error: markErr } = await supabase.from("tasks").update({
-            result: {
+            result: guardResult("continuation_mark", prior as Record<string, unknown> | null, {
               ...prior,
               [AUTO_RESUME_SUPPRESSED_KEY]: {
                 at: new Date().toISOString(),
                 by: "run-agent:single_generation",
                 reason: "single_generation requested by a service-role caller",
               },
-            },
+            }),
           }).eq("id", task.id);
           if (markErr) {
             // SAY SO LOUDLY. A failed marker means the sweeper WILL continue
@@ -7421,7 +7466,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           const { data: currentRow } = await supabase
             .from("tasks").select("result").eq("id", task.id).maybeSingle();
           await supabase.from("tasks").update({
-            result: {
+            result: guardResult("failed_handoff", ((currentRow as { result?: Record<string, unknown> } | null)?.result ?? null) as Record<string, unknown> | null, {
               ...(((currentRow as { result?: Record<string, unknown> } | null)?.result ??
                 {}) as Record<string, unknown>),
               [LINEAGE_PROGRESS_KEY]: finalProgress,
@@ -7433,7 +7478,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 user_message: null,
                 dispatch: dispatchOutcome,
               },
-            },
+            }),
           }).eq("id", task.id);
         }
 

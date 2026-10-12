@@ -70,6 +70,8 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
             // The queue re-claims a resumable mission; the handler must never
             // self-dispatch a second executor over HTTP (run 4250f181: 401 ×5).
             continuationOwner: "v2_queue",
+            // The floor for the lineage counter (`resolveLineageProgress`).
+            queueContinuations: mission.continuations ?? null,
             onExecutionBound: async ({ taskId: t, lineageId }) => {
               taskId = t;
               const bound = await d.bind(mission.queueId, t, lineageId);
