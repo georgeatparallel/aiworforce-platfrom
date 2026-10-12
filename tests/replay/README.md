@@ -6,8 +6,13 @@ credits, zero production writes — through the **same production functions**
 Lead V2 runs.
 
 ```bash
-npm run test:lead-v2-readiness
+npm run test:lead-v2-readiness     # the Replay Lab, by category
+npm run test:lead-v2-regression    # the Lab + the targeted Lead V2 edge/UI tests (~10s, zero spend)
 ```
+
+`matrix/` is the query regression matrix (20 request categories and wording
+variants, hand-written expectations); `invariants/leadV2Invariants.test.ts`
+asserts the eighteen properties every mission must keep.
 
 ```
 Golden missions:                 PASS  (6/6)
@@ -71,6 +76,11 @@ reconstruction that drifted from production fails before any expectation is read
 | D | 3f945ff4 (Canary 6) | budget hard stop | production ledger, refusals to the cent |
 | E | 154541e8 / c01d28d8 | NON_EQUITY_ASSISTANCE counted as funding | LlamaIndex's production Atomus record |
 | F | c01d28d8 (Canary 8) | affordability priced raw ($0.121) vs reserved ($0.049) | production checkpoints (LlamaIndex, Solana Labs, Delta Lake, Actioneer), ledger with settlement instants, mission |
+| G | a9a6791a (Query B) | stale schema_failure across slices; 4 titles to a 3-title actor; "account manager" in a sales search; page 3 replayed page 2 | 21 employers + declared bands, 21 retained postings, recorded route-control and selector outputs (`queryBa9a6791a.job-first`, synthetic rows listed) |
+| H | a9a6791a | a recruiter's "on behalf of a partner" postings proved its own hiring | same fixture |
+| I | a9a6791a | four companies "still being checked" after the lineage ended | same fixture, canonical view |
+| J | f6133796 (Citian) | a stale Stage-2 restore replaced website proof | `lib/citian.ts` (production shapes) |
+| K | a9a6791a | role precision and size filtering on every production title / band | same fixture |
 
 Each fixture lists its sources and sanitization in `provenance`; extraction
 queries live in `fixtures/queries/` (read-only).
