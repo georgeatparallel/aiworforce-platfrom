@@ -43,7 +43,7 @@ const proposal = (o: Record<string, unknown> = {}) => ({
 });
 
 interface Hard {
-  count: number;
+  count: number | null;
   industry?: string;
   geography?: string | null;
   size?: { min: number | null; max: number | null } | null;

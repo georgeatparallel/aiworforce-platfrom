@@ -96,7 +96,7 @@ Deno.test("[historical] G FIX 3: AE, Enterprise AE, SDR, BDR, Sales Manager and 
   }
   assertFalse(/account manager|customer success/i.test(out), out);
   // A customer-success mission keeps its own titles.
-  assert(actorInputs.boundJobDiscoveryTitles(["Account Manager"], { role_families: ["customer_success"], window_days: null }, 3)
+  assert(actorInputs.boundJobDiscoveryTitles(["Account Manager"], { role_families: ["customer_success"] }, 3)
     .join(" ").includes("Account Manager"));
 });
 
