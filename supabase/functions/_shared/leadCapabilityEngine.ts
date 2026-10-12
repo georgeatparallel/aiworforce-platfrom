@@ -279,6 +279,7 @@ import { ACTOR_INPUT_CONTRACTS as P2_ACTOR_CONTRACTS } from "./actorInputContrac
 import { hashInput as p2HashInput } from "./hiringActorInputs.ts";
 import { toRepoKey } from "./actorIdentity.ts";
 import { canonicalJson } from "./planHash.ts";
+import { sha256Hex } from "./providerInputFingerprint.ts";
 import { tightenCeilings, type RunBudget } from "./runBudget.ts";
 import {
   nextUnreadPage, screenAdmissionOrder, type FundingScreenPlan, type ScreenVerdict,
@@ -742,7 +743,11 @@ export interface CapabilityExecutionState {
       /** The funding screen has read its pool: its one priced Atomus read is spent. */
       | "screen_complete"
       /** A replenishment left no page unread, no route unattempted, and the re-plan's reserve is spent (`discoveryCannotWiden`). */
-      | "discovery_spent";
+      | "discovery_spent"
+      /** A page returned exactly the rows of the page before it: the route has nothing further (`discoveryPageFingerprint`). */
+      | "duplicate_page";
+    /** Per actor, the row-identity fingerprint of the last page read. */
+    page_fingerprints?: Record<string, string>;
   };
   /**
    * Stage removals the chain PROPOSED and containment refused.
@@ -2328,6 +2333,8 @@ export interface CapabilityEngineOpts {
     pages_taken: Record<string, number>;
     /** Actors this lineage has already asked. */
     sources_attempted: string[];
+    /** The last page's row-identity fingerprint per actor, restored from the checkpoint. */
+    page_fingerprints?: Record<string, string>;
   } | null;
   rolePacks?: readonly RolePack[];
   postedLimit?: "1h" | "24h" | "week" | "month";
@@ -5388,6 +5395,25 @@ export async function runCapabilityPlan(
       const pagesTaken: Record<string, number> = {
         ...(opts.discoveryReplenishment?.pages_taken ?? {}),
       };
+      // ── A PAGE THAT REPEATS THE ONE BEFORE IT ENDS ITS ROUTE ─────────────
+      //
+      // Query B a9a6791a slice 3 bought page 3 of the job search and got page
+      // 2 back — the same counts, no new employer — and the route still read
+      // as open. Compared on the provider's stable row ids, never on counts:
+      // the same number of DIFFERENT rows is a real page.
+      const pageFingerprints: Record<string, string> = {
+        ...(opts.discoveryReplenishment?.page_fingerprints ?? {}),
+      };
+      const duplicatePageActors = new Set<string>();
+      const noteDiscoveryPage = (actor: string, rows: readonly Record<string, unknown>[]): void => {
+        const fp = discoveryPageFingerprint(rows);
+        if (!fp) return;
+        if (pageFingerprints[actor] === fp) {
+          duplicatePageActors.add(actor);
+          log("discovery_duplicate_page", { actor, rows: rows.length, note: "same provider row ids as the previous page — route exhausted" });
+        }
+        pageFingerprints[actor] = fp;
+      };
 
       /**
        * DID THIS ACTOR ACTUALLY REACH THE PROVIDER ON THIS PAGE?
@@ -5878,7 +5904,9 @@ export async function runCapabilityPlan(
             const compiled = compileHarvestCompanySearchInput(
               merged.input as never);
             const droppedPages = new Map<string, number>();
-            for (const r of await callProvider(cap, provider, compiled)) {
+            const searchRows = await callProvider(cap, provider, compiled);
+            noteDiscoveryPage(provider, searchRows);
+            for (const r of searchRows) {
               // A SHOWCASE PAGE IS NOT A COMPANY. Dropped HERE, at the pool
               // boundary, because everything downstream treats a pool row as
               // something worth paying to resolve — and a showcase row has no
@@ -5930,6 +5958,7 @@ export async function runCapabilityPlan(
             let jobsKept = 0;
             let notHiringProof = 0;
             const jobRows = await callProvider(cap, provider, compiled);
+            noteDiscoveryPage(provider, jobRows);
             for (const r of jobRows) {
               if (!jobIsOpen(r)) {
                 dropped.set("posting_closed", (dropped.get("posting_closed") ?? 0) + 1);
@@ -6087,6 +6116,7 @@ export async function runCapabilityPlan(
         const field = card && acceptedInputFields(card).includes("startPage") ? "startPage"
           : card && cap === "job_discovery" && acceptedInputFields(card).includes("page") ? "page" : null;
         if (!card || !field) return null;
+        if (duplicatePageActors.has(actorKey)) return null;
         const limit = Number(card.input_limits?.[field === "page" ? "pages_discovery" : "takePages"] ?? 0);
         const taken = pagesTaken[actorKey] ??
           (field === "page" && attemptCountFor(actorKey) > 0 ? 1 : 0);
@@ -6392,9 +6422,17 @@ export async function runCapabilityPlan(
         })) {
           discoveryStop = "discovery_spent";
         }
+        // A DUPLICATE PAGE IS THE BINDING FACT when nothing else is left to
+        // read: the route did not run out of pages, it ran out of rows.
+        if (duplicatePageActors.size > 0 &&
+            !strategyActors.some((a) => unreadDiscoveryPage(a) !== null) &&
+            ["no_further_actor_proposed", "pass_limit", "amendment_refused", "discovery_spent"].includes(discoveryStop)) {
+          discoveryStop = "duplicate_page";
+        }
         state.discovery_source_state = {
           sources_attempted: [...actorsRun],
           pages_taken: { ...pagesTaken },
+          ...(Object.keys(pageFingerprints).length ? { page_fingerprints: { ...pageFingerprints } } : {}),
           // LIFETIME admitted, kept for the record and the funnel. The number
           // discovery DECIDES on is `available_admitted` beside it — see
           // `availableAdmittedNow`.
@@ -6409,7 +6447,7 @@ export async function runCapabilityPlan(
           exhausted: (discoveryStop === "no_further_actor_proposed" &&
               !strategyActors.some((a) => unreadDiscoveryPage(a) !== null)) ||
             discoveryStop === "raw_row_ceiling" || discoveryStop === "candidate_budget_spent" ||
-            discoveryStop === "discovery_spent",
+            discoveryStop === "discovery_spent" || discoveryStop === "duplicate_page",
           stop_reason: discoveryStop,
         };
         log("discovery_source_state", state.discovery_source_state);
@@ -11746,6 +11784,23 @@ function withVerifiedWebStatements<P extends { source_url: string }>(
 ): Array<P | ReturnType<typeof verifiedWebStatements>[number]> {
   const supplied = new Set(pages.map((p) => p.source_url));
   return [...pages, ...verifiedWebStatements(c).filter((v) => !supplied.has(v.source_url))];
+}
+
+/**
+ * A discovery page's identity: the provider's stable row ids (a job's or a
+ * company's `id`, else its LinkedIn URL), order-insensitive. Empty when the
+ * page has no rows or a row has no stable id — an unidentifiable page is never
+ * called a duplicate.
+ */
+export function discoveryPageFingerprint(rows: readonly Record<string, unknown>[]): string {
+  if (rows.length === 0) return "";
+  const ids: string[] = [];
+  for (const r of rows) {
+    const id = r.id ?? r.linkedinUrl ?? r.url;
+    if (id === undefined || id === null || String(id) === "") return "";
+    ids.push(String(id));
+  }
+  return sha256Hex(ids.sort().join("\n"));
 }
 
 /** Does this re-reading of the same source replace the observation held? */

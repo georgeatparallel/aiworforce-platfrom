@@ -166,3 +166,15 @@ Deno.test("[historical] G FIX 4: the page fingerprint is carried in the checkpoi
   const { s2 } = await replayLineage(fx);
   assert(discoveryState(s2).page_fingerprints?.[JOB_SEARCH], JSON.stringify(discoveryState(s2)));
 });
+
+Deno.test("[historical] G FIX 4: the fingerprint survives the checkpoint reader, and run-agent carries it into the next slice", async () => {
+  const { buildCheckpoint, CHECKPOINT_RESULT_KEY, readCheckpointDiscoveryState } = await import("../../../supabase/functions/_shared/leadResumeState.ts");
+  const { s2 } = await replayLineage(fx);
+  const cp = buildCheckpoint({ now: Date.parse("2026-10-12T09:00:00Z"), deadlineAt: Date.parse("2026-10-12T09:10:00Z"), remainingMs: 600_000,
+    lastCompletedCapability: "job_discovery", nextPendingCapability: null, companies: [], reason: "slice_end", discoverySourceState: discoveryState(s2) } as never);
+  const read = readCheckpointDiscoveryState({ [CHECKPOINT_RESULT_KEY]: cp });
+  assertEquals(read?.page_fingerprints, discoveryState(s2).page_fingerprints);
+  const runAgent = await Deno.readTextFile(new URL("../../../supabase/functions/run-agent/index.ts", import.meta.url));
+  assert(runAgent.includes("page_fingerprints: inheritedDiscoveryState.page_fingerprints"),
+    "run-agent must hand the fingerprint to the replenishment slice");
+});

@@ -3173,6 +3173,8 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               reason: "replenishment_required",
               pages_taken: inheritedDiscoveryState.pages_taken,
               sources_attempted: inheritedDiscoveryState.sources_attempted,
+              ...(inheritedDiscoveryState.page_fingerprints
+                ? { page_fingerprints: inheritedDiscoveryState.page_fingerprints } : {}),
             }
             : null;
         if (discoveryReplenishment) {
