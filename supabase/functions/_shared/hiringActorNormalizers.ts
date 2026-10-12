@@ -523,19 +523,42 @@ export function normalizeLinkedInJob(r: Record<string, unknown>): NormalizedHiri
 }
 
 /**
+ * A POSTING MADE FOR SOMEONE ELSE. Query B a9a6791a: Shift Group is a recruiter
+ * whose LinkedIn industry is "Software Development", so the agency filter
+ * (industry / name / requisition code) passed its postings — "presented by
+ * Shift Group on behalf of a … PropTech partner", "We are partnering with a
+ * highly funded … AI platform looking for a Sales Development Representative" —
+ * and each one proved that Shift Group was hiring sales. Each phrase is the
+ * poster saying the opening is a client's. Ordinary prose about clients or
+ * partners ("manage a book of clients", "we partner with venues") is not.
+ */
+const CLIENT_POSTING_RE = new RegExp([
+  String.raw`\bon behalf of (?:our|a|an|the|one of our)\s+(?:[\w&().,/-]+\s+){0,8}?(?:clients?|partners?|customers?)\b`,
+  String.raw`\brecruiting (?:for|on behalf of) (?:a|an|our|one of our)\s+(?:[\w&-]+\s+){0,2}?clients?\b`,
+  String.raw`\bconfidential (?:client|company|employer)\b`,
+  String.raw`\bour client(?:,)?\s+(?:[\w&-]+\s+){0,6}?(?:is|are)\s+(?:hiring|looking|seeking|searching|recruiting)\b`,
+  String.raw`\bwe(?:'re| are) partnering with (?:a|an|one)\b[^.]{0,120}?\b(?:looking for|seeking|hiring|to hire|searching for)\b`,
+].join("|"), "i");
+
+/**
  * A structured employer is not sufficient when the same provider row carries
  * an explicit, contradictory employer. Only high-signal identity fields count:
  * a second LinkedIn company URL, an Employer/Company label, or the employer
  * line in a syndicated job-card header. General mentions in prose are ignored.
+ *
+ * `agency_client_posting`: the body says the posting is made for a client
+ * (`CLIENT_POSTING_RE`). The posting then proves nothing about the poster's own
+ * hiring; the company stays a candidate, and its direct postings still count.
  */
 export function jobEmployerIdentityConflict(r: Record<string, unknown>):
-  "structured_employer_conflict" | "posting_employer_conflict" | null {
+  "structured_employer_conflict" | "posting_employer_conflict" | "agency_client_posting" | null {
   const company = (r.company ?? {}) as Record<string, unknown>;
   const structuredUrl = normalizeCompanyLinkedInUrl(company.linkedinUrl);
   const alternateUrl = normalizeCompanyLinkedInUrl(r.companyLinkedinUrl);
   if (structuredUrl && alternateUrl && structuredUrl !== alternateUrl) {
     return "structured_employer_conflict";
   }
+  if (CLIENT_POSTING_RE.test(s(r.descriptionText) ?? "")) return "agency_client_posting";
 
   const structuredName = s(company.name);
   if (!structuredName) return null;
