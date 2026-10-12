@@ -58,6 +58,10 @@ export function readinessOf(fx: EngineFixture): ReadinessPolicy {
 export async function replayEngineSlice(fx: EngineFixture, o: {
   resume?: { state: Record<string, unknown>; records: unknown[] };
   replenish?: Record<string, number>;
+  /** Extra recorded-model dependencies for this slice (e.g. a later slice's discovery selector, route control). */
+  deps?: Record<string, unknown>;
+  /** Carried replenishment fields beyond pages (e.g. `page_fingerprints`), as run-agent reads them from the checkpoint. */
+  replenishExtra?: Record<string, unknown>;
 } = {}): Promise<EngineSlice> {
   noNetwork();
   const mission = missionOf(fx);
@@ -71,6 +75,7 @@ export async function replayEngineSlice(fx: EngineFixture, o: {
     evaluateMission: stubMissionEvaluator({ mission_fit: m.evaluate_mission?.mission_fit ?? "pass" }),
     planExecution: () => Promise.resolve(structuredClone(m.plan_execution)),
     planDiscovery: () => Promise.resolve(structuredClone(m.plan_discovery)),
+    ...(o.deps ?? {}),
   } as never, {
     mission, plan: buildCapabilityGraph(mission, { executability: "enforce", readiness }),
     maxCandidates: fx.engine.max_candidates, remainingLeads: fx.engine.remaining_leads ?? 1, readEnv: () => undefined,
@@ -78,7 +83,10 @@ export async function replayEngineSlice(fx: EngineFixture, o: {
     specMode: "enforce", specScope: { workspace_id: "<workspace>", lineage_id: lineage },
     readiness,
     ...(o.replenish ? {
-      discoveryReplenishment: { reason: "replenishment_required", pages_taken: o.replenish, sources_attempted: Object.keys(o.replenish) },
+      discoveryReplenishment: {
+        reason: "replenishment_required", pages_taken: o.replenish, sources_attempted: Object.keys(o.replenish),
+        ...(o.replenishExtra ?? {}),
+      },
     } : {}),
     ...(o.resume ? {
       state: o.resume.state,

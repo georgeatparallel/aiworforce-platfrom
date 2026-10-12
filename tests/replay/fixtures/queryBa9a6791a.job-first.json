@@ -1,0 +1,6970 @@
+{
+ "fixture": "queryBa9a6791a.job-first",
+ "schema": "lead-v2-replay-fixture-v1",
+ "provenance": {
+  "environment": "production",
+  "task_id": "a9a6791a-6349-4656-ae26-027e988e1b05",
+  "queue_id": "431a8af8-8876-4dda-9961-daf90dfcb8ea",
+  "plan_id": "947511ee-8da6-413c-8a79-00a61c89d849",
+  "sources": [
+   "local production worker log 2026-10-12 (discovery_strategy_resolved, job_discovery_rows, route_control_decided, discovery_source_state per slice)",
+   "lead_candidates / lead_jobs rows read-only 2026-10-12: 21 employers with declared bands, 21 retained postings (bodies trimmed to their first sentence)",
+   "mission compiled locally from the production query with a fixed proposal (required_signal_terms ['sales'])"
+  ],
+  "sanitization": [
+   "no credentials",
+   "no people",
+   "posting bodies trimmed",
+   "synthetic rows are listed in synthetic_rows"
+  ],
+  "synthetic_rows": [
+   "page 1: six off-role postings for the employers production surfaced without a retained posting (Openbound, Resmed, RTX Telecom, SonicJobs, RemoteHunter, TalentHop)",
+   "page 1: two staffing-agency rows (Apex Talent) standing in for the 2 production dropped as Staffing and Recruiting",
+   "page 2: production kept 8 / off-role 22 / +1 employer; rows are synthetic in that shape (Northwind Cloud is the new, out-of-band employer)",
+   "page 3: a row-for-row replay of page 2 (production logged identical counts and no new employer)"
+  ]
+ },
+ "mission": {
+  "version": "lead-mission-v1",
+  "original_user_query": "Find 3 US software companies with 11–50 employees that are currently hiring sales.",
+  "mission_type": "company_research",
+  "target_entity": "company",
+  "requested_output": "qualified_companies",
+  "requested_count": 3,
+  "company_profile": {
+   "business_models": [],
+   "verticals": [
+    "software"
+   ],
+   "stages": [],
+   "locations": [
+    "United States"
+   ],
+   "employee_range": {
+    "min": 11,
+    "max": 50
+   }
+  },
+  "required_signals": [
+   {
+    "type": "hiring",
+    "role_families": [
+     "gtm_sales"
+    ],
+    "event": "hiring",
+    "subject": "company",
+    "qualifier": {
+     "role_families": [
+      "gtm_sales"
+     ],
+     "role_terms": [
+      "sales"
+     ]
+    },
+    "phrase": "currently hiring sales"
+   }
+  ],
+  "decision_makers": {
+   "roles": [],
+   "current_employment_required": false
+  },
+  "hard_constraints": {
+   "company_profile.locations": {
+    "operator": "in",
+    "value": [
+     "United States"
+    ],
+    "reason": "stated explicitly in the user's query"
+   }
+  },
+  "soft_preferences": {},
+  "required_capabilities": [],
+  "prohibited_capabilities": [
+   "founder_discovery",
+   "employer_verification",
+   "contact_enrichment"
+  ],
+  "field_provenance": {
+   "company_profile.locations": "explicit_user_request",
+   "required_signals": "explicit_user_request",
+   "target_entity": "explicit_user_request",
+   "requested_output": "explicit_user_request",
+   "requested_count": "explicit_user_request",
+   "company_profile.verticals": "gpt_inference",
+   "company_profile.stages": "gpt_inference",
+   "company_profile.business_models": "gpt_inference",
+   "decision_makers.roles": "gpt_inference"
+  },
+  "confidence": 0.85,
+  "required_signal_terms": [
+   "sales"
+  ],
+  "geography_is_hard": true,
+  "directives": {
+   "preferred_signals": [
+    "currently hiring sales"
+   ],
+   "adjacent_signals": [],
+   "excluded_signals": [],
+   "required_evidence": [],
+   "allowed_broadening": {
+    "role_families": [],
+    "company_types": [],
+    "geographies": [],
+    "employee_range": {
+     "min": null,
+     "max": null
+    }
+   },
+   "disallowed_broadening": [],
+   "evaluation_instructions": "",
+   "source_strategy": [],
+   "requested_contact_ready_count": null,
+   "founder_unlock_recommended": false,
+   "execution_preference": "balanced"
+  },
+  "mission_semantics": {
+   "version": "mission-semantics-v1",
+   "goal": "Find 3 US software companies with 11–50 employees that are currently hiring sales.",
+   "requested_count": 3,
+   "canonical_signals": [
+    {
+     "kind": "hiring",
+     "legacy_event": "hiring",
+     "subject": "company",
+     "phrase": "Find 3 US software companies with 11–50 employees that are currently hiring sales.",
+     "alias": "reader",
+     "source": "user_explicit"
+    }
+   ],
+   "hypotheses": [],
+   "unmapped_signal_language": [],
+   "stage": null,
+   "window_sources": {
+    "hiring": {
+     "source": "system_default",
+     "rule": "currently / actively hiring"
+    }
+   },
+   "corrections": []
+  },
+  "criteria": [
+   {
+    "kind": "hard",
+    "dimension": "industry",
+    "value": "software",
+    "label": "Industry: software",
+    "source": "user_explicit",
+    "user_phrase": "software",
+    "rationale": "stated in the request",
+    "id": "industry:software",
+    "status": "ok"
+   },
+   {
+    "kind": "hard",
+    "dimension": "geography",
+    "value": "United States",
+    "label": "Geography: United States",
+    "source": "user_explicit",
+    "user_phrase": "",
+    "rationale": "stated in the request",
+    "id": "geography:united_states",
+    "status": "ok"
+   },
+   {
+    "kind": "hard",
+    "dimension": "company_size",
+    "value": {
+     "min": 11,
+     "max": 50
+    },
+    "label": "Company size: 11–50 employees",
+    "source": "user_explicit",
+    "user_phrase": "",
+    "rationale": "stated in the request",
+    "id": "company_size:_min_11_max_50_",
+    "status": "ok"
+   },
+   {
+    "kind": "hard",
+    "dimension": "hiring",
+    "value": {
+     "event": "hiring",
+     "subject": "company",
+     "qualifier": {
+      "role_families": [
+       "gtm_sales"
+      ],
+      "role_terms": [
+       "sales"
+      ]
+     }
+    },
+    "label": "Hiring: sales",
+    "source": "user_explicit",
+    "time_window": {
+     "days": 30,
+     "basis": "posted",
+     "source": "system_default",
+     "rule": "currently / actively hiring",
+     "enforced": false
+    },
+    "user_phrase": "Find 3 US software companies with 11–50 employees that are currently hiring sales.",
+    "rationale": "a signal the request states as a present fact the company must have",
+    "id": "hiring:_event_hiring_subject_company_qualifier_role_families_gtm_sa",
+    "status": "ok"
+   }
+  ],
+  "planner_runtime": {
+   "role": "planner",
+   "function": "lead-mission-compiler",
+   "git_sha": "046b61b086fc0ad236d0b2cf393ffdb702b7aca5",
+   "git_short": "046b61b0",
+   "build_timestamp": "2026-08-29T10:44:33.276Z",
+   "lead_intelligence_contract_version": "v1",
+   "dirty": false
+  },
+  "lead_intelligence_contract_version": "v1"
+ },
+ "proposal": {
+  "requested_opportunity_count": 3,
+  "requested_contact_ready_count": null,
+  "company_types": [
+   "software"
+  ],
+  "geographies": [
+   "United States"
+  ],
+  "geography_is_hard": true,
+  "employee_range": {
+   "min": 11,
+   "max": 50
+  },
+  "decision_maker_roles": [],
+  "hard_constraints": [],
+  "soft_preferences": [],
+  "preferred_signals": [
+   "currently hiring sales"
+  ],
+  "required_signal_terms": [
+   "sales"
+  ],
+  "adjacent_signals": [],
+  "excluded_signals": [],
+  "allowed_broadening": {
+   "role_families": [],
+   "company_types": [],
+   "geographies": [],
+   "employee_range": {
+    "min": null,
+    "max": null
+   }
+  },
+  "disallowed_broadening": [],
+  "required_evidence": [],
+  "required_capabilities": [],
+  "preferred_source_strategy": [],
+  "evaluation_instructions": "",
+  "founder_unlock_recommended": false,
+  "confidence": 0.85,
+  "unknowns": []
+ },
+ "ceilings": {
+  "per_call_usd": {},
+  "per_route_usd": {},
+  "mission_model_usd": 5,
+  "adaptive_reserve_usd": 0.3,
+  "mission_provider_usd": 0.8,
+  "per_candidate_evidence_usd": 0.06
+ },
+ "ledger_reservations": [],
+ "checkpoints": {},
+ "engine": {
+  "readiness": "production",
+  "max_candidates": 40,
+  "remaining_leads": 3,
+  "model_responses": {
+   "plan_execution": {
+    "reasoning": "replay a9a6791a: job-first",
+    "steps": [
+     {
+      "capability": "job_discovery",
+      "actor_key": "apify_linkedin_job_search",
+      "purpose": "employers with an open sales role",
+      "input": {
+       "jobTitles": [
+        "sales OR \"account executive\" OR \"sales development representative\" OR \"business development representative\" OR \"sales manager\""
+       ],
+       "locations": [
+        "United States"
+       ],
+       "postedLimit": "month",
+       "industryIds": [
+        "4",
+        "6"
+       ],
+       "sortBy": "date",
+       "maxItems": 30
+      },
+      "depends_on": []
+     },
+     {
+      "capability": "company_enrichment",
+      "actor_key": "apify_linkedin_company_details",
+      "purpose": "details",
+      "input": {
+       "companies": [
+        "{{step_1.company.linkedinUrl}}"
+       ]
+      },
+      "depends_on": [
+       1
+      ]
+     },
+     {
+      "capability": "company_brain_qualification",
+      "actor_key": null,
+      "purpose": "qualify",
+      "input": {},
+      "depends_on": [
+       2
+      ]
+     },
+     {
+      "capability": "persistence",
+      "actor_key": null,
+      "purpose": "save",
+      "input": {},
+      "depends_on": [
+       3
+      ]
+     }
+    ]
+   },
+   "plan_discovery": [
+    {
+     "actor_key": "apify_linkedin_job_search",
+     "role": "primary",
+     "input": {
+      "jobTitles": [
+       "sales OR \"account executive\" OR \"sales development representative\" OR \"business development representative\" OR \"sales manager\""
+      ],
+      "locations": [
+       "United States"
+      ],
+      "postedLimit": "month",
+      "industryIds": [
+       "4",
+       "6"
+      ],
+      "sortBy": "date",
+      "maxItems": 30
+     },
+     "rationale": "replay: slice 1 primary"
+    }
+   ],
+   "plan_discovery_slice2": [
+    {
+     "actor_key": "apify_linkedin_job_search",
+     "role": "primary",
+     "input": {
+      "sortBy": "date",
+      "maxItems": 30,
+      "jobTitles": [
+       "\"sales representative\" OR \"account executive\" OR \"sales development representative\" OR \"business development representative\" OR \"sales manager\" OR \"account manager\""
+      ],
+      "locations": [
+       "United States"
+      ],
+      "industryIds": [
+       "4",
+       "6"
+      ],
+      "postedLimit": "month"
+     },
+     "rationale": "replay: slice 2/3 selector output"
+    }
+   ],
+   "route_control_replan_4_titles": {
+    "jobTitles": [
+     "account executive",
+     "sales development representative",
+     "business development representative",
+     "account manager"
+    ],
+    "locations": [
+     "United States"
+    ],
+    "postedLimit": "month",
+    "sortBy": "date",
+    "maxItems": 30
+   },
+   "evaluate_mission": {
+    "mission_fit": "pass"
+   }
+  }
+ },
+ "provider_responses": [
+  {
+   "actor": "apify_linkedin_job_search",
+   "input_match": {
+    "industryIds": null,
+    "company": null
+   },
+   "rows": [],
+   "provenance": "the route-control replan's query (no industry filter): production never ran it — it failed compile on 4 titles — so its answer is unknown; replayed as empty"
+  },
+  {
+   "actor": "apify_linkedin_job_search",
+   "input_match": {
+    "page": null,
+    "company": null
+   },
+   "rows": [
+    {
+     "id": "4470861799",
+     "title": "Business Development Representative",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4470861799/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T08:34:11.000Z",
+     "descriptionText": "Akur8 is a fast-growing InsurTech scale-up on a mission to modernize how insurers assess, price, and manage risk.",
+     "location": {
+      "linkedinText": "New York, NY",
+      "parsed": {
+       "text": "New York, NY",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800000",
+      "universalName": "akur8",
+      "linkedinUrl": "https://www.linkedin.com/company/akur8",
+      "name": "AKUR8",
+      "website": "https://www.akur8.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "AKUR8 — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "FR",
+        "headquarter": true,
+        "parsed": {
+         "text": "Paris, France",
+         "countryCode": "FR",
+         "country": "France"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4441341858",
+     "title": "SaaS Business Development Representative (m/f/d)",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4441341858/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T08:31:31.000Z",
+     "descriptionText": "About Buynomics: Buynomics is the next-generation SaaS company in pricing and product optimization.",
+     "location": {
+      "linkedinText": "New York, United States",
+      "parsed": {
+       "text": "New York, United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800001",
+      "universalName": "buynomics",
+      "linkedinUrl": "https://www.linkedin.com/company/buynomics",
+      "name": "Buynomics",
+      "website": "https://www.buynomics.com",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Buynomics — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Köln, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478380785",
+     "title": "Senior Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478380785/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:55:26.000Z",
+     "descriptionText": "About Flagright: Flagright is an AI operating system for financial crime compliance.",
+     "location": {
+      "linkedinText": "San Jose, CA",
+      "parsed": {
+       "text": "San Jose, CA",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800002",
+      "universalName": "flagright",
+      "linkedinUrl": "https://www.linkedin.com/company/flagright",
+      "name": "Flagright",
+      "website": "https://link.flagright.com/LinkedIn",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Flagright — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478393171",
+     "title": "Business Development Representative",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478393171/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T07:00:21.000Z",
+     "descriptionText": "About Flagright: Flagright is an AI operating system for financial crime compliance.",
+     "location": {
+      "linkedinText": "San Jose, CA",
+      "parsed": {
+       "text": "San Jose, CA",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800002",
+      "universalName": "flagright",
+      "linkedinUrl": "https://www.linkedin.com/company/flagright",
+      "name": "Flagright",
+      "website": "https://link.flagright.com/LinkedIn",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Flagright — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4469790740",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4469790740/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:48:06.000Z",
+     "descriptionText": "Founding Account Executive - first dedicated US AE hire. Reports to: Co-Founder and US General Manager.",
+     "location": {
+      "linkedinText": "New York, United States",
+      "parsed": {
+       "text": "New York, United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800003",
+      "universalName": "fresho-",
+      "linkedinUrl": "https://www.linkedin.com/company/fresho-",
+      "name": "Fresho",
+      "website": "http://www.fresho.com",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Fresho — IT Services and IT Consulting.",
+      "industries": [
+       {
+        "id": null,
+        "name": "IT Services and IT Consulting",
+        "title": "IT Services and IT Consulting",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "AU",
+        "headquarter": true,
+        "parsed": {
+         "text": "South Melbourne, Australia",
+         "countryCode": "AU",
+         "country": "Australia"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478373951",
+     "title": "Enterprise Sales Director",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478373951/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:46:23.000Z",
+     "descriptionText": "About Kinaxis. Elevate your career journey by embracing a new challenge with Kinaxis.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478504054",
+     "title": "Inside Sales Support Specialist, Enterprise Mobility",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478504054/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T08:24:14.000Z",
+     "descriptionText": "Welcome to Manhattan. Inside Sales Support Specialist – Enterprise Mobility.",
+     "location": {
+      "linkedinText": "Atlanta, GA",
+      "parsed": {
+       "text": "Atlanta, GA",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800005",
+      "universalName": "manhattan-associates",
+      "linkedinUrl": "https://www.linkedin.com/company/manhattan-associates",
+      "name": "Manhattan Associates",
+      "website": "http://www.manh.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Manhattan Associates — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Atlanta, GA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4477276953",
+     "title": "Sales Growth Associate",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4477276953/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T04:24:41.000Z",
+     "descriptionText": "About O-HIVE. O-HIVE is an AI and spatial vision technology company.",
+     "location": {
+      "linkedinText": "Sacramento, CA",
+      "parsed": {
+       "text": "Sacramento, CA",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800006",
+      "universalName": "o-hive-ai",
+      "linkedinUrl": "https://www.linkedin.com/company/o-hive-ai",
+      "name": "O-HIVE.AI",
+      "website": "https://www.o-hive.ai",
+      "employeeCount": 5,
+      "employeeCountRange": {
+       "start": 2,
+       "end": 10
+      },
+      "description": "O-HIVE.AI — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "DE, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4477286607",
+     "title": "Sales Growth Associate",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4477286607/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T04:25:26.000Z",
+     "descriptionText": "About O-HIVE. O-HIVE is an AI and spatial vision technology company.",
+     "location": {
+      "linkedinText": "Austin, Texas Metropolitan Area",
+      "parsed": {
+       "text": "Austin, Texas Metropolitan Area",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800006",
+      "universalName": "o-hive-ai",
+      "linkedinUrl": "https://www.linkedin.com/company/o-hive-ai",
+      "name": "O-HIVE.AI",
+      "website": "https://www.o-hive.ai",
+      "employeeCount": 5,
+      "employeeCountRange": {
+       "start": 2,
+       "end": 10
+      },
+      "description": "O-HIVE.AI — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "DE, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478391693",
+     "title": "Founding Business Development Representative (BDR) - Marketplace",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478391693/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T08:38:58.000Z",
+     "descriptionText": "About Us. At Perfect Venue we are on a mission to bring communities together; event management software for independent venues.",
+     "location": {
+      "linkedinText": "San Francisco, CA",
+      "parsed": {
+       "text": "San Francisco, CA",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800007",
+      "universalName": "perfect-venue",
+      "linkedinUrl": "https://www.linkedin.com/company/perfect-venue",
+      "name": "Perfect Venue",
+      "website": "http://www.perfectvenue.com",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Perfect Venue — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478382398",
+     "title": "Sales Development Representative",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478382398/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T04:28:55.000Z",
+     "descriptionText": "Sales Development Representative Austin, TX About the Opportunity. We are partnering with a highly funded, category-defining AI platform looking for a Sales Development Representative in Austin.",
+     "location": {
+      "linkedinText": "Austin, Texas Metropolitan Area",
+      "parsed": {
+       "text": "Austin, Texas Metropolitan Area",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800011",
+      "universalName": "shift-groupllc",
+      "linkedinUrl": "https://www.linkedin.com/company/shift-groupllc",
+      "name": "Shift Group",
+      "website": "http://www.shiftgroup.io",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Shift Group — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478383404",
+     "title": "Sales Development Representative",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478383404/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T04:54:16.000Z",
+     "descriptionText": "Sales Development Representative New York, NY *This opportunity is presented by Shift Group on behalf of a market-leading Real Estate Technology (PropTech) partner.",
+     "location": {
+      "linkedinText": "New York City Metropolitan Area",
+      "parsed": {
+       "text": "New York City Metropolitan Area",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800011",
+      "universalName": "shift-groupllc",
+      "linkedinUrl": "https://www.linkedin.com/company/shift-groupllc",
+      "name": "Shift Group",
+      "website": "http://www.shiftgroup.io",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Shift Group — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478384270",
+     "title": "Account Executive - HCM",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478384270/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T05:04:42.000Z",
+     "descriptionText": "Account Executive New York City Metropolitan Area *This opportunity is presented by Shift Group on behalf of a premier Human Capital Management (HCM) partner.",
+     "location": {
+      "linkedinText": "New York City Metropolitan Area",
+      "parsed": {
+       "text": "New York City Metropolitan Area",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800011",
+      "universalName": "shift-groupllc",
+      "linkedinUrl": "https://www.linkedin.com/company/shift-groupllc",
+      "name": "Shift Group",
+      "website": "http://www.shiftgroup.io",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Shift Group — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478390017",
+     "title": "Business Development Representative",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478390017/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T04:35:00.000Z",
+     "descriptionText": "Business Development Representative Austin, TX About the Opportunity. We are partnering with a well-funded, fast-paced enterprise software startup looking for a relentless Business Development Representative.",
+     "location": {
+      "linkedinText": "Austin, Texas Metropolitan Area",
+      "parsed": {
+       "text": "Austin, Texas Metropolitan Area",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800011",
+      "universalName": "shift-groupllc",
+      "linkedinUrl": "https://www.linkedin.com/company/shift-groupllc",
+      "name": "Shift Group",
+      "website": "http://www.shiftgroup.io",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Shift Group — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4477290837",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4477290837/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:25:49.000Z",
+     "descriptionText": "The company: At Shipday, we are arming the rebels in local delivery space. This AE role is one of a kind early stage sales role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800012",
+      "universalName": "shipdayinc",
+      "linkedinUrl": "https://www.linkedin.com/company/shipdayinc",
+      "name": "Shipday",
+      "website": "http://www.shipday.com",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Shipday — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Menlo Park, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4465862717",
+     "title": "Channel Sales Executive, SaaS Platforms",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4465862717/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T08:38:47.000Z",
+     "descriptionText": "About Stripe. Stripe is a financial infrastructure platform for businesses.",
+     "location": {
+      "linkedinText": "Chicago, IL",
+      "parsed": {
+       "text": "Chicago, IL",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4471773897",
+     "title": "North America - Tech Sales Leader, West Coast",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4471773897/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:03:06.000Z",
+     "descriptionText": "About Us. SUSE is a global leader of enterprise open source software.",
+     "location": {
+      "linkedinText": "California, United States",
+      "parsed": {
+       "text": "California, United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800015",
+      "universalName": "suse",
+      "linkedinUrl": "https://www.linkedin.com/company/suse",
+      "name": "SUSE",
+      "website": "http://www.suse.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "SUSE — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Nürnberg, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4378658389",
+     "title": "Territory Account Executive, Retail - Middlebury, VT",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4378658389/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:08:21.000Z",
+     "descriptionText": "Toast is expanding its offerings into other food and beverage concepts.",
+     "location": {
+      "linkedinText": "Middlebury, VT",
+      "parsed": {
+       "text": "Middlebury, VT",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4384568500",
+     "title": "Territory Account Executive, Retail - South Texas (Spanish/Bilingual)",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4384568500/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:08:21.000Z",
+     "descriptionText": "Toast is expanding its offerings into other food and beverage concepts.",
+     "location": {
+      "linkedinText": "Brownsville, TX",
+      "parsed": {
+       "text": "Brownsville, TX",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4477282883",
+     "title": "Sales Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4477282883/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T05:36:22.000Z",
+     "descriptionText": "About Veel. Veel is a leading global social commerce and AI-powered marketing platform.",
+     "location": {
+      "linkedinText": "San Francisco Bay Area",
+      "parsed": {
+       "text": "San Francisco Bay Area",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "4478389718",
+     "title": "Regional Sales Director",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/4478389718/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T08:33:34.000Z",
+     "descriptionText": "The Regional Sales Director will be responsible for driving sales efforts in North America (East).",
+     "location": {
+      "linkedinText": "Charlotte, NC",
+      "parsed": {
+       "text": "Charlotte, NC",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800020",
+      "universalName": "zycus",
+      "linkedinUrl": "https://www.linkedin.com/company/zycus",
+      "name": "Zycus",
+      "website": "https://www.zycus.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Zycus — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Princeton, NJ, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "91000000",
+     "title": "Product Designer",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000000/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Join our team.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800017",
+      "universalName": "theopenbound",
+      "linkedinUrl": "https://www.linkedin.com/company/theopenbound",
+      "name": "Openbound",
+      "website": "https://theopenbound.com",
+      "employeeCount": 5,
+      "employeeCountRange": {
+       "start": 2,
+       "end": 10
+      },
+      "description": "Openbound — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "91000001",
+     "title": "Clinical Field Specialist",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000001/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Join our team.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "91000002",
+     "title": "Firmware Engineer",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000002/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Join our team.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800010",
+      "universalName": "rtx-telecom-a-s",
+      "linkedinUrl": "https://www.linkedin.com/company/rtx-telecom-a-s",
+      "name": "RTX Telecom A/S",
+      "website": "http://www.smtnet.com/company/index.cfm",
+      "employeeCount": 5,
+      "employeeCountRange": {
+       "start": 2,
+       "end": 10
+      },
+      "description": "RTX Telecom A/S — Technology, Information and Internet.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Technology, Information and Internet",
+        "title": "Technology, Information and Internet",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "GB",
+        "headquarter": true,
+        "parsed": {
+         "text": "United Kingdom",
+         "countryCode": "GB",
+         "country": "United Kingdom"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "91000003",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000003/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Join our team.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800013",
+      "universalName": "sonicjobs",
+      "linkedinUrl": "https://www.linkedin.com/company/sonicjobs",
+      "name": "SonicJobs",
+      "website": "https://www.sonicjobs.com",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "SonicJobs — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "91000004",
+     "title": "Customer Support Specialist",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000004/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Join our team.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800008",
+      "universalName": "remotehunter",
+      "linkedinUrl": "https://www.linkedin.com/company/remotehunter",
+      "name": "RemoteHunter",
+      "website": "https://remotehunter.com",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "RemoteHunter — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": []
+     }
+    },
+    {
+     "id": "91000005",
+     "title": "Operations Analyst",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000005/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Join our team.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800016",
+      "universalName": "talenthopllc",
+      "linkedinUrl": "https://www.linkedin.com/company/talenthopllc",
+      "name": "TalentHop",
+      "website": "https://talenthop.com",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "TalentHop — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": []
+     }
+    },
+    {
+     "id": "91000010",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000010/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Staffing role.",
+     "location": {
+      "linkedinText": "Remote",
+      "parsed": {
+       "text": "Remote",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "s-1",
+      "universalName": "apex-talent",
+      "linkedinUrl": "https://www.linkedin.com/company/apex-talent",
+      "name": "Apex Talent",
+      "website": "https://apex-talent.example",
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "industries": [
+       {
+        "name": "Staffing and Recruiting"
+       }
+      ],
+      "locations": []
+     }
+    },
+    {
+     "id": "91000011",
+     "title": "Sales Development Representative",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000011/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Staffing role.",
+     "location": {
+      "linkedinText": "Remote",
+      "parsed": {
+       "text": "Remote",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "s-1",
+      "universalName": "apex-talent",
+      "linkedinUrl": "https://www.linkedin.com/company/apex-talent",
+      "name": "Apex Talent",
+      "website": "https://apex-talent.example",
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "industries": [
+       {
+        "name": "Staffing and Recruiting"
+       }
+      ],
+      "locations": []
+     }
+    },
+    {
+     "id": "91000012",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/91000012/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Manage existing accounts.",
+     "location": {
+      "linkedinText": "San Francisco Bay Area",
+      "parsed": {
+       "text": "San Francisco Bay Area",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "provenance": "page 1: production employers and postings + synthetic rows listed above"
+  },
+  {
+   "actor": "apify_linkedin_job_search",
+   "input_match": {
+    "page": 2,
+    "company": null
+   },
+   "rows": [
+    {
+     "id": "92000000",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000000/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800002",
+      "universalName": "flagright",
+      "linkedinUrl": "https://www.linkedin.com/company/flagright",
+      "name": "Flagright",
+      "website": "https://link.flagright.com/LinkedIn",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Flagright — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000001",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000001/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800000",
+      "universalName": "akur8",
+      "linkedinUrl": "https://www.linkedin.com/company/akur8",
+      "name": "AKUR8",
+      "website": "https://www.akur8.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "AKUR8 — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "FR",
+        "headquarter": true,
+        "parsed": {
+         "text": "Paris, France",
+         "countryCode": "FR",
+         "country": "France"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000002",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000002/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000003",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000003/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000004",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000004/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800020",
+      "universalName": "zycus",
+      "linkedinUrl": "https://www.linkedin.com/company/zycus",
+      "name": "Zycus",
+      "website": "https://www.zycus.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Zycus — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Princeton, NJ, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000005",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000005/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000006",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000006/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800001",
+      "universalName": "buynomics",
+      "linkedinUrl": "https://www.linkedin.com/company/buynomics",
+      "name": "Buynomics",
+      "website": "https://www.buynomics.com",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Buynomics — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Köln, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000007",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000007/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800012",
+      "universalName": "shipdayinc",
+      "linkedinUrl": "https://www.linkedin.com/company/shipdayinc",
+      "name": "Shipday",
+      "website": "http://www.shipday.com",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Shipday — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Menlo Park, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100000",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100000/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care.",
+     "location": {
+      "linkedinText": "Seattle, WA",
+      "parsed": {
+       "text": "Seattle, WA",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800099",
+      "universalName": "northwind-cloud",
+      "linkedinUrl": "https://www.linkedin.com/company/northwind-cloud",
+      "name": "Northwind Cloud",
+      "website": "https://northwind-cloud.example",
+      "employeeCount": 700,
+      "employeeCountRange": {
+       "start": 501,
+       "end": 1000
+      },
+      "description": "Cloud software.",
+      "industries": [
+       {
+        "name": "Software Development"
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Seattle, WA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100001",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100001/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100002",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100002/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100003",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100003/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100004",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100004/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800015",
+      "universalName": "suse",
+      "linkedinUrl": "https://www.linkedin.com/company/suse",
+      "name": "SUSE",
+      "website": "http://www.suse.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "SUSE — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Nürnberg, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100005",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100005/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100006",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100006/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100007",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100007/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100008",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100008/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100009",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100009/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100010",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100010/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800015",
+      "universalName": "suse",
+      "linkedinUrl": "https://www.linkedin.com/company/suse",
+      "name": "SUSE",
+      "website": "http://www.suse.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "SUSE — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Nürnberg, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100011",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100011/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100012",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100012/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100013",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100013/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100014",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100014/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100015",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100015/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100016",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100016/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800015",
+      "universalName": "suse",
+      "linkedinUrl": "https://www.linkedin.com/company/suse",
+      "name": "SUSE",
+      "website": "http://www.suse.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "SUSE — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Nürnberg, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100017",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100017/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100018",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100018/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100019",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100019/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100020",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100020/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100021",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100021/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "provenance": "page 2: synthetic in production's logged shape"
+  },
+  {
+   "actor": "apify_linkedin_job_search",
+   "input_match": {
+    "page": 3,
+    "company": null
+   },
+   "rows": [
+    {
+     "id": "92000000",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000000/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800002",
+      "universalName": "flagright",
+      "linkedinUrl": "https://www.linkedin.com/company/flagright",
+      "name": "Flagright",
+      "website": "https://link.flagright.com/LinkedIn",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Flagright — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000001",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000001/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800000",
+      "universalName": "akur8",
+      "linkedinUrl": "https://www.linkedin.com/company/akur8",
+      "name": "AKUR8",
+      "website": "https://www.akur8.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "AKUR8 — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "FR",
+        "headquarter": true,
+        "parsed": {
+         "text": "Paris, France",
+         "countryCode": "FR",
+         "country": "France"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000002",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000002/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000003",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000003/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000004",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000004/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800020",
+      "universalName": "zycus",
+      "linkedinUrl": "https://www.linkedin.com/company/zycus",
+      "name": "Zycus",
+      "website": "https://www.zycus.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Zycus — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Princeton, NJ, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000005",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000005/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000006",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000006/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800001",
+      "universalName": "buynomics",
+      "linkedinUrl": "https://www.linkedin.com/company/buynomics",
+      "name": "Buynomics",
+      "website": "https://www.buynomics.com",
+      "employeeCount": 54,
+      "employeeCountRange": {
+       "start": 51,
+       "end": 200
+      },
+      "description": "Buynomics — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Köln, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92000007",
+     "title": "Account Executive",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92000007/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Quota-carrying AE role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800012",
+      "universalName": "shipdayinc",
+      "linkedinUrl": "https://www.linkedin.com/company/shipdayinc",
+      "name": "Shipday",
+      "website": "http://www.shipday.com",
+      "employeeCount": 14,
+      "employeeCountRange": {
+       "start": 11,
+       "end": 50
+      },
+      "description": "Shipday — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Menlo Park, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100000",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100000/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care.",
+     "location": {
+      "linkedinText": "Seattle, WA",
+      "parsed": {
+       "text": "Seattle, WA",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800099",
+      "universalName": "northwind-cloud",
+      "linkedinUrl": "https://www.linkedin.com/company/northwind-cloud",
+      "name": "Northwind Cloud",
+      "website": "https://northwind-cloud.example",
+      "employeeCount": 700,
+      "employeeCountRange": {
+       "start": 501,
+       "end": 1000
+      },
+      "description": "Cloud software.",
+      "industries": [
+       {
+        "name": "Software Development"
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Seattle, WA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100001",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100001/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100002",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100002/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100003",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100003/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100004",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100004/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800015",
+      "universalName": "suse",
+      "linkedinUrl": "https://www.linkedin.com/company/suse",
+      "name": "SUSE",
+      "website": "http://www.suse.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "SUSE — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Nürnberg, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100005",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100005/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100006",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100006/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100007",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100007/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100008",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100008/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100009",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100009/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100010",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100010/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800015",
+      "universalName": "suse",
+      "linkedinUrl": "https://www.linkedin.com/company/suse",
+      "name": "SUSE",
+      "website": "http://www.suse.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "SUSE — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Nürnberg, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100011",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100011/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100012",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100012/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100013",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100013/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100014",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100014/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100015",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100015/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100016",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100016/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800015",
+      "universalName": "suse",
+      "linkedinUrl": "https://www.linkedin.com/company/suse",
+      "name": "SUSE",
+      "website": "http://www.suse.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "SUSE — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "DE",
+        "headquarter": true,
+        "parsed": {
+         "text": "Nürnberg, Germany",
+         "countryCode": "DE",
+         "country": "Germany"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100017",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100017/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800004",
+      "universalName": "kinaxis",
+      "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+      "name": "Kinaxis",
+      "website": "http://www.kinaxis.com",
+      "employeeCount": 1004,
+      "employeeCountRange": {
+       "start": 1001,
+       "end": 5000
+      },
+      "description": "Kinaxis — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "CA",
+        "headquarter": true,
+        "parsed": {
+         "text": "Ottawa, Canada",
+         "countryCode": "CA",
+         "country": "Canada"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100018",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100018/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800019",
+      "universalName": "veelapp",
+      "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+      "name": "Veel",
+      "website": "https://veelapp.com",
+      "employeeCount": 204,
+      "employeeCountRange": {
+       "start": 201,
+       "end": 500
+      },
+      "description": "Veel — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100019",
+     "title": "Customer Success Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100019/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800014",
+      "universalName": "stripe",
+      "linkedinUrl": "https://www.linkedin.com/company/stripe",
+      "name": "Stripe",
+      "website": "https://stripe.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Stripe — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "South San Francisco, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100020",
+     "title": "Store Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100020/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800018",
+      "universalName": "toast-inc",
+      "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+      "name": "Toast",
+      "website": "http://pos.toasttab.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Toast — Software Development.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Software Development",
+        "title": "Software Development",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "Boston, MA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "92100021",
+     "title": "Account Manager",
+     "linkedinUrl": "https://www.linkedin.com/jobs/view/92100021/",
+     "jobState": "LISTED",
+     "postedDate": "2026-10-12T06:00:00.000Z",
+     "descriptionText": "Account care role.",
+     "location": {
+      "linkedinText": "United States",
+      "parsed": {
+       "text": "United States",
+       "countryCode": "US",
+       "country": "United States"
+      }
+     },
+     "workplaceType": "on_site",
+     "company": {
+      "id": "800009",
+      "universalName": "resmed",
+      "linkedinUrl": "https://www.linkedin.com/company/resmed",
+      "name": "Resmed",
+      "website": "https://www.resmed.com",
+      "employeeCount": 5004,
+      "employeeCountRange": {
+       "start": 5001,
+       "end": 10000
+      },
+      "description": "Resmed — Medical Equipment Manufacturing.",
+      "industries": [
+       {
+        "id": null,
+        "name": "Medical Equipment Manufacturing",
+        "title": "Medical Equipment Manufacturing",
+        "hierarchy": null
+       }
+      ],
+      "locations": [
+       {
+        "country": "US",
+        "headquarter": true,
+        "parsed": {
+         "text": "San Diego, CA, United States",
+         "countryCode": "US",
+         "country": "United States"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "provenance": "page 3: row-for-row replay of page 2"
+  },
+  {
+   "actor": "apify_linkedin_company_details",
+   "select": {
+    "input_field": "companies",
+    "row_field": "linkedinUrl"
+   },
+   "rows": [
+    {
+     "id": "800000",
+     "name": "AKUR8",
+     "linkedinUrl": "https://www.linkedin.com/company/akur8",
+     "website": "https://www.akur8.com",
+     "employeeCount": 204,
+     "employeeCountRange": {
+      "start": 201,
+      "end": 500
+     },
+     "description": "AKUR8 — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "FR",
+       "headquarter": true,
+       "parsed": {
+        "text": "Paris, France",
+        "countryCode": "FR",
+        "country": "France"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800001",
+     "name": "Buynomics",
+     "linkedinUrl": "https://www.linkedin.com/company/buynomics",
+     "website": "https://www.buynomics.com",
+     "employeeCount": 54,
+     "employeeCountRange": {
+      "start": 51,
+      "end": 200
+     },
+     "description": "Buynomics — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "DE",
+       "headquarter": true,
+       "parsed": {
+        "text": "Köln, Germany",
+        "countryCode": "DE",
+        "country": "Germany"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800002",
+     "name": "Flagright",
+     "linkedinUrl": "https://www.linkedin.com/company/flagright",
+     "website": "https://link.flagright.com/LinkedIn",
+     "employeeCount": 54,
+     "employeeCountRange": {
+      "start": 51,
+      "end": 200
+     },
+     "description": "Flagright — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800003",
+     "name": "Fresho",
+     "linkedinUrl": "https://www.linkedin.com/company/fresho-",
+     "website": "http://www.fresho.com",
+     "employeeCount": 54,
+     "employeeCountRange": {
+      "start": 51,
+      "end": 200
+     },
+     "description": "Fresho — IT Services and IT Consulting.",
+     "industries": [
+      {
+       "id": null,
+       "name": "IT Services and IT Consulting",
+       "title": "IT Services and IT Consulting",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "AU",
+       "headquarter": true,
+       "parsed": {
+        "text": "South Melbourne, Australia",
+        "countryCode": "AU",
+        "country": "Australia"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800004",
+     "name": "Kinaxis",
+     "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+     "website": "http://www.kinaxis.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Kinaxis — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "CA",
+       "headquarter": true,
+       "parsed": {
+        "text": "Ottawa, Canada",
+        "countryCode": "CA",
+        "country": "Canada"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800005",
+     "name": "Manhattan Associates",
+     "linkedinUrl": "https://www.linkedin.com/company/manhattan-associates",
+     "website": "http://www.manh.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Manhattan Associates — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Atlanta, GA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800006",
+     "name": "O-HIVE.AI",
+     "linkedinUrl": "https://www.linkedin.com/company/o-hive-ai",
+     "website": "https://www.o-hive.ai",
+     "employeeCount": 5,
+     "employeeCountRange": {
+      "start": 2,
+      "end": 10
+     },
+     "description": "O-HIVE.AI — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "DE, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800017",
+     "name": "Openbound",
+     "linkedinUrl": "https://www.linkedin.com/company/theopenbound",
+     "website": "https://theopenbound.com",
+     "employeeCount": 5,
+     "employeeCountRange": {
+      "start": 2,
+      "end": 10
+     },
+     "description": "Openbound — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800007",
+     "name": "Perfect Venue",
+     "linkedinUrl": "https://www.linkedin.com/company/perfect-venue",
+     "website": "http://www.perfectvenue.com",
+     "employeeCount": 14,
+     "employeeCountRange": {
+      "start": 11,
+      "end": 50
+     },
+     "description": "Perfect Venue — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800008",
+     "name": "RemoteHunter",
+     "linkedinUrl": "https://www.linkedin.com/company/remotehunter",
+     "website": "https://remotehunter.com",
+     "employeeCount": 14,
+     "employeeCountRange": {
+      "start": 11,
+      "end": 50
+     },
+     "description": "RemoteHunter — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": []
+    },
+    {
+     "id": "800009",
+     "name": "Resmed",
+     "linkedinUrl": "https://www.linkedin.com/company/resmed",
+     "website": "https://www.resmed.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Resmed — Medical Equipment Manufacturing.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Medical Equipment Manufacturing",
+       "title": "Medical Equipment Manufacturing",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Diego, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800010",
+     "name": "RTX Telecom A/S",
+     "linkedinUrl": "https://www.linkedin.com/company/rtx-telecom-a-s",
+     "website": "http://www.smtnet.com/company/index.cfm",
+     "employeeCount": 5,
+     "employeeCountRange": {
+      "start": 2,
+      "end": 10
+     },
+     "description": "RTX Telecom A/S — Technology, Information and Internet.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Technology, Information and Internet",
+       "title": "Technology, Information and Internet",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "GB",
+       "headquarter": true,
+       "parsed": {
+        "text": "United Kingdom",
+        "countryCode": "GB",
+        "country": "United Kingdom"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800011",
+     "name": "Shift Group",
+     "linkedinUrl": "https://www.linkedin.com/company/shift-groupllc",
+     "website": "http://www.shiftgroup.io",
+     "employeeCount": 14,
+     "employeeCountRange": {
+      "start": 11,
+      "end": 50
+     },
+     "description": "Shift Group — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Boston, MA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800012",
+     "name": "Shipday",
+     "linkedinUrl": "https://www.linkedin.com/company/shipdayinc",
+     "website": "http://www.shipday.com",
+     "employeeCount": 14,
+     "employeeCountRange": {
+      "start": 11,
+      "end": 50
+     },
+     "description": "Shipday — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Menlo Park, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800013",
+     "name": "SonicJobs",
+     "linkedinUrl": "https://www.linkedin.com/company/sonicjobs",
+     "website": "https://www.sonicjobs.com",
+     "employeeCount": 14,
+     "employeeCountRange": {
+      "start": 11,
+      "end": 50
+     },
+     "description": "SonicJobs — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800014",
+     "name": "Stripe",
+     "linkedinUrl": "https://www.linkedin.com/company/stripe",
+     "website": "https://stripe.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Stripe — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "South San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800015",
+     "name": "SUSE",
+     "linkedinUrl": "https://www.linkedin.com/company/suse",
+     "website": "http://www.suse.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "SUSE — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "DE",
+       "headquarter": true,
+       "parsed": {
+        "text": "Nürnberg, Germany",
+        "countryCode": "DE",
+        "country": "Germany"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800016",
+     "name": "TalentHop",
+     "linkedinUrl": "https://www.linkedin.com/company/talenthopllc",
+     "website": "https://talenthop.com",
+     "employeeCount": 14,
+     "employeeCountRange": {
+      "start": 11,
+      "end": 50
+     },
+     "description": "TalentHop — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": []
+    },
+    {
+     "id": "800018",
+     "name": "Toast",
+     "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+     "website": "http://pos.toasttab.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Toast — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Boston, MA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800019",
+     "name": "Veel",
+     "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+     "website": "https://veelapp.com",
+     "employeeCount": 204,
+     "employeeCountRange": {
+      "start": 201,
+      "end": 500
+     },
+     "description": "Veel — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800020",
+     "name": "Zycus",
+     "linkedinUrl": "https://www.linkedin.com/company/zycus",
+     "website": "https://www.zycus.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Zycus — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Princeton, NJ, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    },
+    {
+     "id": "800099",
+     "name": "Northwind Cloud",
+     "linkedinUrl": "https://www.linkedin.com/company/northwind-cloud",
+     "website": "https://northwind-cloud.example",
+     "employeeCount": 700,
+     "employeeCountRange": {
+      "start": 501,
+      "end": 1000
+     },
+     "description": "Cloud software.",
+     "industries": [
+      {
+       "name": "Software Development"
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Seattle, WA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   ],
+   "provenance": "declared bands as production read them"
+  }
+ ],
+ "variants": {
+  "page_3_fresh": [
+   {
+    "id": "93000000",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000000/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800002",
+     "universalName": "flagright",
+     "linkedinUrl": "https://www.linkedin.com/company/flagright",
+     "name": "Flagright",
+     "website": "https://link.flagright.com/LinkedIn",
+     "employeeCount": 54,
+     "employeeCountRange": {
+      "start": 51,
+      "end": 200
+     },
+     "description": "Flagright — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000001",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000001/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800000",
+     "universalName": "akur8",
+     "linkedinUrl": "https://www.linkedin.com/company/akur8",
+     "name": "AKUR8",
+     "website": "https://www.akur8.com",
+     "employeeCount": 204,
+     "employeeCountRange": {
+      "start": 201,
+      "end": 500
+     },
+     "description": "AKUR8 — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "FR",
+       "headquarter": true,
+       "parsed": {
+        "text": "Paris, France",
+        "countryCode": "FR",
+        "country": "France"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000002",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000002/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800014",
+     "universalName": "stripe",
+     "linkedinUrl": "https://www.linkedin.com/company/stripe",
+     "name": "Stripe",
+     "website": "https://stripe.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Stripe — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "South San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000003",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000003/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800018",
+     "universalName": "toast-inc",
+     "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+     "name": "Toast",
+     "website": "http://pos.toasttab.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Toast — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Boston, MA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000004",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000004/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800020",
+     "universalName": "zycus",
+     "linkedinUrl": "https://www.linkedin.com/company/zycus",
+     "name": "Zycus",
+     "website": "https://www.zycus.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Zycus — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Princeton, NJ, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000005",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000005/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800004",
+     "universalName": "kinaxis",
+     "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+     "name": "Kinaxis",
+     "website": "http://www.kinaxis.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Kinaxis — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "CA",
+       "headquarter": true,
+       "parsed": {
+        "text": "Ottawa, Canada",
+        "countryCode": "CA",
+        "country": "Canada"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000006",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000006/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800001",
+     "universalName": "buynomics",
+     "linkedinUrl": "https://www.linkedin.com/company/buynomics",
+     "name": "Buynomics",
+     "website": "https://www.buynomics.com",
+     "employeeCount": 54,
+     "employeeCountRange": {
+      "start": 51,
+      "end": 200
+     },
+     "description": "Buynomics — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "DE",
+       "headquarter": true,
+       "parsed": {
+        "text": "Köln, Germany",
+        "countryCode": "DE",
+        "country": "Germany"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000007",
+    "title": "Account Executive",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000007/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Quota-carrying AE role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800012",
+     "universalName": "shipdayinc",
+     "linkedinUrl": "https://www.linkedin.com/company/shipdayinc",
+     "name": "Shipday",
+     "website": "http://www.shipday.com",
+     "employeeCount": 14,
+     "employeeCountRange": {
+      "start": 11,
+      "end": 50
+     },
+     "description": "Shipday — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Menlo Park, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000008",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000008/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care.",
+    "location": {
+     "linkedinText": "Seattle, WA",
+     "parsed": {
+      "text": "Seattle, WA",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800099",
+     "universalName": "northwind-cloud",
+     "linkedinUrl": "https://www.linkedin.com/company/northwind-cloud",
+     "name": "Northwind Cloud",
+     "website": "https://northwind-cloud.example",
+     "employeeCount": 700,
+     "employeeCountRange": {
+      "start": 501,
+      "end": 1000
+     },
+     "description": "Cloud software.",
+     "industries": [
+      {
+       "name": "Software Development"
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Seattle, WA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000009",
+    "title": "Customer Success Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000009/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800014",
+     "universalName": "stripe",
+     "linkedinUrl": "https://www.linkedin.com/company/stripe",
+     "name": "Stripe",
+     "website": "https://stripe.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Stripe — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "South San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000010",
+    "title": "Store Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000010/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800018",
+     "universalName": "toast-inc",
+     "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+     "name": "Toast",
+     "website": "http://pos.toasttab.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Toast — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Boston, MA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000011",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000011/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800009",
+     "universalName": "resmed",
+     "linkedinUrl": "https://www.linkedin.com/company/resmed",
+     "name": "Resmed",
+     "website": "https://www.resmed.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Resmed — Medical Equipment Manufacturing.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Medical Equipment Manufacturing",
+       "title": "Medical Equipment Manufacturing",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Diego, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000012",
+    "title": "Customer Success Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000012/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800015",
+     "universalName": "suse",
+     "linkedinUrl": "https://www.linkedin.com/company/suse",
+     "name": "SUSE",
+     "website": "http://www.suse.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "SUSE — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "DE",
+       "headquarter": true,
+       "parsed": {
+        "text": "Nürnberg, Germany",
+        "countryCode": "DE",
+        "country": "Germany"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000013",
+    "title": "Store Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000013/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800004",
+     "universalName": "kinaxis",
+     "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+     "name": "Kinaxis",
+     "website": "http://www.kinaxis.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Kinaxis — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "CA",
+       "headquarter": true,
+       "parsed": {
+        "text": "Ottawa, Canada",
+        "countryCode": "CA",
+        "country": "Canada"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000014",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000014/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800019",
+     "universalName": "veelapp",
+     "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+     "name": "Veel",
+     "website": "https://veelapp.com",
+     "employeeCount": 204,
+     "employeeCountRange": {
+      "start": 201,
+      "end": 500
+     },
+     "description": "Veel — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000015",
+    "title": "Customer Success Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000015/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800014",
+     "universalName": "stripe",
+     "linkedinUrl": "https://www.linkedin.com/company/stripe",
+     "name": "Stripe",
+     "website": "https://stripe.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Stripe — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "South San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000016",
+    "title": "Store Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000016/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800018",
+     "universalName": "toast-inc",
+     "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+     "name": "Toast",
+     "website": "http://pos.toasttab.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Toast — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Boston, MA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000017",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000017/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800009",
+     "universalName": "resmed",
+     "linkedinUrl": "https://www.linkedin.com/company/resmed",
+     "name": "Resmed",
+     "website": "https://www.resmed.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Resmed — Medical Equipment Manufacturing.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Medical Equipment Manufacturing",
+       "title": "Medical Equipment Manufacturing",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Diego, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000018",
+    "title": "Customer Success Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000018/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800015",
+     "universalName": "suse",
+     "linkedinUrl": "https://www.linkedin.com/company/suse",
+     "name": "SUSE",
+     "website": "http://www.suse.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "SUSE — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "DE",
+       "headquarter": true,
+       "parsed": {
+        "text": "Nürnberg, Germany",
+        "countryCode": "DE",
+        "country": "Germany"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000019",
+    "title": "Store Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000019/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800004",
+     "universalName": "kinaxis",
+     "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+     "name": "Kinaxis",
+     "website": "http://www.kinaxis.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Kinaxis — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "CA",
+       "headquarter": true,
+       "parsed": {
+        "text": "Ottawa, Canada",
+        "countryCode": "CA",
+        "country": "Canada"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000020",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000020/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800019",
+     "universalName": "veelapp",
+     "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+     "name": "Veel",
+     "website": "https://veelapp.com",
+     "employeeCount": 204,
+     "employeeCountRange": {
+      "start": 201,
+      "end": 500
+     },
+     "description": "Veel — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000021",
+    "title": "Customer Success Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000021/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800014",
+     "universalName": "stripe",
+     "linkedinUrl": "https://www.linkedin.com/company/stripe",
+     "name": "Stripe",
+     "website": "https://stripe.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Stripe — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "South San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000022",
+    "title": "Store Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000022/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800018",
+     "universalName": "toast-inc",
+     "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+     "name": "Toast",
+     "website": "http://pos.toasttab.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Toast — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Boston, MA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000023",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000023/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800009",
+     "universalName": "resmed",
+     "linkedinUrl": "https://www.linkedin.com/company/resmed",
+     "name": "Resmed",
+     "website": "https://www.resmed.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Resmed — Medical Equipment Manufacturing.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Medical Equipment Manufacturing",
+       "title": "Medical Equipment Manufacturing",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Diego, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000024",
+    "title": "Customer Success Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000024/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800015",
+     "universalName": "suse",
+     "linkedinUrl": "https://www.linkedin.com/company/suse",
+     "name": "SUSE",
+     "website": "http://www.suse.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "SUSE — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "DE",
+       "headquarter": true,
+       "parsed": {
+        "text": "Nürnberg, Germany",
+        "countryCode": "DE",
+        "country": "Germany"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000025",
+    "title": "Store Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000025/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800004",
+     "universalName": "kinaxis",
+     "linkedinUrl": "https://www.linkedin.com/company/kinaxis",
+     "name": "Kinaxis",
+     "website": "http://www.kinaxis.com",
+     "employeeCount": 1004,
+     "employeeCountRange": {
+      "start": 1001,
+      "end": 5000
+     },
+     "description": "Kinaxis — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "CA",
+       "headquarter": true,
+       "parsed": {
+        "text": "Ottawa, Canada",
+        "countryCode": "CA",
+        "country": "Canada"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000026",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000026/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800019",
+     "universalName": "veelapp",
+     "linkedinUrl": "https://www.linkedin.com/company/veelapp",
+     "name": "Veel",
+     "website": "https://veelapp.com",
+     "employeeCount": 204,
+     "employeeCountRange": {
+      "start": 201,
+      "end": 500
+     },
+     "description": "Veel — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000027",
+    "title": "Customer Success Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000027/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800014",
+     "universalName": "stripe",
+     "linkedinUrl": "https://www.linkedin.com/company/stripe",
+     "name": "Stripe",
+     "website": "https://stripe.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Stripe — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "South San Francisco, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000028",
+    "title": "Store Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000028/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800018",
+     "universalName": "toast-inc",
+     "linkedinUrl": "https://www.linkedin.com/company/toast-inc",
+     "name": "Toast",
+     "website": "http://pos.toasttab.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Toast — Software Development.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Software Development",
+       "title": "Software Development",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "Boston, MA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "id": "93000029",
+    "title": "Account Manager",
+    "linkedinUrl": "https://www.linkedin.com/jobs/view/93000029/",
+    "jobState": "LISTED",
+    "postedDate": "2026-10-12T06:00:00.000Z",
+    "descriptionText": "Account care role.",
+    "location": {
+     "linkedinText": "United States",
+     "parsed": {
+      "text": "United States",
+      "countryCode": "US",
+      "country": "United States"
+     }
+    },
+    "workplaceType": "on_site",
+    "company": {
+     "id": "800009",
+     "universalName": "resmed",
+     "linkedinUrl": "https://www.linkedin.com/company/resmed",
+     "name": "Resmed",
+     "website": "https://www.resmed.com",
+     "employeeCount": 5004,
+     "employeeCountRange": {
+      "start": 5001,
+      "end": 10000
+     },
+     "description": "Resmed — Medical Equipment Manufacturing.",
+     "industries": [
+      {
+       "id": null,
+       "name": "Medical Equipment Manufacturing",
+       "title": "Medical Equipment Manufacturing",
+       "hierarchy": null
+      }
+     ],
+     "locations": [
+      {
+       "country": "US",
+       "headquarter": true,
+       "parsed": {
+        "text": "San Diego, CA, United States",
+        "countryCode": "US",
+        "country": "United States"
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "anchors": {
+  "as_it_ran": {
+   "slices": 3,
+   "unique_employers_after_page_1": 21,
+   "early_size_rejected": 15,
+   "admitted": 6,
+   "qualified": [
+    "Perfect Venue",
+    "Shipday"
+   ],
+   "stop_reason_slices_2_3": "schema_failure",
+   "replan_titles": 4,
+   "title_limit": 3,
+   "page_3_new_employers": 0,
+   "terminal": "search_exhausted",
+   "provider_usd": 0.1612,
+   "model_usd": 0.0226
+  }
+ },
+ "expected": {
+  "no_inherited_schema_failure": true,
+  "titles_per_call_max": 3,
+  "no_account_manager_in_sales_query": true,
+  "duplicate_page_exhausts_route": true,
+  "agency_postings_prove_no_hiring": [
+   "Shift Group"
+  ]
+ }
+}
