@@ -178,7 +178,9 @@ export async function runClaimedMission(
   const ac = new AbortController();
   let abortReason: string | null = null;
   const hb = deps.heartbeatFor(mission);
-  hb.start((reason) => { abortReason = reason; ac.abort(); });
+  // The heartbeat's reason travels on the signal (`ownership_lost`,
+  // `mission_cancelled`, …), so the run can tell a cancellation from a lost lease.
+  hb.start((reason) => { abortReason = reason; ac.abort(reason); });
 
   let outcome: MissionOutcome;
   try {
