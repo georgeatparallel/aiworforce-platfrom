@@ -1,38 +1,38 @@
 # DEPLOY A PINNED RELEASE OF THE LEAD V2 EDGE FUNCTIONS — manual, production.
 #
-# Release 86ac1b92 — run-agent AND pilot-chat: PR #63, Lead V2 termination,
-# continuation state and mission consistency (Query B canary d22d9ee6, which
-# looped for 29 minutes after useful discovery was exhausted), plus PR #61's
-# mission-compilation fix, which never reached pilot-chat.
+# Release e4da19e8 — run-agent ONLY: PR #65, Lead V2 checkpoint size and write
+# amplification (Query B canary eb0d520f, whose 2.64 MB task result and
+# 1.44 MB lineage state hit PostgreSQL 57014 statement timeouts; the lost
+# slice-result write and claim release made the queue fail the mission).
 #
-# run-agent    e2e8014e (v272) → 86ac1b92. e2e8014e..86ac1b92 changes
-#              leadCapabilityEngine, leadAutoContinuation, leadMissionCancellation,
-#              leadMissionTerminal, leadMissionWorkerCore, lineageProgressGuard,
-#              retryTransient, buildStamp and run-agent/index.ts (plus worker/,
-#              not deployed here). Released: an unproductive re-plan with no page
-#              left exhausts discovery (`replan_unproductive`); companies screened
-#              out at discovery are not progress; lineage progress is the maximum
-#              of the task row, the lineage state and the queue count, and every
-#              result write is guarded and reports itself; phase timings; the
-#              slice-end claim and lineage releases retry a transient failure.
-#              DEPLOYED.
-# pilot-chat   b51ad3dd (v205) → 86ac1b92. It COMPILES missions, and production
-#              still compiles with b51ad3dd: "with open sales roles" compiles to
-#              no hiring requirement and "posted sales jobs" to an employee's
-#              social post (PR #61's fix, in missionSignalDescriptor / signalKinds).
-#              Measured with `deno info --json` and by what pilot-chat EXECUTES:
-#              it bundles twelve modules changed since b51ad3dd, but its own
-#              entry points into them — compileFirstProviderCall,
-#              roleFamilyAliases, classifyRoleFamily, withBuildStamp — are
-#              byte-identical; hiringActorInputs only gained code; the
-#              roleFamilies change is title matching (roleMatchesFamily), which
-#              pilot-chat does not call. The one behaviour that changes is mission
-#              compilation's reading of hiring wording. DEPLOYED.
+# run-agent    86ac1b92 (v273) → e4da19e8. 86ac1b92..e4da19e8 changes
+#              leadResumeState, lineageStateMerge, leadCapabilityEngine,
+#              payloadSize (new) and run-agent/index.ts. Released: a company
+#              closed at discovery is stored with one statement per dimension and
+#              no job rows; repeated snapshot values are stored once
+#              (snapshot_dictionary, envelope `lead-resume-state-v1+dictionary-1`);
+#              the research fabric is written in full only when the lineage ends;
+#              stage progress rides on the checkpoint write; a failed slice-result
+#              write is reported; state sizes are measured and warned past budget.
+#              RESUME_STATE_VERSION (embedded in provider operation keys) is
+#              unchanged. DEPLOYED.
 #
-# NOT in this release (they stay on b51ad3dd, checked before and after):
+# NOT in this release:
+#   pilot-chat   stays on 86ac1b92 (v206), checked before and after. It bundles
+#                leadResumeState and runOutcome but calls neither checkpoint
+#                reader that checks the envelope version (readCheckpointCompanies,
+#                readCheckpointDiscoveryState); runOutcome reads the records'
+#                stage labels, which compaction leaves plain.
 #   orchestrate, enqueue-lead-mission, continue-workflow, resume-stalled-leads
-#                bundle the signal readers and role families but do not compile
-#                missions; left held, as in every Lead V2 release since b51ad3dd.
+#                stay on b51ad3dd (checked before and after), as in every Lead V2
+#                release since b51ad3dd. continue-workflow and resume-stalled-leads
+#                read checkpoint companies only for tasks the V2 queue does NOT own
+#                (both refuse queue-owned tasks first). On a compacted checkpoint
+#                their reader returns no companies and refuses to continue (no
+#                misread, no spend). All 54 lead tasks of the last 30 days were
+#                queue-owned. A workspace NOT on LEAD_V2_WORKER_WORKSPACES runs the
+#                direct (v1_edge) path, and its continuations would need these two
+#                functions released from e4da19e8 or later.
 # Also bundling changed modules and NOT deployed, as in every Lead V2 release:
 # run-monitoring-scan, unlock-founders, generate-company-brain-draft,
 # daily-brief, run-lead-action, setup-company-brain. They report no build
@@ -40,18 +40,20 @@
 # The three functions on a08ac0e4 stay there (checked before and after).
 # THE WORKER runs the Lead V2 queue in-process (it bundles run-agent and the
 # changed modules), so queued missions run this release only once a worker runs
-# 86ac1b92. Railway is DOWN (trial expired) and the temporary local worker is
+# e4da19e8. Railway is DOWN (trial expired) and the temporary local worker is
 # STOPPED; the queue is idle. The post-deploy health step does not check the
-# Railway worker; the worker is started from 86ac1b92 and verified separately.
+# Railway worker; the worker is started from e4da19e8 and verified separately.
 # No database migration: nothing here touches the database.
 #
 # ROLLBACK: the step "Back up the currently deployed function" downloads the
-# LIVE source of run-agent AND pilot-chat before anything changes, encrypts it with
+# LIVE source of run-agent before anything changes, encrypts it with
 # ROLLBACK_ARCHIVE_KEY and uploads it as the artifact
 # `pre-deploy-functions-<run_id>` (30 days). To roll back: download the
 # artifact, `openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ROLLBACK_ARCHIVE_KEY`
-# it, untar, and `supabase --workdir <dir> functions deploy <run-agent|pilot-chat>
-# --project-ref ohsdatpvfdjdemstoiuj --use-docker`.
+# it, untar, and `supabase --workdir <dir> functions deploy run-agent
+# --project-ref ohsdatpvfdjdemstoiuj --use-docker`. A mission whose checkpoint
+# this release compacted will not resume on the rolled-back run-agent (86ac1b92
+# reads no companies from it and refuses); finalize it rather than retrying.
 # Nothing here rolls back automatically: a failed step stops the job and prints
 # which functions are on which build.
 #
@@ -71,7 +73,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_sha:
-        description: "Type the release SHA to deploy: 86ac1b92"
+        description: "Type the release SHA to deploy: e4da19e8"
         required: true
         type: string
 
@@ -83,22 +85,23 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_SHA: 86ac1b922f8519f75760642bb09cceef096168eb
+  RELEASE_SHA: e4da19e8828898f05414da953a13acb74c74e6a4
   # The release the three untouched a08ac0e4 functions still run; the preflight
   # proves the build check works by reading one of them back.
   PREVIOUS_RELEASE_SHA: a08ac0e4edea6f3aa54314db4efe0073e371b82f
   # The release the other lead-path functions run, and keep running, through
   # this deploy (b51ad3dd, PR #54, deployed 2026-10-11 06:46 UTC).
   HELD_RELEASE_SHA: b51ad3dddf2604f9d218d7c495e17e22d20932db
-  # What the deployed functions run BEFORE this deploy. The preflight refuses if
-  # either has moved, so this never overwrites a build nobody backed up on purpose.
-  # run-agent: e2e8014e, v272, PR #61, deployed 2026-10-12 13:20 UTC.
-  LIVE_RUN_AGENT_SHA: e2e8014e916ba2502bc61e4c8529e23e8890ea8a
-  LIVE_RUN_AGENT_VERSION: "272"
-  # pilot-chat: b51ad3dd, v205, PR #54, deployed 2026-10-11 06:46 UTC.
-  LIVE_PILOT_CHAT_SHA: b51ad3dddf2604f9d218d7c495e17e22d20932db
-  LIVE_PILOT_CHAT_VERSION: "205"
-  DEPLOYED_FUNCTIONS: "run-agent pilot-chat"
+  # What run-agent runs BEFORE this deploy. The preflight refuses if it has
+  # moved, so this never overwrites a build nobody backed up on purpose.
+  # run-agent: 86ac1b92, v273, PR #63, deployed 2026-10-13 01:47 UTC.
+  LIVE_RUN_AGENT_SHA: 86ac1b922f8519f75760642bb09cceef096168eb
+  LIVE_RUN_AGENT_VERSION: "273"
+  # pilot-chat: 86ac1b92, v206, deployed with run-agent 2026-10-13 01:47 UTC.
+  # NOT deployed here: checked, build and version, before and after.
+  LIVE_PILOT_CHAT_SHA: 86ac1b922f8519f75760642bb09cceef096168eb
+  LIVE_PILOT_CHAT_VERSION: "206"
+  DEPLOYED_FUNCTIONS: "run-agent"
   # Lead-path functions this deploy must NOT touch, with the build each runs.
   UNTOUCHED_ON_HELD: "orchestrate enqueue-lead-mission continue-workflow resume-stalled-leads"
   UNTOUCHED_ON_PREVIOUS: "ops-health approve-and-continue send-scheduled-emails"
@@ -119,11 +122,11 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm_sha }}
         run: |
-          if [ "$CONFIRM" != "86ac1b92" ]; then echo "::error::confirm_sha must be 86ac1b92"; exit 1; fi
+          if [ "$CONFIRM" != "e4da19e8" ]; then echo "::error::confirm_sha must be e4da19e8"; exit 1; fi
 
       - uses: actions/checkout@v4
         with:
-          ref: 86ac1b922f8519f75760642bb09cceef096168eb
+          ref: e4da19e8828898f05414da953a13acb74c74e6a4
           # Full history, so the ancestry check below is never defeated by a
           # shallow clone.
           fetch-depth: 0
@@ -181,6 +184,8 @@ jobs:
           done
           # The function about to be replaced must be EXACTLY what was measured
           # and is about to be backed up: build stamp, version number, JWT on.
+          # pilot-chat is not replaced; the same check pins what it must still
+          # be after the deploy.
           # Only `.version` and `.verify_jwt` are read from the Management API.
           check_live() {
             fn="$1"; sha="$2"; version="$3"
@@ -241,9 +246,10 @@ jobs:
       - name: Stamp the build with the release SHA
         run: scripts/deploy/stamp-build.sh stamp
 
-      # Two functions in this release: the edge copy of the Lead V2 engine, and
-      # pilot-chat, which compiles missions. orchestrate stays on b51ad3dd.
-      - name: Deploy run-agent (1 of 2)
+      # One function in this release: the edge copy of the Lead V2 engine.
+      # pilot-chat stays on 86ac1b92; orchestrate and the other held functions
+      # stay on b51ad3dd.
+      - name: Deploy run-agent (1 of 1)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_TARGET: production
@@ -258,23 +264,17 @@ jobs:
             "https://api.supabase.com/v1/projects/$PROJECT_REF/functions/run-agent" | jq -e '.verify_jwt == true' > /dev/null
           echo "run-agent: verify_jwt=true (after)"
 
-      - name: Deploy pilot-chat (2 of 2)
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_TARGET: production
-        run: node scripts/supabase-target.mjs production -- functions deploy pilot-chat --use-docker
-
-      - name: Verify pilot-chat
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: |
-          "$RUNNER_TEMP/expect-build.sh" pilot-chat
-          curl -fsS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
-            "https://api.supabase.com/v1/projects/$PROJECT_REF/functions/pilot-chat" | jq -e '.verify_jwt == true' > /dev/null
-          echo "pilot-chat: verify_jwt=true (after)"
-
       - name: Untouched functions are still on their existing build
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
+          # pilot-chat: same build, same version, JWT still on.
+          "$RUNNER_TEMP/expect-build.sh" pilot-chat "$LIVE_PILOT_CHAT_SHA"
+          curl -fsS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/functions/pilot-chat" \
+            | jq -e --arg v "$LIVE_PILOT_CHAT_VERSION" '.verify_jwt == true and (.version | tostring) == $v' > /dev/null \
+            || { echo "::error::pilot-chat changed during this deploy"; exit 1; }
+          echo "pilot-chat: v$LIVE_PILOT_CHAT_VERSION, verify_jwt=true (after, untouched)"
           for fn in $UNTOUCHED_ON_HELD; do
             "$RUNNER_TEMP/expect-build.sh" "$fn" "$HELD_RELEASE_SHA"
           done
