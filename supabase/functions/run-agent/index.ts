@@ -105,7 +105,7 @@ import { makeGptDiscoveryPlanner } from "../_shared/gptDiscoveryPlanner.ts";
 import { DiscoveryStrategyBlockedError } from "../_shared/leadDiscoveryStrategy.ts";
 import { makeGptExecutionPlanner } from "../_shared/gptExecutionPlanner.ts";
 import { makeGptRouteController } from "../_shared/gptRouteController.ts";
-import { canonicalDecisions, canonicalQualifiedKeys, projectResearchFabric } from "../_shared/leadCapabilityEngine.ts";
+import { canonicalDecisions, canonicalQualifiedKeys, projectResearchFabric, researchFabricSummary } from "../_shared/leadCapabilityEngine.ts";
 import { requiredEvidenceDimensions } from "../_shared/evidenceGraph.ts";
 import { criteriaSections, deriveMissionCriteria } from "../_shared/missionCriteria.ts";
 import { effectiveRequestedCount as p5RequestedCount } from "../_shared/leadMission.ts";
@@ -412,7 +412,7 @@ import { gptAdaptiveStrategyBinding } from "../_shared/leadStrategyAdaptiveBindi
 
 import { supabaseToolCallReader } from "../_shared/durableIdempotency.ts";
 import {
-  supabaseSourcingStateStore, newSourcingState, SOURCING_STATE_VERSION,
+  supabaseSourcingStateStore, newSourcingState, SOURCING_STATE_VERSION, safeCheckpointFailure,
 } from "../_shared/companyFirstSourcingState.ts";
 import { decideResume, RESUME_REFUSAL_MESSAGE, type ResumableTaskRow } from "../_shared/sourcingContinuation.ts";
 import { buildQualifiedLeadRunContext } from "../_shared/qualifiedLeadRunContext.ts";
@@ -433,6 +433,7 @@ import {
   AUTO_CONTINUATION_VERSION, LINEAGE_PROGRESS_KEY, type LineageProgress,
 } from "../_shared/leadAutoContinuation.ts";
 import { guardProgressWrite, resolveLineageProgress } from "../_shared/lineageProgressGuard.ts";
+import { measurePayload, type PayloadKind } from "../_shared/payloadSize.ts";
 import { retryTransient } from "../_shared/retryTransient.ts";
 import {
   continuingCheckpointContent, continuingResultsContent, noticeIsOpen, publishResultsNotice,
@@ -1240,18 +1241,27 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   ): Record<string, unknown> => {
     const g = guardProgressWrite(path, prior, next);
     const d = g.diagnostic;
+    // THE SIZE OF WHAT IS WRITTEN, on every write. Query B d22d9ee6's slice-5
+    // writes hit statement timeouts on a multi-megabyte row; this says how big,
+    // and warns past the budget before the writes start failing.
+    const size = measurePayload("task_result", g.result);
+    if (size.over) console.warn("[run-agent][payload-size]", { task_id: task?.id ?? null, path, ...size });
     if (d.present_before || d.present_in_write) {
       const line = {
         at: new Date().toISOString(), task_id: task?.id ?? null, ...d,
         queue_continuations: inProcess.queueContinuations ?? null,
-        // THE SIZE OF WHAT IS WRITTEN. Query B d22d9ee6's slice-5 writes hit
-        // statement timeouts on a multi-megabyte row; this says how big.
-        result_bytes: (() => { try { return JSON.stringify(g.result).length; } catch { return null; } })(),
+        result_bytes: size.bytes,
       };
       if (d.restored) console.warn("[run-agent][lineage-progress-write] prevented a decrease", line);
       else console.log("[run-agent][lineage-progress-write]", line);
     }
     return g.result;
+  };
+  // One size line per checkpoint, lineage state and Workbench view written.
+  const sized = <T,>(kind: PayloadKind, value: T, extra: Record<string, unknown> = {}): T => {
+    const line = measurePayload(kind, value);
+    (line.over ? console.warn : console.log)("[run-agent][payload-size]", { task_id: task?.id ?? null, ...extra, ...line });
+    return value;
   };
   // ── WHERE A SLICE SPENDS ITS TIME ──────────────────────────────────────────
   //
@@ -3280,6 +3290,31 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // `roundResume` carries the previous round's per-company records, so
             // a later round restores identity and enrichment already paid for
             // instead of re-buying them.
+            // ── ONE WRITE PER STAGE BOUNDARY ─────────────────────────────
+            //
+            // The engine publishes progress and, straight after, a checkpoint
+            // (`publish` in leadCapabilityEngine). Each used to read and rewrite
+            // the whole task result: two full rewrites per stage boundary,
+            // which at canary eb0d520f's 2 MB were most of a slice's write
+            // time. The progress now rides on the checkpoint write, and is
+            // written on its own only when no checkpoint write follows.
+            let progressOwed: unknown = null;
+            const flushProgress = async () => {
+              if (progressOwed === null) return;
+              const p = progressOwed;
+              progressOwed = null;
+              try {
+                const { data: cur } = await supabase
+                  .from("tasks").select("result").eq("id", task.id).maybeSingle();
+                const prior = (cur?.result && typeof cur.result === "object")
+                  ? cur.result as Record<string, unknown> : {};
+                await supabase.from("tasks").update({
+                  result: guardResult("progress_publish", prior as Record<string, unknown> | null, { ...prior, workbench_progress: p }),
+                }).eq("id", task.id);
+              } catch (e) {
+                console.log("[run-agent][capability-engine][progress-error]", String(e));
+              }
+            };
             const executeRound = async (
               roundMission: NonNullable<typeof persistedMission>,
               roundGraph: NonNullable<typeof missionPlan>,
@@ -3661,18 +3696,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               // jsonb — a blind write here would delete the paid-execution
               // preflight persisted a few lines above, which is the one record
               // that explains a blocked run.
-              onProgress: async (p) => {
-                try {
-                  const { data: cur } = await supabase
-                    .from("tasks").select("result").eq("id", task.id).maybeSingle();
-                  const prior = (cur?.result && typeof cur.result === "object")
-                    ? cur.result as Record<string, unknown> : {};
-                  await supabase.from("tasks").update({
-                    result: guardResult("progress_publish", prior as Record<string, unknown> | null, { ...prior, workbench_progress: p }),
-                  }).eq("id", task.id);
-                } catch (e) {
-                  console.log("[run-agent][capability-engine][progress-error]", String(e));
-                }
+              // Owed, not written: the checkpoint that follows carries it
+              // (see "ONE WRITE PER STAGE BOUNDARY").
+              onProgress: (p) => {
+                progressOwed = p;
+                return Promise.resolve();
               },
               // THE GUARD SEES THE LATEST STATE, so a kill after enrichment is
               // finalized with the attempts, cost and pending runs that existed
@@ -3695,11 +3723,13 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   console.warn("[run-agent][checkpoint] refused as incoherent", {
                     task_id: task.id, reason: snap.incoherence,
                   });
+                  await flushProgress();
                   return { written: false, reason: `incoherent: ${snap.incoherence}` };
                 }
                 // Nothing bought yet is nothing to come back for.
                 if (snap.state.provider_attempts.length === 0 &&
                     snap.state.pending_runs.length === 0) {
+                  await flushProgress();
                   return { written: false, reason: "nothing_bought_yet" };
                 }
                 try {
@@ -3716,11 +3746,15 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   // without a word. This is the leading candidate for H1's missing
                   // writes and it must be visible.
                   if (priorTerminal && priorTerminal !== "continuation_required") {
+                    await flushProgress();
                     return { written: false, reason: `prior_terminal:${priorTerminal}` };
                   }
+                  const progressCarried = progressOwed;
+                  progressOwed = null;
                   await supabase.from("tasks").update({
                     result: guardResult("stage_boundary", prior as Record<string, unknown> | null, {
                       ...prior,
+                      ...(progressCarried !== null ? { workbench_progress: progressCarried } : {}),
                       task_status: "partial",
                       terminal_status: "continuation_required",
                       // Who carries it on — so the plan pill reads a queue-owned save point as running.
@@ -3742,7 +3776,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                       },
                       // THE STATE AND THE WORKING SET, TOGETHER OR NOT AT ALL.
                       capability_execution_state: snap.state,
-                      [CHECKPOINT_RESULT_KEY]: buildCheckpoint({
+                      [CHECKPOINT_RESULT_KEY]: sized("checkpoint", buildCheckpoint({
                         now: Date.now(),
                         deadlineAt: terminalGuard.deadline.startedAt +
                           terminalGuard.deadline.budgetMs,
@@ -3758,7 +3792,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                         // spends its budget re-reading rows it already holds.
                         discoverySourceState:
                           snap.state.discovery_source_state ?? null,
-                      }),
+                      }), { path: "stage_boundary" }),
                       [LINEAGE_ROOT_RESULT_KEY]: leadResumeLineageRoot,
                       ...(persistedMission
                         ? {
@@ -4040,6 +4074,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   };
                 } catch (e) {
                   console.log("[run-agent][checkpoint] write failed", String(e));
+                  await flushProgress();
                   return { written: false, reason: `threw: ${String(e).slice(0, 80)}` };
                 }
               },
@@ -5636,7 +5671,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                     // THE CHECKPOINT. Per-company stage state plus the
                     // continuation flag the UI reads, so a run holding pending
                     // verification can never be described as complete.
-                    lead_resume_checkpoint: buildCheckpoint({
+                    lead_resume_checkpoint: sized("checkpoint", buildCheckpoint({
                       now: Date.now(),
                       deadlineAt: terminalGuard.deadline.startedAt + terminalGuard.deadline.budgetMs,
                       remainingMs: terminalGuard.deadline.remainingMs(),
@@ -5649,7 +5684,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                         ? "execution_deadline_checkpoint" : "all_work_complete",
                       discoverySourceState:
                         capabilityRun.state.discovery_source_state ?? null,
-                    }),
+                    }), { path: "final_snapshot" }),
                     // PERSISTED SO THE NEXT CONTINUATION CAN INHERIT IT. Read
                     // back by `lineageRootTaskId`; without it every link in the
                     // chain would compute its own root and skip nothing.
@@ -6877,7 +6912,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           ? sealTerminalRecord(priorRecord, { reason: lineageEnding, detail: autoDecision.detail })
           : null;
 
-        await supabase.from("tasks").update({
+        // CHECKED. Query B eb0d520f slice 2 (2026-10-13): this 2.15 MB write ran
+        // 161 s and did not land, and nothing said so; the next read found the
+        // lineage progress it carried missing and the queue counted the slice
+        // as a retry. Behaviour is unchanged; the failure is now reported.
+        const { error: sliceResultError } = await supabase.from("tasks").update({
           status: statuses.rowStatus,
           result: guardResult("slice_result", priorTaskResult as Record<string, unknown> | null, {
             ...priorTaskResult,
@@ -7050,12 +7089,14 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // Built after web re-evaluation, so fetched pages are claims too.
             research_fabric: capabilityRun ? (() => {
               try {
-                return projectResearchFabric(capabilityRun, {
+                const fabric = projectResearchFabric(capabilityRun, {
                   required: requiredEvidenceDimensions(
                     persistedMission ? criteriaExecutionPolicy(persistedMission) : null,
                     (persistedMission?.required_signals ?? []).map((sig) => String(sig.type))),
                   missionId: String(task.id),
                 });
+                // In full once, when the lineage ends (researchFabricSummary).
+                return autoDecision.continue ? researchFabricSummary(fabric) : fabric;
               } catch (e) {
                 console.error("[run-agent][research_fabric][failed]", String(e));
                 return null;
@@ -7071,7 +7112,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // which read its counts) and written here unchanged but for the
             // stage the decision settled. Lead V2 only — V1 never gets P5.
             workbench_mission_view: p5View
-              ? { ...p5View, stage: autoDecision.continue ? "retrieving" : "complete" }
+              ? sized("canonical_view", { ...p5View, stage: autoDecision.continue ? "retrieving" : "complete" }, { path: "slice_result" })
               : null,
             // Companies the Brain could not decide on. Held for evidence
             // resolution, explicitly NOT counted as rejections.
@@ -7089,6 +7130,12 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               : { error: routeResolution.ok ? null : routeResolution.errors },
           }),
         }).eq("id", task.id);
+        if (sliceResultError) {
+          console.error("[run-agent][slice-result] persist failed", {
+            task_id: task.id, code: sliceResultError.code ?? null,
+            category: safeCheckpointFailure(sliceResultError.message),
+          });
+        }
         markPhase("slice_result_write");
 
         // RELEASE THE DURABLE LEASE. `releaseClaim` above only strips the
@@ -7274,10 +7321,25 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             (r) => !r.released && "reason" in r && r.reason === "release_unavailable",
             { attempts: 3, delaysMs: [1_000, 3_000] },
           );
+          const stateSize = measurePayload("lineage_state", merged.state);
+          if (stateSize.over) console.warn("[run-agent][payload-size]", { task_id: task.id, path: "lineage_release", ...stateSize });
           markPhase("lineage_release", {
             released: leaseReleased.released, attempts: leaseReleaseAttempts,
-            state_bytes: (() => { try { return JSON.stringify(merged.state).length; } catch { return null; } })(),
+            state_bytes: stateSize.bytes,
           });
+          // ONE LINE PER SLICE: how big each copy of the mission state is.
+          // Sizes only, never contents. `slice` counts slices folded so far.
+          {
+            const resultSize = measurePayload("task_result", committedResult);
+            const checkpointSize = measurePayload("checkpoint", committedResult[CHECKPOINT_RESULT_KEY] ?? null);
+            const viewSize = measurePayload("canonical_view", committedResult.workbench_mission_view ?? null);
+            console.log("[lead-v2][state-size]", {
+              task: task.id, slice: progress.continuations_used,
+              checkpoint_bytes: checkpointSize.bytes, result_bytes: resultSize.bytes,
+              lineage_bytes: stateSize.bytes, canonical_view_bytes: viewSize.bytes,
+              over_budget: [resultSize, checkpointSize, stateSize, viewSize].filter((x) => x.over).map((x) => x.kind),
+            });
+          }
           if (!leaseReleased.released) {
             // A `version_conflict` here means something else advanced this
             // lineage while this generation ran — which is exactly what the

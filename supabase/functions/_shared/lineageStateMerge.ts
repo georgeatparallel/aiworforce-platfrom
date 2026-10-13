@@ -47,7 +47,7 @@
 // Pure. No I/O.
 
 import {
-  ENRICHMENT_RESUMABLE, IDENTITY_RESUMABLE, RESUME_STATE_VERSION,
+  compactCheckpointCompanies, ENRICHMENT_RESUMABLE, IDENTITY_RESUMABLE,
   readCheckpointCompanies, type CompanyResumeRecord,
 } from "./leadResumeState.ts";
 
@@ -329,7 +329,9 @@ export function mergeLineageState(
   return {
     state: {
       ...nextState,
-      [CHECKPOINT_KEY]: { version: RESUME_STATE_VERSION, companies: merge.records },
+      // Compacted like the task result's copy: `merge.records` were read back
+      // (expanded) by `readCheckpointCompanies`.
+      [CHECKPOINT_KEY]: compactCheckpointCompanies(merge.records),
     },
     merge,
   };

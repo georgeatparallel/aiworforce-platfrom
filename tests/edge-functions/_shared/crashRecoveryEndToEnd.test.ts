@@ -353,7 +353,8 @@ Deno.test("11. run-agent refuses to persist an incoherent checkpoint", async () 
   assert(end > i, "the checkpoint write must set the row status");
   const block = SRC.slice(i, end);
   assert(block.includes("if (!snap.coherent)"), "refuse rather than write a lie");
-  assert(block.includes("[CHECKPOINT_RESULT_KEY]: buildCheckpoint({"),
+  // `sized` measures the checkpoint and returns it unchanged (payloadSize.ts).
+  assert(block.includes('[CHECKPOINT_RESULT_KEY]: sized("checkpoint", buildCheckpoint({'),
     "the working set must be persisted, not just the state");
   assert(block.includes("companies: snap.resume_records"));
   assert(block.includes("capability_execution_state: snap.state"));
