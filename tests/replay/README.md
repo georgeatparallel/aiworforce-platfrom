@@ -82,9 +82,19 @@ reconstruction that drifted from production fails before any expectation is read
 | J | f6133796 (Citian) | a stale Stage-2 restore replaced website proof | `lib/citian.ts` (production shapes) |
 | K | a9a6791a | role precision and size filtering on every production title / band | same fixture |
 | L | d22d9ee6 (Query B) | a lineage that could not stop: re-plan after the last page every slice, barren never counted, 29 min until cancelled | `queryBd22d9ee6.loop` (production's four in-band companies and per-call employer growth; out-of-band synthetic), driven by `lib/lineage.ts` |
+| M | d22d9ee6 / eb0d520f (Query B) | a 2 MB task result: closed companies carried whole in every checkpoint, writes past the statement timeout | both Query B fixtures, resumed through the persisted checkpoint (`lib/slim.ts`), full vs slim, every slice |
 
 Each fixture lists its sources and sanitization in `provenance`; extraction
 queries live in `fixtures/queries/` (read-only).
+
+## Payload size
+
+`deno run -A tests/replay/bench/payloadBench.ts [fixture] [--breakdown]` replays a
+lineage twice — storing what the previous checkpoint writer stored, and what the
+current one stores — and prints, per slice, the checkpoint, engine state,
+research fabric, Workbench view, task result and lineage state in bytes, with
+the number of whole-result rewrites. Byte counts only: database latency is not
+measurable offline.
 
 ## Adding a fixture after a production bug
 

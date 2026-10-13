@@ -724,7 +724,7 @@ export function buildCheckpoint(i: {
     // company — that is how a run with a whole stage left could look complete.
     continuation_required: pending.length > 0 || i.nextPendingCapability !== null,
     checkpoint_reason: i.reason,
-    companies: [...i.companies],
+    companies: i.companies.map(slimResumeRecord),
     // WRITTEN, DECLARED AND READ BACK. All three, or it does not survive a
     // resume — the failure this file has already recorded twice, for
     // `identity` and for the hiring assessment.
@@ -860,7 +860,7 @@ function readWorkingSetSnapshot(raw: unknown): CompanyWorkingSetSnapshot | null 
     // recorded and this reader dropped, so a continuation reported one source
     // for a company two routes had found. Bounded on read like the job lists.
     found_by: boundedRecords(s.found_by, MAX_SNAPSHOT_FOUND_BY),
-    observations: boundedRecords(s.observations, MAX_SNAPSHOT_OBSERVATIONS),
+    observations: boundedRecords(s.observations, MAX_SNAPSHOT_OBSERVATIONS).map(expandObservation),
     identity_conflicts: boundedRecords(s.identity_conflicts, MAX_SNAPSHOT_FOUND_BY),
   };
 }
@@ -872,6 +872,138 @@ export const MAX_SNAPSHOT_OBSERVATIONS = 8;
 function boundedRecords(raw: unknown, cap: number): Record<string, unknown>[] {
   return (Array.isArray(raw) ? raw : [])
     .map(asRecord).filter((x): x is Record<string, unknown> => x !== null).slice(0, cap);
+}
+
+// ── CHECKPOINT SLIMMING ──────────────────────────────────────────────────────
+//
+// Query B canaries d22d9ee6 and eb0d520f (2026-10-12/13). Most discovered
+// employers were rejected at discovery on a disjoint size band, and every one
+// was still carried in every checkpoint with each job row it arrived on. Each
+// row restated the same identity, location, size, headcount, industry and
+// hiring evidence. The screened-out companies were most of the resume
+// checkpoint; the task result passed 2 MB; its writes hit the 120 s statement
+// timeout; and a lost slice-result write left the queue counting a real slice
+// as a retry.
+//
+// `slimResumeRecord` is what a checkpoint stores for one company. It is pure
+// and idempotent, and `readCheckpointCompanies` restores a record every reader
+// treats the same: the replays of both Query B lineages resume from the slim
+// checkpoint at every slice boundary and make the same decisions, with the
+// same Workbench rows, as from the full one
+// (tests/replay/historical/M_checkpointSlimming.test.ts).
+//
+// 1. Every company: at most MAX_SNAPSHOT_OBSERVATIONS observations — all the
+//    reader ever restored. The rest were written on every checkpoint and never
+//    read.
+// 2. A CLOSED company (`recordIsClosed`):
+//    * no job rows. The facts they established are in its observations, and
+//      nothing investigates the company again;
+//    * each fact once. A restatement of the same fact (dimension, status,
+//      method, value) by a later sighting is dropped. A different value, such
+//      as a disagreeing size band, is a different fact and is kept, so
+//      `discoverySizeRejectBlocker` still sees it;
+//    * every observation keeps its id, provider call, source record and entity
+//      hint, which identity matching and observation de-duplication read;
+//    * provenance once per observation: fields every evidence item of an
+//      observation shares (source, company key, mission, timestamps) are
+//      written once in `evidence_shared` and restored by `expandObservation`.
+
+/**
+ * A company closed by a decision before any paid stage touched it.
+ *
+ * `excluded_permanently` is the one investigation state only a decision sets
+ * (a mission constraint or triage). With no identity, enrichment, hiring
+ * assessment or Company Brain outcome, nothing was bought for it and nothing
+ * will be: the next slice only has to keep it closed and recognisable.
+ */
+export function recordIsClosed(r: CompanyResumeRecord): boolean {
+  const s = r.snapshot;
+  return !!s && s.investigation_state === "excluded_permanently" &&
+    !s.identity && !s.enriched && !s.hiring_assessment && !s.brain;
+}
+
+const SHARED_KEY = "evidence_shared";
+const ORDER_KEY = "evidence_order";
+
+/** One observation, with the fields all its evidence items share written once. Exactly invertible. */
+export function compactObservation(o: Record<string, unknown>): Record<string, unknown> {
+  if (o[SHARED_KEY] !== undefined || !Array.isArray(o.evidence) || o.evidence.length < 2) return o;
+  const rows = o.evidence.map(asRecord);
+  if (rows.some((x) => x === null)) return o;
+  const items = rows as Record<string, unknown>[];
+  // One field order every item follows (an item may lack an optional field,
+  // such as `authority`). The expansion rebuilds each item in this order, so
+  // the restored item is identical, key order included; when the items do not
+  // share an order the observation is stored as it is.
+  const order = [...new Set(items.flatMap((x) => Object.keys(x)))];
+  const follows = (x: Record<string, unknown>) =>
+    Object.keys(x).join("\u0000") === order.filter((k) => k in x).join("\u0000");
+  if (!items.every(follows)) return o;
+  const shared: Record<string, unknown> = {};
+  for (const k of order) {
+    if (!items.every((x) => k in x)) continue;
+    const v = JSON.stringify(items[0][k]);
+    if (items.every((x) => JSON.stringify(x[k]) === v)) shared[k] = items[0][k];
+  }
+  if (Object.keys(shared).length === 0) return o;
+  return {
+    ...o,
+    evidence: items.map((x) => Object.fromEntries(Object.entries(x).filter(([k]) => !(k in shared)))),
+    [SHARED_KEY]: shared,
+    [ORDER_KEY]: order,
+  };
+}
+
+/** The inverse of `compactObservation`. An observation that was never compacted passes through unchanged. */
+export function expandObservation(o: Record<string, unknown>): Record<string, unknown> {
+  const shared = asRecord(o[SHARED_KEY]);
+  const order = Array.isArray(o[ORDER_KEY])
+    ? (o[ORDER_KEY] as unknown[]).filter((k): k is string => typeof k === "string")
+    : null;
+  if (!shared || !order) return o;
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) if (k !== SHARED_KEY && k !== ORDER_KEY) rest[k] = v;
+  const items = Array.isArray(o.evidence)
+    ? o.evidence.map(asRecord).filter((x): x is Record<string, unknown> => x !== null)
+    : [];
+  return {
+    ...rest,
+    evidence: items.map((x) => {
+      const out: Record<string, unknown> = {};
+      for (const k of order) {
+        if (k in x) out[k] = x[k];
+        else if (k in shared) out[k] = shared[k];
+      }
+      for (const [k, v] of Object.entries(x)) if (!(k in out)) out[k] = v;
+      return out;
+    }),
+  };
+}
+
+/** A closed company's observations: each fact once, provenance once per observation. */
+function closedObservations(raw: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+  const stated = new Set<string>();
+  return raw.map(expandObservation).map((o) => compactObservation({
+    ...o,
+    evidence: (Array.isArray(o.evidence) ? o.evidence : []).filter((e) => {
+      const x = asRecord(e);
+      if (!x) return false;
+      const fact = `${x.dimension}|${x.status}|${x.method}|${JSON.stringify(x.value)}`;
+      if (stated.has(fact)) return false;
+      stated.add(fact);
+      return true;
+    }),
+  }));
+}
+
+/** What a checkpoint stores for one company. Pure and idempotent. */
+export function slimResumeRecord(r: CompanyResumeRecord): CompanyResumeRecord {
+  const s = r.snapshot;
+  if (!s) return r;
+  const observations = (Array.isArray(s.observations) ? s.observations : [])
+    .slice(0, MAX_SNAPSHOT_OBSERVATIONS);
+  if (!recordIsClosed(r)) return { ...r, snapshot: { ...s, observations } };
+  return { ...r, snapshot: { ...s, yc_open_jobs: [], observations: closedObservations(observations) } };
 }
 
 /**

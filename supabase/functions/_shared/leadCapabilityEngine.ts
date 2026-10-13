@@ -11357,6 +11357,22 @@ export interface ResearchFabricProjection {
 }
 
 /**
+ * The research fabric a CONTINUING slice writes: its counts, waves and route
+ * controls, without the per-company projection.
+ *
+ * `research_fabric` is an audit projection. Nothing reads it back: not the
+ * engine, not run-agent, not the Workbench. The per-company part (up to 60
+ * companies, about 3 KB each) was rebuilt by every slice and then carried by
+ * every later write of the task result. It is written in full once, by the
+ * slice that ends the lineage.
+ */
+export function researchFabricSummary(
+  f: ResearchFabricProjection,
+): ResearchFabricProjection & { companies_deferred: number } {
+  return { ...f, companies: [], companies_deferred: f.companies.length };
+}
+
+/**
  * The business model, when the company's own words established it.
  *
  * The registry holds the description, the YC record and any fetched page as

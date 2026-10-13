@@ -321,3 +321,57 @@ Deno.test("[invariant] 25 the qualified-company count is independent of contact 
   assertEquals([s.qualified.value, s.qualifiedCompanies.value, s.shortfall], [0, 1, 2]);
   assertEquals(workbenchFunnelCounts([], Math.max(s.qualified.value, s.qualifiedCompanies.value)).qualified, 1);
 });
+
+// ══════════ 26–28: CHECKPOINT SIZE (Query B d22d9ee6 / eb0d520f, 2026-10-12/13) ═════
+
+import { persistedCarrier, persistedResult, sliceSummary, type SliceSummary } from "../lib/slim.ts";
+import { missionOf as missionOfFixture } from "../lib/engine.ts";
+import { expandObservation, readCheckpointCompanies, recordIsClosed } from "../../../supabase/functions/_shared/leadResumeState.ts";
+import { researchFabricSummary } from "../../../supabase/functions/_shared/leadCapabilityEngine.ts";
+
+async function d22Lineage(full: boolean) {
+  const fx = D22();
+  const sums: SliceSummary[] = [];
+  const r = await replayD22(fx, {
+    maxSlices: 10, carry: persistedCarrier({ full }),
+    onSlice: (n, s) => sums.push(sliceSummary(n, s, missionOfFixture(fx), fx.provenance.task_id)),
+  });
+  return { sums, slices: r.slices, terminal: r.terminal };
+}
+
+Deno.test("[invariant] 26 resuming from the slim checkpoint decides exactly as from the full one, at every slice boundary", async () => {
+  const full = await d22Lineage(true);
+  const slim = await d22Lineage(false);
+  assertEquals(slim.terminal, full.terminal);
+  assertEquals(slim.slices, full.slices);
+  assertEquals(slim.sums, full.sums);
+});
+
+Deno.test("[invariant] 27 a company closed at discovery is stored with no job rows and each fact once; an open company is stored whole", async () => {
+  const fx = D22();
+  let checked = false;
+  await replayD22(fx, {
+    maxSlices: 10,
+    onSlice: (_n, s) => {
+      const stored = readCheckpointCompanies(JSON.parse(persistedResult(s)));
+      for (const r of stored) {
+        const obs = (r.snapshot?.observations ?? []).map(expandObservation);
+        const facts = obs.flatMap((o) => (o.evidence as Array<Record<string, unknown>>).map((e) => `${e.dimension}|${e.status}|${e.method}|${JSON.stringify(e.value)}`));
+        if (recordIsClosed(r)) {
+          assertEquals(r.snapshot?.yc_open_jobs, [], r.company_key);
+          assertEquals(facts.length, new Set(facts).size, r.company_key);
+          checked = true;
+        } else {
+          const c = s.companies.find((x) => x.key === r.company_key)!;
+          assertEquals(obs.length, Math.min(c.observations?.length ?? 0, 8), r.company_key);
+        }
+      }
+    },
+  });
+  assert(checked);
+});
+
+Deno.test("[invariant] 28 a continuing slice never rewrites the per-company audit projection", () => {
+  const f = researchFabricSummary({ version: "v", union: { unique_companies: 68, multi_source_companies: 0, observations: 137, merged_sightings: 0 }, companies: Array.from({ length: 60 }, () => ({}) as never), waves: [], route_controls: [] } as never);
+  assertEquals([f.companies.length, f.companies_deferred, f.union.unique_companies], [0, 60, 68]);
+});

@@ -110,7 +110,16 @@ function recordedReplanner(queries: Array<Record<string, unknown>>) {
   };
 }
 
-export async function replayLineage(fx: LineageFixture, o: { maxSlices: number; taskId?: string }): Promise<LineageRun> {
+export async function replayLineage(fx: LineageFixture, o: {
+  maxSlices: number;
+  taskId?: string;
+  /** Observes each slice's engine output (the state and records run-agent checkpoints). */
+  onSlice?: (slice: number, s: EngineSlice, outcome: LineageSlice) => void;
+  /** Rewrites what the NEXT slice resumes from, the way a persisted checkpoint would. */
+  carry?: (s: EngineSlice) => { state: Record<string, unknown>; records: unknown[] };
+  /** Extra engine dependencies (e.g. `onProgress` / `onCheckpoint` observers). */
+  deps?: Record<string, unknown>;
+}): Promise<LineageRun> {
   const mission = missionOf(fx);
   const taskId = o.taskId ?? fx.provenance.task_id;
   const requested = effectiveRequestedCount(mission);
@@ -118,6 +127,7 @@ export async function replayLineage(fx: LineageFixture, o: { maxSlices: number; 
   const deps = {
     planDiscovery: recordedReplanner(m.replan_queries),
     evaluateBatch: recordedGrounder(m.proven_business_models),
+    ...(o.deps ?? {}),
   };
   let progress: LineageProgress = readLineageProgress({});
   let lastDecision: string | null = null;
@@ -136,7 +146,7 @@ export async function replayLineage(fx: LineageFixture, o: { maxSlices: number; 
     const callsBefore = 0; // each slice has its own fixture provider
     const s: EngineSlice = await replayEngineSlice(fx, {
       deps,
-      ...(prev ? { resume: { state: prev.state, records: prev.resume_records } } : {}),
+      ...(prev ? { resume: o.carry ? o.carry(prev) : { state: prev.state, records: prev.resume_records } } : {}),
       ...(replenish ? { replenish, ...(dss?.page_fingerprints ? { replenishExtra: { page_fingerprints: dss.page_fingerprints } } : {}) } : {}),
     });
     // PHASE C, RECORDED: the website re-read answered these companies' route.
@@ -181,6 +191,7 @@ export async function replayLineage(fx: LineageFixture, o: { maxSlices: number; 
       jobSearches: s.provider.calls.slice(callsBefore).filter((c) => c.actor === "apify_linkedin_job_search" && !c.input.company)
         .map((c) => ({ page: c.input.page ?? 1, titles: String((c.input.jobTitles as string[])?.[0] ?? "").slice(0, 60), adopted: !!c.adopted })),
     });
+    o.onSlice?.(i + 1, s, slices[slices.length - 1]);
     prev = s;
     if (!d.continue) {
       terminal = settleV2Outcome({

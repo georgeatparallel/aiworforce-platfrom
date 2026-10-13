@@ -185,7 +185,8 @@ Deno.test("INV run-agent: the view is built once, on V2 only, BEFORE the decisio
     "continuation reads the canonical evidence-gap router");
   assert(src.includes("effectiveTerminal, cf.writeBoundary.invariantViolation, v2Outcome ? v2Outcome.quota : {"),
     "the task status reads the V2 quota");
-  assert(/workbench_mission_view: p5View\s*\n\s*\? \{ \.\.\.p5View,/.test(src), "the SAME object is written");
+  // `sized` measures the view and returns it unchanged (payloadSize.ts).
+  assert(/workbench_mission_view: p5View\s*\n\s*\? sized\("canonical_view", \{ \.\.\.p5View,/.test(src), "the SAME object is written");
   assertEquals(src.match(/buildWorkbenchMissionView\(/g)?.length, 1, "exactly one construction site");
   assertEquals(src.match(/reasonForCandidates\(/g)?.length, 1, "the reasoner runs only inside the V2 view");
 });
