@@ -12,7 +12,10 @@ npm run test:lead-v2-regression    # the Lab + the targeted Lead V2 edge/UI test
 
 `matrix/` is the query regression matrix (20 request categories and wording
 variants, hand-written expectations); `invariants/leadV2Invariants.test.ts`
-asserts the twenty-five properties every mission must keep (19–25: termination, progress, leases, deadlines, cancellation, qualified-company counts).
+asserts the twenty-eight properties every mission must keep (19–25: termination, progress, leases, deadlines, cancellation, qualified-company counts; 26–28: checkpoint slimming), and
+`invariants/verificationStop.test.ts` adds 29–32: the verification phase stops with its slice (deadline,
+cancellation, lost lease), buys nothing after the stop, carries what is in flight by run id, and is
+not counted barren for it.
 
 ```
 Golden missions:                 PASS  (6/6)
