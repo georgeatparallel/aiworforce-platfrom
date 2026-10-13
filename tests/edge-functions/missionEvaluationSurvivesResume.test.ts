@@ -28,7 +28,7 @@
 
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  buildCheckpoint, readCheckpointCompanies, RESUME_STATE_VERSION,
+  buildCheckpoint, CHECKPOINT_COMPACT_VERSION, readCheckpointCompanies,
 } from "../../supabase/functions/_shared/leadResumeState.ts";
 import {
   icpVerdictFrom, qualificationDecision,
@@ -64,7 +64,8 @@ const roundTrip = (rec: Record<string, unknown>) => {
     lastCompletedCapability: null, nextPendingCapability: null,
     companies: [rec as never], reason: "execution_deadline_checkpoint",
   });
-  assertEquals(cp.version, RESUME_STATE_VERSION);
+  // The envelope of a compacted checkpoint (snapshot dictionary); the records inside are unchanged.
+  assertEquals(cp.version, CHECKPOINT_COMPACT_VERSION);
   return readCheckpointCompanies({ lead_resume_checkpoint: cp })[0];
 };
 

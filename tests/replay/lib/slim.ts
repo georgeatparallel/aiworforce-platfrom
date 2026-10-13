@@ -36,7 +36,7 @@ export function persistedResult(s: EngineSlice, o: { full?: boolean } = {}): str
     capability_execution_state: s.state,
     // The previous writer stored the engine's records as they were: every
     // observation and up to MAX_SNAPSHOT_JOBS job rows, for every company.
-    [CHECKPOINT_RESULT_KEY]: o.full ? previousWriter(checkpoint, s.resume_records) : checkpoint,
+    [CHECKPOINT_RESULT_KEY]: o.full ? previousWriter(checkpoint as unknown as Rec, s.resume_records) : checkpoint,
   });
 }
 
