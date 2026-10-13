@@ -73,7 +73,7 @@ Deno.test("[historical] M d22d9ee6 bench: continuing slices write a third less, 
       assert(a.task_result <= b.task_result * 0.75, `slice ${b.slice}: task result ${a.task_result} vs ${b.task_result}`);
     } else {
       // In full, once. Built from restored companies, so a closed company's
-      // fabric entry lists each fact once (nothing reads the fabric back).
+      // fabric entry lists one statement per dimension (nothing reads the fabric back).
       assert(a.research_fabric > b.research_fabric * 0.8, `slice ${b.slice}: the full fabric (${a.research_fabric} vs ${b.research_fabric})`);
     }
   }
@@ -103,4 +103,21 @@ Deno.test("[historical] M a9a6791a: two resumes from the slim checkpoint match t
   assert(full[0].companies.some((c) => c.closed), "the mission has companies closed at discovery");
   assert(full[0].companies.some((c) => !c.closed), "and companies still under investigation");
   for (let i = 0; i < full.length; i++) assertEquals(slim[i], full[i], `slice ${i + 1}`);
+});
+
+/**
+ * THE SIZE GUARD. The d22d9ee6 lineage at its last slice (68 employers, 64
+ * closed at discovery) measured, after this batch: checkpoint 394 KB, lineage
+ * state 504 KB, bytes rewritten per slice ~8 whole-result writes. Before: 1,086
+ * KB, 1,194 KB, 12 writes. A change that grows them past these limits — about
+ * 15% headroom — fails here, offline, instead of as a statement timeout.
+ */
+Deno.test("[historical] M size guard: the canary-sized lineage stays under its measured checkpoint, lineage and rewrite budget", async () => {
+  const after = await benchLineage("queryBd22d9ee6.loop", "after");
+  const last = after.slices.at(-1)!;
+  assertEquals(last.companies, 68);
+  assert(last.checkpoint <= 455_000, `checkpoint ${last.checkpoint} B`);
+  assert(last.lineage_state <= 580_000, `lineage state ${last.lineage_state} B`);
+  for (const s of after.slices) assert(s.rewrites <= s.stage_boundaries + 4, `slice ${s.slice}: ${s.rewrites} whole-result rewrites`);
+  for (const s of after.slices.filter((x) => x.continuing)) assert(s.task_result <= 900_000, `slice ${s.slice}: task result ${s.task_result} B`);
 });

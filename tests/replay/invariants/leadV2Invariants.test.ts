@@ -347,7 +347,7 @@ Deno.test("[invariant] 26 resuming from the slim checkpoint decides exactly as f
   assertEquals(slim.sums, full.sums);
 });
 
-Deno.test("[invariant] 27 a company closed at discovery is stored with no job rows and each fact once; an open company is stored whole", async () => {
+Deno.test("[invariant] 27 a company closed at discovery is stored with no job rows and one statement per dimension; an open company is stored whole", async () => {
   const fx = D22();
   let checked = false;
   await replayD22(fx, {
@@ -356,10 +356,11 @@ Deno.test("[invariant] 27 a company closed at discovery is stored with no job ro
       const stored = readCheckpointCompanies(JSON.parse(persistedResult(s)));
       for (const r of stored) {
         const obs = (r.snapshot?.observations ?? []).map(expandObservation);
-        const facts = obs.flatMap((o) => (o.evidence as Array<Record<string, unknown>>).map((e) => `${e.dimension}|${e.status}|${e.method}|${JSON.stringify(e.value)}`));
+        const dims = obs.flatMap((o) => (o.evidence as Array<Record<string, unknown>>).map((e) => String(e.dimension)))
+          .filter((d) => d !== "company_size_band");
         if (recordIsClosed(r)) {
           assertEquals(r.snapshot?.yc_open_jobs, [], r.company_key);
-          assertEquals(facts.length, new Set(facts).size, r.company_key);
+          assertEquals(dims.length, new Set(dims).size, r.company_key);
           checked = true;
         } else {
           const c = s.companies.find((x) => x.key === r.company_key)!;

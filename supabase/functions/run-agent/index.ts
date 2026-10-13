@@ -7327,6 +7327,19 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             released: leaseReleased.released, attempts: leaseReleaseAttempts,
             state_bytes: stateSize.bytes,
           });
+          // ONE LINE PER SLICE: how big each copy of the mission state is.
+          // Sizes only, never contents. `slice` counts slices folded so far.
+          {
+            const resultSize = measurePayload("task_result", committedResult);
+            const checkpointSize = measurePayload("checkpoint", committedResult[CHECKPOINT_RESULT_KEY] ?? null);
+            const viewSize = measurePayload("canonical_view", committedResult.workbench_mission_view ?? null);
+            console.log("[lead-v2][state-size]", {
+              task: task.id, slice: progress.continuations_used,
+              checkpoint_bytes: checkpointSize.bytes, result_bytes: resultSize.bytes,
+              lineage_bytes: stateSize.bytes, canonical_view_bytes: viewSize.bytes,
+              over_budget: [resultSize, checkpointSize, stateSize, viewSize].filter((x) => x.over).map((x) => x.kind),
+            });
+          }
           if (!leaseReleased.released) {
             // A `version_conflict` here means something else advanced this
             // lineage while this generation ran — which is exactly what the

@@ -645,7 +645,7 @@ export function shouldSkipProviderCall(
 // ---------------------------------------------------------- the checkpoint ----
 
 export interface Checkpoint {
-  version: typeof RESUME_STATE_VERSION;
+  version: typeof RESUME_STATE_VERSION | typeof CHECKPOINT_COMPACT_VERSION;
   deadline_at: string;
   time_remaining_at_checkpoint_ms: number;
   last_completed_capability: string | null;
@@ -655,6 +655,8 @@ export interface Checkpoint {
   continuation_required: boolean;
   checkpoint_reason: "execution_deadline_checkpoint" | "all_work_complete";
   companies: CompanyResumeRecord[];
+  /** Repeated snapshot values, referenced from `companies` (CHECKPOINT_COMPACT_VERSION). */
+  snapshot_dictionary?: unknown[];
   /**
    * WHAT DISCOVERY HAD ALREADY ASKED, SO THE NEXT SLICE DOES NOT ASK IT AGAIN.
    *
@@ -712,8 +714,9 @@ export function buildCheckpoint(i: {
 }): Checkpoint {
   const pending = i.companies.filter((c) => !companyIsComplete(c));
   const complete = i.companies.filter(companyIsComplete);
+  const stored = compactCheckpointCompanies(i.companies);
   return {
-    version: RESUME_STATE_VERSION,
+    version: stored.version,
     deadline_at: new Date(i.deadlineAt).toISOString(),
     time_remaining_at_checkpoint_ms: Math.max(0, i.remainingMs),
     last_completed_capability: i.lastCompletedCapability,
@@ -724,7 +727,8 @@ export function buildCheckpoint(i: {
     // company — that is how a run with a whole stage left could look complete.
     continuation_required: pending.length > 0 || i.nextPendingCapability !== null,
     checkpoint_reason: i.reason,
-    companies: i.companies.map(slimResumeRecord),
+    companies: stored.companies,
+    snapshot_dictionary: stored.snapshot_dictionary,
     // WRITTEN, DECLARED AND READ BACK. All three, or it does not survive a
     // resume — the failure this file has already recorded twice, for
     // `identity` and for the hiring assessment.
@@ -898,10 +902,12 @@ function boundedRecords(raw: unknown, cap: number): Record<string, unknown>[] {
 // 2. A CLOSED company (`recordIsClosed`):
 //    * no job rows. The facts they established are in its observations, and
 //      nothing investigates the company again;
-//    * each fact once. A restatement of the same fact (dimension, status,
-//      method, value) by a later sighting is dropped. A different value, such
-//      as a disagreeing size band, is a different fact and is kept, so
-//      `discoverySizeRejectBlocker` still sees it;
+//    * one statement per dimension (identity, location, size, headcount,
+//      industry, job, hiring), the first it was seen with. Later sightings
+//      restate the same dimensions; the Workbench row is built from one of
+//      each. Every DISTINCT size band is kept, so a later sighting declaring a
+//      different band still makes `discoverySizeRejectBlocker` refuse the
+//      discovery-time rejection;
 //    * every observation keeps its id, provider call, source record and entity
 //      hint, which identity matching and observation de-duplication read;
 //    * provenance once per observation: fields every evidence item of an
@@ -980,7 +986,7 @@ export function expandObservation(o: Record<string, unknown>): Record<string, un
   };
 }
 
-/** A closed company's observations: each fact once, provenance once per observation. */
+/** A closed company's observations: one statement per dimension (every distinct size band), provenance once per observation. */
 function closedObservations(raw: readonly Record<string, unknown>[]): Record<string, unknown>[] {
   const stated = new Set<string>();
   return raw.map(expandObservation).map((o) => compactObservation({
@@ -988,7 +994,10 @@ function closedObservations(raw: readonly Record<string, unknown>[]): Record<str
     evidence: (Array.isArray(o.evidence) ? o.evidence : []).filter((e) => {
       const x = asRecord(e);
       if (!x) return false;
-      const fact = `${x.dimension}|${x.status}|${x.method}|${JSON.stringify(x.value)}`;
+      // One statement per dimension; every distinct size band.
+      const fact = x.dimension === "company_size_band"
+        ? `${x.dimension}|${x.status}|${x.method}|${JSON.stringify(x.value)}`
+        : `${x.dimension}|${x.status}|${x.method}`;
       if (stated.has(fact)) return false;
       stated.add(fact);
       return true;
@@ -1005,6 +1014,112 @@ export function slimResumeRecord(r: CompanyResumeRecord): CompanyResumeRecord {
   if (!recordIsClosed(r)) return { ...r, snapshot: { ...s, observations } };
   return { ...r, snapshot: { ...s, yc_open_jobs: [], observations: closedObservations(observations) } };
 }
+
+// ── THE CHECKPOINT DICTIONARY ────────────────────────────────────────────────
+//
+// After slimming, most of what remains in the company snapshots is repeated:
+// the same evidence-authority object on every company seen by the same actor,
+// the same identity hint on each of a company's sightings, the same reason
+// sentence on every company rejected for the same band. A value inside a
+// snapshot that occurs twice or more (a string of 24+ characters, or an object
+// or array of 48+ bytes) is stored once in `snapshot_dictionary` and referenced
+// as `{ "$ref": n }`.
+//
+// Lossless and deterministic: entries are numbered in first-seen order, and
+// `expandSnapshotRefs` rebuilds every value as a fresh copy (a shared instance
+// would let the engine's in-place edits of one company leak into another).
+// Only snapshots are touched: a record's top-level stage labels stay readable
+// by `runOutcome` without expansion.
+//
+// A compacted checkpoint carries CHECKPOINT_COMPACT_VERSION. The provider
+// operation key embeds RESUME_STATE_VERSION, so that value cannot change; a
+// separate envelope version keeps idempotency keys stable while a reader that
+// predates compaction (a rollback) reads "no restorable companies" and refuses
+// to resume, rather than restoring references as data.
+
+export const CHECKPOINT_COMPACT_VERSION = "lead-resume-state-v1+dictionary-1" as const;
+
+const REF = "$ref";
+const MIN_STRING = 24;
+const MIN_STRUCT = 48;
+
+function isRef(v: unknown): v is { [REF]: number } {
+  return !!v && typeof v === "object" && !Array.isArray(v) &&
+    Object.keys(v).length === 1 && typeof (v as Record<string, unknown>)[REF] === "number";
+}
+
+function usesRefKey(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  if (!Array.isArray(v) && REF in (v as Record<string, unknown>)) return true;
+  return (Array.isArray(v) ? v : Object.values(v)).some(usesRefKey);
+}
+
+const internable = (v: unknown, json: string) =>
+  typeof v === "string" ? v.length >= MIN_STRING : !!v && typeof v === "object" && json.length >= MIN_STRUCT;
+
+/** Snapshots with every repeated value replaced by a dictionary reference. */
+export function internSnapshots(
+  records: readonly CompanyResumeRecord[],
+): { companies: CompanyResumeRecord[]; dictionary: unknown[] } {
+  // A literal `$ref` key in the data would be ambiguous: store as it is.
+  if (records.some((r) => usesRefKey(r.snapshot))) return { companies: [...records], dictionary: [] };
+  const counts = new Map<string, number>();
+  const count = (v: unknown) => {
+    if (v === null || (typeof v !== "object" && typeof v !== "string")) return;
+    const json = JSON.stringify(v);
+    if (internable(v, json)) counts.set(json, (counts.get(json) ?? 0) + 1);
+    if (v && typeof v === "object") for (const x of Array.isArray(v) ? v : Object.values(v)) count(x);
+  };
+  for (const r of records) if (r.snapshot) for (const x of Object.values(r.snapshot)) count(x);
+  const dictionary: unknown[] = [];
+  const index = new Map<string, number>();
+  const ref = (v: unknown): unknown => {
+    if (v === null || (typeof v !== "object" && typeof v !== "string")) return v;
+    const json = JSON.stringify(v);
+    if (internable(v, json) && (counts.get(json) ?? 0) >= 2) {
+      let n = index.get(json);
+      if (n === undefined) {
+        n = dictionary.length;
+        index.set(json, n);
+        dictionary.push(null);
+        dictionary[n] = typeof v === "object" ? inner(v as object) : v;
+      }
+      return { [REF]: n };
+    }
+    return typeof v === "object" ? inner(v as object) : v;
+  };
+  const inner = (v: object): unknown => Array.isArray(v)
+    ? v.map(ref)
+    : Object.fromEntries(Object.entries(v).map(([k, x]) => [k, ref(x)]));
+  const companies = records.map((r) => r.snapshot
+    ? { ...r, snapshot: inner(r.snapshot) as CompanyWorkingSetSnapshot }
+    : r);
+  return { companies, dictionary };
+}
+
+/** The inverse of `internSnapshots` for one value: every reference rebuilt as a fresh copy. */
+export function expandSnapshotRefs(v: unknown, dictionary: readonly unknown[], depth = 0): unknown {
+  if (depth > 64) return null;
+  if (isRef(v)) {
+    const n = v[REF];
+    return n >= 0 && n < dictionary.length ? expandSnapshotRefs(dictionary[n], dictionary, depth + 1) : null;
+  }
+  if (!v || typeof v !== "object") return v;
+  return Array.isArray(v)
+    ? v.map((x) => expandSnapshotRefs(x, dictionary, depth + 1))
+    : Object.fromEntries(Object.entries(v).map(([k, x]) => [k, expandSnapshotRefs(x, dictionary, depth + 1)]));
+}
+
+/** What a checkpoint stores for its companies: each slimmed, then the dictionary. */
+export function compactCheckpointCompanies(
+  records: readonly CompanyResumeRecord[],
+): { version: typeof CHECKPOINT_COMPACT_VERSION; companies: CompanyResumeRecord[]; snapshot_dictionary: unknown[] } {
+  const { companies, dictionary } = internSnapshots(records.map(slimResumeRecord));
+  return { version: CHECKPOINT_COMPACT_VERSION, companies, snapshot_dictionary: dictionary };
+}
+
+const readableCheckpoint = (v: unknown) =>
+  v === RESUME_STATE_VERSION || v === CHECKPOINT_COMPACT_VERSION;
 
 /**
  * Per-company records from a persisted task result.
@@ -1053,7 +1168,7 @@ export function readCheckpointDiscoveryState(
 ): Checkpoint["discovery_source_state"] {
   const result = asRecord(taskResult);
   const checkpoint = asRecord(result?.[CHECKPOINT_RESULT_KEY]);
-  if (!checkpoint || checkpoint.version !== RESUME_STATE_VERSION) return null;
+  if (!checkpoint || !readableCheckpoint(checkpoint.version)) return null;
   const d = asRecord(checkpoint.discovery_source_state);
   if (!d) return null;
   const pages: Record<string, number> = {};
@@ -1088,8 +1203,9 @@ export function readCheckpointDiscoveryState(
 export function readCheckpointCompanies(taskResult: unknown): CompanyResumeRecord[] {
   const result = asRecord(taskResult);
   const checkpoint = asRecord(result?.[CHECKPOINT_RESULT_KEY]);
-  if (!checkpoint || checkpoint.version !== RESUME_STATE_VERSION) return [];
+  if (!checkpoint || !readableCheckpoint(checkpoint.version)) return [];
   if (!Array.isArray(checkpoint.companies)) return [];
+  const dictionary = Array.isArray(checkpoint.snapshot_dictionary) ? checkpoint.snapshot_dictionary : [];
   const out: CompanyResumeRecord[] = [];
   for (const raw of checkpoint.companies) {
     const c = asRecord(raw);
@@ -1125,7 +1241,7 @@ export function readCheckpointCompanies(taskResult: unknown): CompanyResumeRecor
       // WITHOUT THIS LINE THE LEDGER IS UNREACHABLE. See
       // `readWorkingSetSnapshot` — it was written on every checkpoint and read
       // on none, which is what made every continuation restore zero companies.
-      snapshot: readWorkingSetSnapshot(c.snapshot),
+      snapshot: readWorkingSetSnapshot(dictionary.length ? expandSnapshotRefs(c.snapshot, dictionary) : c.snapshot),
     });
   }
   return out;

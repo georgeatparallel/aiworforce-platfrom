@@ -6,21 +6,22 @@
 // queue count a real slice as a retry. Nothing reported the size until the
 // writes failed.
 //
-// The budgets come from measurement. Offline (tests/replay/bench/payloadBench.ts),
-// the Query B d22d9ee6 lineage replayed to 68 employers, 64 closed at
-// discovery, after slimming:
+// The budgets come from measurement, of the failed canary's own row
+// (task 2fc157fb, eb0d520f: 83 companies, 74 closed at discovery) re-stored by
+// this code, and of the d22d9ee6 replay (tests/replay/bench/payloadBench.ts):
 //
-//   checkpoint                                 645 KB  (1,061 KB before)
-//   lineage state                              752 KB  (1,166 KB before)
-//   Workbench view                             294 KB  (unchanged)
-//   task result, engine-derived parts       1,054 KB continuing, 1,237 KB final
-//                                                     (1,654 KB before)
+//                     production row          re-stored     replay (68 companies)
+//   checkpoint        1.86 MB                 661 KB        394 KB  (1,086 before)
+//   lineage state     1.44 MB                 859 KB        504 KB  (1,194 before)
+//   task result       2.64 MB                ~1.27 MB*      ~0.8 MB continuing
+//   Workbench view    212 KB                  unchanged     301 KB
+//   (* the checkpoint saving plus the research-fabric summary; not re-measured
+//      as a whole row)
 //
-// In production the same mission's writes began timing out at about 2 MB
-// (canary eb0d520f, 2026-10-13). Each budget sits a little above the measured
-// size, and the task-result budget at half the size that failed, so a
-// canary-sized mission is reported as it approaches trouble, not after.
-// They are warnings: nothing is refused, trimmed or retried because of them.
+// Writes of this row began timing out at about 2 MB. Each budget is about
+// 1.3x the re-stored production size, so a canary-sized mission stays under it
+// and growth past what was measured is reported before writes fail. They are
+// warnings: nothing is refused, trimmed or retried because of them.
 //
 // PURE.
 
@@ -29,9 +30,9 @@ export const PAYLOAD_SIZE_VERSION = "payload-size-v1" as const;
 export type PayloadKind = "task_result" | "checkpoint" | "lineage_state" | "canonical_view";
 
 export const PAYLOAD_WARN_BYTES: Readonly<Record<PayloadKind, number>> = {
-  task_result: 1_000_000,
-  checkpoint: 750_000,
-  lineage_state: 900_000,
+  task_result: 1_600_000,
+  checkpoint: 900_000,
+  lineage_state: 1_200_000,
   canonical_view: 400_000,
 };
 

@@ -2,8 +2,10 @@
 //
 // Query B canaries d22d9ee6 and eb0d520f: companies closed at discovery were
 // most of a 2 MB task result. `slimResumeRecord` stores a closed company with
-// each fact once and no job rows, and every company with no more observations
-// than the reader restores. These tests pin the record-level rules; the
+// one statement per dimension (every distinct size band) and no job rows, and
+// every company with no more observations than the reader restores;
+// `compactCheckpointCompanies` then stores each repeated snapshot value once.
+// These tests pin the record- and checkpoint-level rules; the
 // lineage-level proof that decisions do not change is
 // tests/replay/historical/M_checkpointSlimming.test.ts.
 //
@@ -11,9 +13,11 @@
 
 import { assert, assertEquals, assertFalse } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  buildCheckpoint, CHECKPOINT_RESULT_KEY, compactObservation, type CompanyResumeRecord, expandObservation,
-  MAX_SNAPSHOT_OBSERVATIONS, newCompanyRecord, readCheckpointCompanies, recordIsClosed, slimResumeRecord,
+  buildCheckpoint, CHECKPOINT_COMPACT_VERSION, CHECKPOINT_RESULT_KEY, compactCheckpointCompanies, compactObservation,
+  type CompanyResumeRecord, expandObservation, expandSnapshotRefs, internSnapshots, MAX_SNAPSHOT_OBSERVATIONS,
+  newCompanyRecord, readCheckpointCompanies, recordIsClosed, RESUME_STATE_VERSION, slimResumeRecord,
 } from "../../../supabase/functions/_shared/leadResumeState.ts";
+import { readFactsFromResult } from "../../../supabase/functions/_shared/runOutcome.ts";
 import { mergeLineageState } from "../../../supabase/functions/_shared/lineageStateMerge.ts";
 import { discoverySizeRejectBlocker } from "../../../supabase/functions/_shared/leadGenericPrequalification.ts";
 
@@ -71,8 +75,6 @@ const readBack = (records: CompanyResumeRecord[]) =>
       companies: records, reason: "execution_deadline_checkpoint",
     }),
   })));
-const facts = (obs: Record<string, unknown>[]) =>
-  obs.flatMap((o) => (o.evidence as Array<Record<string, unknown>>).map((e) => `${e.dimension}|${e.status}|${e.method}|${JSON.stringify(e.value)}`));
 
 Deno.test("only a company closed before any paid stage is slimmed as closed", () => {
   assert(recordIsClosed(closedRecord([])));
@@ -81,13 +83,17 @@ Deno.test("only a company closed before any paid stage is slimmed as closed", ()
   assertFalse(recordIsClosed({ ...pending, snapshot: { ...pending.snapshot!, investigation_state: "pending_investigation" } }));
 });
 
-Deno.test("a closed company keeps every fact it was seen with, once, and no job rows", () => {
-  const obs = [sighting(1, "Account Executive"), sighting(2, "SDR"), sighting(3, "BDR")];
+Deno.test("a closed company keeps one statement per dimension, every distinct size band, and no job rows", () => {
+  const obs = [sighting(1, "Account Executive"), sighting(2, "SDR", band(11, 50)), sighting(3, "BDR")];
   const slim = slimResumeRecord(closedRecord(obs));
   assertEquals(slim.snapshot!.yc_open_jobs, []);
-  const kept = facts(slim.snapshot!.observations!.map(expandObservation));
-  assertEquals(new Set(kept), new Set(facts(obs)), "every distinct fact survives");
-  assertEquals(kept.length, new Set(kept).size, "each fact once");
+  const kept = slim.snapshot!.observations!.map(expandObservation)
+    .flatMap((o) => (o.evidence as Array<Record<string, unknown>>));
+  const dims = kept.map((e) => String(e.dimension));
+  assertEquals(new Set(dims), new Set(["identity", "geography", "company_size_band", "industry", "job", "hiring"]), "every dimension survives");
+  assertEquals(dims.filter((d) => d !== "company_size_band").length, new Set(dims.filter((d) => d !== "company_size_band")).size, "once each");
+  assertEquals(kept.filter((e) => e.dimension === "company_size_band").map((e) => e.value), [band(1001, 5000), band(11, 50)], "both bands");
+  assertEquals(kept.find((e) => e.dimension === "job")!.value, { title: "Account Executive" }, "the first statement is the one kept");
   assertEquals(slim.snapshot!.observations!.map((o) => o.observation_id), ["obs_1", "obs_2", "obs_3"], "every observation keeps its identity");
   assert(JSON.stringify(slim).length < JSON.stringify(closedRecord(obs)).length * 0.6);
 });
@@ -127,7 +133,7 @@ Deno.test("slimming is idempotent, and a slim checkpoint read back and slimmed a
 
 Deno.test("a checkpoint the previous writer stored (no compaction) still reads exactly as before", () => {
   const obs = [sighting(1, "AE"), sighting(2, "SDR")];
-  const old = { [CHECKPOINT_RESULT_KEY]: { version: buildCheckpoint({ now: 0, deadlineAt: 0, remainingMs: 0, lastCompletedCapability: null, nextPendingCapability: null, companies: [], reason: "execution_deadline_checkpoint" }).version, companies: [closedRecord(obs)] } };
+  const old = { [CHECKPOINT_RESULT_KEY]: { version: RESUME_STATE_VERSION, companies: [closedRecord(obs)] } };
   assertEquals(readCheckpointCompanies(JSON.parse(JSON.stringify(old)))[0].snapshot!.observations!, obs);
 });
 
@@ -139,11 +145,59 @@ Deno.test("the lineage state's copy is slim too — the merge does not re-expand
   const first = mergeLineageState(null, cp([r])).state;
   const second = mergeLineageState(JSON.parse(JSON.stringify(first)), cp([r])).state;
   const stored = (second[CHECKPOINT_RESULT_KEY] as { companies: CompanyResumeRecord[] }).companies[0];
-  assertEquals(stored.snapshot!.yc_open_jobs, []);
-  assert(stored.snapshot!.observations!.every((o) => "evidence_shared" in o || (o.evidence as unknown[]).length < 2));
+  assertEquals((second[CHECKPOINT_RESULT_KEY] as { version: string }).version, CHECKPOINT_COMPACT_VERSION);
+  assertEquals(readCheckpointCompanies(second)[0].snapshot!.yc_open_jobs, []);
   // The reader normalises a record (field order, `invalidated_stages`), so the
   // copies are compared as read back, and the merged copy must not grow.
   assertEquals(readCheckpointCompanies(second), readCheckpointCompanies(first));
   const bytes = (st: Record<string, unknown>) => JSON.stringify((st[CHECKPOINT_RESULT_KEY] as { companies: unknown[] }).companies).length;
   assert(bytes(second) <= bytes(first) + 64, `${bytes(second)} vs ${bytes(first)}`);
+});
+
+// ── the dictionary ──────────────────────────────────────────────────────────
+
+const many = () => Array.from({ length: 6 }, (_, i) => ({
+  ...closedRecord([sighting(1, "AE"), sighting(2, "SDR")]),
+  company_key: `outband-00${i}.example`,
+}));
+
+Deno.test("dictionary: a repeated snapshot value is stored once, and the checkpoint reads back exactly", () => {
+  const records = many().map(slimResumeRecord);
+  const { companies, dictionary } = internSnapshots(records);
+  assert(dictionary.length > 0);
+  assert(JSON.stringify({ companies, dictionary }).length < JSON.stringify(records).length * 0.6);
+  for (let i = 0; i < records.length; i++) {
+    assertEquals(JSON.stringify(expandSnapshotRefs(companies[i].snapshot, dictionary)), JSON.stringify(records[i].snapshot));
+  }
+  assertEquals(readBack(many()), readBack(many()).map((r) => r), "deterministic");
+});
+
+Deno.test("dictionary: every reference is rebuilt as its own copy — editing one company never edits another", () => {
+  const back = readBack(many());
+  const a = back[0].snapshot!.observations![0] as Record<string, unknown>;
+  (a.entity_hint as Record<string, unknown>).name = "edited";
+  assertEquals((back[1].snapshot!.observations![0].entity_hint as Record<string, unknown>).name, "Outband Software 001");
+});
+
+Deno.test("dictionary: the stage labels outside the snapshot stay plain — runOutcome reads them unexpanded", () => {
+  const hired = many().map((r, i) => i === 0 ? { ...r, hiring: "verified_from_existing_evidence" as const } : r);
+  const result = JSON.parse(JSON.stringify({ [CHECKPOINT_RESULT_KEY]: buildCheckpoint({ now: 0, deadlineAt: 0, remainingMs: 0, lastCompletedCapability: null, nextPendingCapability: null, companies: [...hired, { ...hired[0], company_key: "x.example" }], reason: "execution_deadline_checkpoint" }) }));
+  const stored = result[CHECKPOINT_RESULT_KEY].companies as Array<Record<string, unknown>>;
+  assertEquals(stored.filter((c) => c.hiring === "verified_from_existing_evidence").length, 2);
+  assertEquals(readFactsFromResult(result, 3).requested, 3);
+});
+
+Deno.test("dictionary: a literal `$ref` key in the data is never mistaken for a reference", () => {
+  const odd = many().map((r) => ({ ...r, snapshot: { ...r.snapshot!, triage: { $ref: 0 } } }));
+  const out = compactCheckpointCompanies(odd);
+  assertEquals(out.snapshot_dictionary, []);
+  assertEquals(readCheckpointCompanies(JSON.parse(JSON.stringify({ [CHECKPOINT_RESULT_KEY]: out })))[0].snapshot!.triage, { $ref: 0 });
+});
+
+Deno.test("dictionary: a compacted checkpoint carries its own version, which a reader accepting only RESUME_STATE_VERSION (86ac1b92) refuses", () => {
+  const stored = JSON.parse(JSON.stringify({ [CHECKPOINT_RESULT_KEY]: buildCheckpoint({ now: 0, deadlineAt: 0, remainingMs: 0, lastCompletedCapability: null, nextPendingCapability: null, companies: many(), reason: "execution_deadline_checkpoint" }) }));
+  // The previous reader accepted exactly RESUME_STATE_VERSION.
+  assert(stored[CHECKPOINT_RESULT_KEY].version !== RESUME_STATE_VERSION);
+  assertEquals(stored[CHECKPOINT_RESULT_KEY].version, CHECKPOINT_COMPACT_VERSION);
+  assertEquals(readCheckpointCompanies(stored).length, 6, "this reader accepts it");
 });

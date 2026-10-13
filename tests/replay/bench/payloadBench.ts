@@ -13,14 +13,14 @@
 // PURE. Zero provider calls, zero model calls. Byte counts, not database
 // latency: what a write costs the database is not measurable offline.
 
-import { buildCheckpoint, CHECKPOINT_RESULT_KEY } from "../../../supabase/functions/_shared/leadResumeState.ts";
+import { buildCheckpoint, CHECKPOINT_RESULT_KEY, readCheckpointCompanies } from "../../../supabase/functions/_shared/leadResumeState.ts";
 import { mergeLineageState } from "../../../supabase/functions/_shared/lineageStateMerge.ts";
 import { projectResearchFabric, researchFabricSummary } from "../../../supabase/functions/_shared/leadCapabilityEngine.ts";
 import { largestFields, payloadBytes } from "../../../supabase/functions/_shared/payloadSize.ts";
 import { loadFixture } from "../lib/fixture.ts";
 import { type LineageFixture, replayLineage } from "../lib/lineage.ts";
 import { missionOf, type EngineSlice } from "../lib/engine.ts";
-import { companyIsClosed, persistedCarrier } from "../lib/slim.ts";
+import { companyIsClosed, persistedCarrier, previousWriter } from "../lib/slim.ts";
 import { canonicalView } from "../lib/verification.ts";
 
 type Rec = Record<string, unknown>;
@@ -47,18 +47,41 @@ export interface SliceSizes {
   rewrites: number;
   bytes_rewritten: number;
   serialize_ms: number;
+  parse_ms: number;
+  /** Companies the stored checkpoint carries whole. */
+  retained_whole: number;
+  /** Companies stored as a closed record (no job rows, one statement per dimension). */
+  tombstoned: number;
+  /** Evidence items in the stored checkpoint restating a fact the same company already states. */
+  duplicate_evidence: number;
   breakdown: Rec;
 }
 
-function serializeMs(v: unknown): number {
+function medianMs(f: () => unknown): number {
   const runs: number[] = [];
   for (let i = 0; i < 5; i++) {
     const t = performance.now();
-    JSON.stringify(v);
+    f();
     runs.push(performance.now() - t);
   }
   runs.sort((a, b) => a - b);
   return Math.round(runs[2] * 100) / 100;
+}
+
+/** Evidence items restating a fact (dimension, status, method, value) their company already states. */
+function duplicateEvidence(storedCheckpoint: Rec): number {
+  let dup = 0;
+  for (const r of readCheckpointCompanies({ [CHECKPOINT_RESULT_KEY]: storedCheckpoint })) {
+    const seen = new Set<string>();
+    for (const o of r.snapshot?.observations ?? []) {
+      for (const e of (o.evidence ?? []) as Rec[]) {
+        const f = `${e.dimension}|${e.status}|${e.method}|${JSON.stringify(e.value)}`;
+        if (seen.has(f)) dup++;
+        seen.add(f);
+      }
+    }
+  }
+  return dup;
 }
 
 /** Bytes of a checkpoint's companies, by bucket and snapshot field. */
@@ -92,7 +115,7 @@ export async function benchLineage(name: string, mode: "before" | "after"): Prom
         discoverySourceState: (s.state.discovery_source_state ?? null) as never,
       });
       // The previous writer stored the engine's records as they were.
-      const checkpoint = before ? { ...built, companies: s.resume_records } : built;
+      const checkpoint = (before ? previousWriter(built as unknown as Rec, s.resume_records) : built) as Rec;
       const fabric = projectResearchFabric({ companies: s.companies, state: s.state as never }, { missionId: fx.provenance.task_id });
       const view = canonicalView({ companies: s.companies }, mission, fx.provenance.task_id, "job_discovery");
       const result: Rec = {
@@ -104,7 +127,7 @@ export async function benchLineage(name: string, mode: "before" | "after"): Prom
       const merged = mergeLineageState(lineageState, { capability_execution_state: s.state, [CHECKPOINT_RESULT_KEY]: checkpoint }).state;
       // The previous merge stored the records it read back, unslimmed.
       lineageState = before
-        ? { ...merged, [CHECKPOINT_RESULT_KEY]: { ...(merged[CHECKPOINT_RESULT_KEY] as Rec), companies: s.resume_records } }
+        ? { ...merged, [CHECKPOINT_RESULT_KEY]: previousWriter(merged[CHECKPOINT_RESULT_KEY] as Rec, s.resume_records) }
         : merged;
       const taskResult = payloadBytes(result) ?? 0;
       const rewrites = (before ? 2 : 1) * boundaries + FIXED_REWRITES_PER_SLICE;
@@ -122,7 +145,11 @@ export async function benchLineage(name: string, mode: "before" | "after"): Prom
         lineage_state: payloadBytes(lineageState) ?? 0,
         rewrites,
         bytes_rewritten: rewrites * taskResult,
-        serialize_ms: serializeMs(result),
+        serialize_ms: medianMs(() => JSON.stringify(result)),
+        parse_ms: (() => { const text = JSON.stringify(result); return medianMs(() => JSON.parse(text)); })(),
+        retained_whole: before ? s.companies.length : s.companies.filter((c) => !companyIsClosed(c)).length,
+        tombstoned: before ? 0 : s.companies.filter(companyIsClosed).length,
+        duplicate_evidence: duplicateEvidence(JSON.parse(JSON.stringify(checkpoint))),
         breakdown: {
           task_result: Object.fromEntries(largestFields(result, 6)),
           checkpoint_companies: checkpointBreakdown(checkpoint.companies as Rec[]),
@@ -151,7 +178,9 @@ if (import.meta.main) {
         console.log(`  ${k.padEnd(16)} ${kb(a[k]).padStart(9)} → ${kb(b[k]).padStart(9)}  (−${pct(a[k], b[k])})`);
       }
       console.log(`  ${"rewrites".padEnd(16)} ${String(a.rewrites).padStart(9)} → ${String(b.rewrites).padStart(9)}`);
-      console.log(`  ${"serialize_ms".padEnd(16)} ${String(a.serialize_ms).padStart(9)} → ${String(b.serialize_ms).padStart(9)}`);
+      for (const k of ["serialize_ms", "parse_ms", "retained_whole", "tombstoned", "duplicate_evidence"] as const) {
+        console.log(`  ${k.padEnd(16)} ${String(a[k]).padStart(9)} → ${String(b[k]).padStart(9)}`);
+      }
       if (Deno.args.includes("--breakdown")) {
         console.log("  before:", JSON.stringify(a.breakdown));
         console.log("  after: ", JSON.stringify(b.breakdown));

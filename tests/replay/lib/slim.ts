@@ -16,7 +16,7 @@
 //
 // PURE.
 
-import { buildCheckpoint, CHECKPOINT_RESULT_KEY, readCheckpointCompanies } from "../../../supabase/functions/_shared/leadResumeState.ts";
+import { buildCheckpoint, CHECKPOINT_RESULT_KEY, readCheckpointCompanies, RESUME_STATE_VERSION } from "../../../supabase/functions/_shared/leadResumeState.ts";
 import type { EngineCompany } from "../../../supabase/functions/_shared/leadCapabilityEngine.ts";
 import type { LeadMissionV1 } from "../../../supabase/functions/_shared/leadMission.ts";
 import type { EngineSlice } from "./engine.ts";
@@ -36,8 +36,14 @@ export function persistedResult(s: EngineSlice, o: { full?: boolean } = {}): str
     capability_execution_state: s.state,
     // The previous writer stored the engine's records as they were: every
     // observation and up to MAX_SNAPSHOT_JOBS job rows, for every company.
-    [CHECKPOINT_RESULT_KEY]: o.full ? { ...checkpoint, companies: s.resume_records } : checkpoint,
+    [CHECKPOINT_RESULT_KEY]: o.full ? previousWriter(checkpoint, s.resume_records) : checkpoint,
   });
+}
+
+/** The envelope the previous writer stored: plain version, the engine's records as they were, no dictionary. */
+export function previousWriter(checkpoint: Rec, records: unknown[]): Rec {
+  const { snapshot_dictionary: _dictionary, ...rest } = checkpoint;
+  return { ...rest, version: RESUME_STATE_VERSION, companies: records };
 }
 
 /** Resume the next slice from what was persisted, read back the way run-agent reads it. */
