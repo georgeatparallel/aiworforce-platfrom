@@ -1554,6 +1554,24 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
     generation: await resolveSliceGeneration(supabase as never, task.id, heldClaim?.checkpointVersion ?? null),
   };
   guardFence = sliceFence;
+  // ── A SUPERSEDED SLICE STOPS BUYING ──────────────────────────────────────
+  //
+  // A fenced mid-slice write means another generation owns the row now (a
+  // stalled worker woke late). The engine only logs a refused checkpoint and
+  // would go on starting paid calls beside the live generation. The worker's
+  // deadline is revocable (`revocableDeadline`): revoking it makes every paid
+  // boundary in the engine and the verifiers answer "no room" from here on —
+  // the same path a lost queue lease already takes ("lease" → `lease_lost`).
+  // The edge default deadline is not revocable: there this is a no-op.
+  const supersedeOnFence = (w: { fenced: boolean }, where: string) => {
+    if (!w.fenced) return;
+    const d = terminalGuard.deadline as { revoke?: (reason: string) => void; revokedReason?: string | null };
+    if (typeof d.revoke !== "function" || d.revokedReason) return;
+    d.revoke(`lease superseded: a newer generation owns the task row (${where})`);
+    console.error("[run-agent][fence] superseded mid-slice: no further paid work starts", {
+      task_id: task.id, generation: sliceFence.generation, at: where,
+    });
+  };
 
   // THE ROW SAYS WHICH LINEAGE IT BELONGS TO. `tasks_one_live_generation_per_lineage`
   // is a unique index over exactly this column, so it is also the database's own
@@ -3377,9 +3395,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   .from("tasks").select("result").eq("id", task.id).maybeSingle();
                 const prior = (cur?.result && typeof cur.result === "object")
                   ? cur.result as Record<string, unknown> : {};
-                await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
+                supersedeOnFence(await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                   result: guardResult("progress_publish", prior as Record<string, unknown> | null, { ...prior, workbench_progress: p }),
-                });
+                }), "progress_publish");
               } catch (e) {
                 console.log("[run-agent][capability-engine][progress-error]", String(e));
               }
@@ -3627,7 +3645,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                         .from("tasks").select("result").eq("id", task.id).maybeSingle();
                       const prior = (cur?.result && typeof cur.result === "object")
                         ? cur.result as Record<string, unknown> : {};
-                      await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
+                      supersedeOnFence(await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                         result: guardResult("stage_checkpoint", prior as Record<string, unknown> | null, {
                           ...prior,
                           [POOL_EVAL_RESULT_KEY]: buildPoolCheckpoint({
@@ -3637,7 +3655,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             accounting: poolBinding.accounting,
                           }),
                         }),
-                      });
+                      }), "stage_checkpoint");
                     } catch (e) {
                       console.log("[run-agent][stage2][checkpoint-error]", String(e));
                     }
@@ -3899,6 +3917,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                     console.warn("[run-agent][checkpoint] refused: a newer generation owns the row", {
                       task_id: task.id, generation: sliceFence.generation,
                     });
+                    supersedeOnFence(stageWrite, "stage_boundary");
                     await flushProgress();
                     return { written: false, reason: "fenced_stale_generation" };
                   }
