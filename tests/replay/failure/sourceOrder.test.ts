@@ -26,8 +26,10 @@ Deno.test("[failure] source order: run-agent's V2 slice runs claim → lease →
   assertInOrder(read(file), file, [
     // 1. a resumed slice takes the continuation claim; refused → 409
     "await claimContinuationViaRpc(",
-    // 2. the lineage lease
+    // 2. the lineage lease, then this slice's generation — the token every
+    // result write is fenced on in SQL (D1, `fencedTaskUpdate`)
     "await acquireLineageLease(",
+    "const sliceFence: SliceFence = {",
     // 3. the ledger recovers what a lost checkpoint forgot
     "recoverCompletedRuns(completedRunRows)",
     "recoverPendingRuns(startedRunRows",
@@ -42,14 +44,19 @@ Deno.test("[failure] source order: run-agent's V2 slice runs claim → lease →
     'guardResult("stage_boundary"',
     // … resumed from the checkpoint merged with the ledger's pending runs
     "mergePendingRuns(",
-    // 5. the fold and the decision
+    // 5. the fold and the decision — a pending run holds the lineage only
+    // within its bound (D3), exactly as the lab's `foldAndDecide` counts it
     "const progress = foldSlice(priorProgress",
+    "pendingRuns: awaitedPendingRuns(capabilityRun?.state.pending_runs, Date.now()).awaited +",
     // 6. the end-of-slice write
     'guardResult("slice_result"',
     // 7. the claim release, retried, the row status from the slice's own verdict
     "releaseContinuationViaRpc({",
     "rowStatus: statuses.rowStatus",
-    // 8. the lineage release, terminal only when nothing is left to resume
+    // 8. the lineage release, terminal only when nothing is left to resume,
+    // carrying the slice's verdict in the same call (D4: the worker reads it)
+    "mergeLineageState(leaseState, {",
+    "terminal_status: statuses.terminalStatus,",
     "releaseLineageLease({",
     "lineageIsFinished(autoDecision)",
     'r.reason === "release_unavailable"',
@@ -67,11 +74,17 @@ Deno.test("[failure] source order: the worker reads the queue's continuations at
   const src = read(main);
   assert(src.includes('select("continuations")'), `${main}: the continuations read at claim is gone`);
   assertInOrder(src, main, ["readTaskOutcome: async (taskId) =>", 'from("tasks").select(TASK_OUTCOME_COLUMNS)']);
+  // D4: the lineage's status and verdict, as the lab's `readLineageOutcome` reads them.
+  assertInOrder(src, main, ["readLineageOutcome: async (lineageId) =>", 'from("lead_lineages")',
+    "status, terminal_reason, r_terminal_status:current_state->>terminal_status"]);
   assertInOrder(src, main, ["if (isTerminalQueueStatus(finalStatus)) {", "await reconcileTerminal(finalStatus, reason, {"]);
-  // The runner the lab runs is the production one, and it takes the outcome
-  // from the row, not from the HTTP response (why D4 exists).
+  // The runner the lab runs is the production one: the outcome comes from the
+  // task row, and from the lineage row when the task row says it did not end (D4).
   const runner = "worker/leadMissionRunner.ts";
-  assertInOrder(read(runner), runner, ["res = await d.handler(", "const row = await d.readTaskOutcome(taskId);", "mapTaskOutcome(row)"]);
+  assertInOrder(read(runner), runner, [
+    "res = await d.handler(", "const row = await d.readTaskOutcome(taskId);", "d.readLineageOutcome(lineageId ?? taskId)",
+    "mapTaskOutcome(row, lineage)",
+  ]);
 });
 
 Deno.test("[failure] source order: a terminal lineage is never claimed again (the queue SQL the lab runs)", () => {

@@ -116,6 +116,11 @@ export interface ExecutionCallCostRow {
   actual_cost_usd: number | string | null;
   /** `request_input->provider_call_spec->cost->>estimate_usd`. */
   estimate_usd: number | string | null;
+  /**
+   * `request_input->>resume_run_id`: this row RE-READ a run an earlier row
+   * started. Optional so rows read without it keep their old meaning.
+   */
+  resumed_from?: string | null;
 }
 
 const num = (v: unknown): number | null => {
@@ -132,7 +137,12 @@ const num = (v: unknown): number | null => {
 export function spendFloorFromRows(rows: readonly ExecutionCallCostRow[]): SpendFloor {
   let usd = 0, calls = 0;
   for (const r of rows) {
-    if (!r.provider_call_id || r.status === "reused") continue;
+    // A RE-READ IS NOT A PURCHASE. A finished adoption is recorded `reused`; one
+    // that finds the run STILL executing is recorded `timed_out` (it is not
+    // resolved, and `reused` would read as resolved) — and was counted as one
+    // more paid call per re-read. D3 re-asks a pending run every slice it is
+    // awaited, so the floor would have grown by one call per poll.
+    if (!r.provider_call_id || r.status === "reused" || r.resumed_from) continue;
     calls++;
     usd += num(r.settled_usd) ?? num(r.actual_cost_usd) ?? num(r.estimate_usd) ?? 0;
   }
@@ -164,7 +174,7 @@ export async function readLineageSpendFloor(db: FloorDb, lineageRootId: string):
   if (!lineageRootId) return UNREADABLE_FLOOR;
   try {
     const { data, error } = await db.from("lead_execution_calls")
-      .select("status,provider_call_id,settled_usd,actual_cost_usd,estimate_usd:request_input->provider_call_spec->cost->>estimate_usd")
+      .select("status,provider_call_id,settled_usd,actual_cost_usd,estimate_usd:request_input->provider_call_spec->cost->>estimate_usd,resumed_from:request_input->>resume_run_id")
       .like("logical_call_key", `${lineageRootId}:%`);
     if (error || !Array.isArray(data)) return UNREADABLE_FLOOR;
     return spendFloorFromRows(data as ExecutionCallCostRow[]);

@@ -51,7 +51,9 @@ Deno.test("a continuing slice writes the research-fabric summary; the full fabri
 });
 
 Deno.test("a failed slice-result write is reported, not ignored", () => {
-  assert(/const \{ error: sliceResultError \} = await supabase\.from\("tasks"\)\.update\(\{/.test(code));
+  // Fenced since D1: the outcome is read off the fenced write.
+  assert(/const sliceResultWrite = await fencedTaskUpdate\(/.test(code));
+  assert(code.includes("const sliceResultError = sliceResultWrite.error;"));
   assert(code.includes('"[run-agent][slice-result] persist failed"'));
 });
 

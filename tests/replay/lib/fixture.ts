@@ -33,6 +33,12 @@ export interface FixtureProviderResponse {
    * (`resumeRunId`) returns the rows. Never a second purchase.
    */
   pending_once?: boolean;
+  /**
+   * With `pending_once`: the run is STILL executing for this many adoptions
+   * (`resumeRunId`) before it returns its rows — a run that outlives several
+   * slices (D3's wait bound). Absent: the first adoption returns the rows.
+   */
+  still_running_polls?: number;
   /** Where the rows came from: a production dataset, or why they are synthetic. */
   provenance: string;
 }

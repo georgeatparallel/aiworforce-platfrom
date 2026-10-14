@@ -591,7 +591,8 @@ Deno.test("14. mission, graph, providers and route telemetry are PERSISTED", asy
   // only the persisted block carries, then bounded by that block's own update.
   const start = src.indexOf("sequential_source_execution: sequentialSourceDiagnostics");
   assert(start > 0, "the persisted telemetry block must exist");
-  const end = src.indexOf('}).eq("id", task.id);', start);
+  // The slice-result write, fenced since D1: its block ends where its outcome is read.
+  const end = src.indexOf("const sliceResultError = sliceResultWrite.error;", start);
   assert(end > start, "the persisted block must end in a task update");
   const persisted = src.slice(start, end);
   for (const key of [

@@ -31,6 +31,7 @@ import { queryBFixture, recordedRouteControl } from "../lib/queryB.ts";
 import { inputFingerprint } from "../../../supabase/functions/_shared/leadResumeState.ts";
 import { spendFloorFromRows } from "../../../supabase/functions/_shared/missionSpendCap.ts";
 import { V2_MAX_ATTEMPTS } from "../../../supabase/functions/_shared/leadMissionTerminal.ts";
+import { PENDING_RUN_MAX_POLLS } from "../../../supabase/functions/_shared/leadAutoContinuation.ts";
 
 const D22 = () => loadFixture("queryBd22d9ee6.loop") as LineageFixture;
 const CONTINUUM = "Continuum AI";
@@ -61,12 +62,17 @@ function scenario(name: string, open: () => Promise<ChaosLab>): Promise<Settled>
   if (!cache.has(name)) cache.set(name, open().then(settle));
   return cache.get(name)!;
 }
-/** `pending`: the provenance prefix of a recorded provider answer still RUNNING when first asked. */
-const d22 = (faults: Fault[] = [], pending?: string) =>
-  scenario(`d22:${JSON.stringify(faults)}:${pending ?? ""}`, () => {
+/**
+ * `pending`: the provenance prefix of a recorded provider answer still RUNNING
+ * when first asked; `stillRunning`: how many adoptions it is still running for.
+ */
+const d22 = (faults: Fault[] = [], pending?: string, stillRunning?: number) =>
+  scenario(`d22:${JSON.stringify(faults)}:${pending ?? ""}:${stillRunning ?? ""}`, () => {
     const fx = D22();
     if (pending) {
-      (fx.provider_responses.find((r) => r.provenance.startsWith(pending))! as { pending_once?: boolean }).pending_once = true;
+      const r = fx.provider_responses.find((x) => x.provenance.startsWith(pending))!;
+      r.pending_once = true;
+      if (stillRunning !== undefined) r.still_running_polls = stillRunning;
     }
     return ChaosLab.open(fx, faults);
   });
@@ -97,6 +103,7 @@ function assertSettledConsistently(s: Settled, label: string) {
     status: r.status ?? null,
     provider_call_id: ((r.request_input as { provider_call_spec?: { provider_call_id?: string } } | null)?.provider_call_spec?.provider_call_id) ?? null,
     settled_usd: null, actual_cost_usd: null, estimate_usd: r.estimate_usd,
+    resumed_from: ((r.request_input as { resume_run_id?: string } | null)?.resume_run_id) ?? null,
   })));
   const bought = lab.ledger.filter((r) => !r.reused);
   assertEquals(floor.paid_calls, bought.length, `${label}: the floor counts ${floor.paid_calls} paid calls, ${bought.length} were bought`);
@@ -147,27 +154,6 @@ function lReplayQuestions(): Promise<string[]> {
   return baselineQuestions;
 }
 
-/**
- * D4 — THE LAST SLICE'S LOST RESULT WRITE STRANDS THE QUEUE ROW. The slice
- * released its lineage `terminal` from what it knew in memory, but the worker
- * reads the outcome from the task row, which still carries the previous
- * slice's `continuation_required`, so it releases the queue `resumable`, and
- * `claim_next_lead_mission` never claims a row whose lineage is terminal.
- */
-function isD4(s: Settled): boolean {
-  const last = s.lab.runs.at(-1);
-  return s.queue.status === "resumable" && s.lineage?.status === "terminal" && !!last &&
-    s.lab.events.some((e) => e.attempt === last.attempt && e.at === "end_write_lost");
-}
-/** What still holds when D4 strikes: nothing bought twice, nothing left held, the floor exact. */
-function assertD4Contained(s: Settled, label: string) {
-  assertEquals(s.lab.duplicatePurchases(), [], `${label}: a question was bought twice`);
-  assertEquals(s.queue.claimed_by, null, `${label}: the queue row is still claimed`);
-  assertFalse(s.claimHeld, `${label}: a continuation claim was left held`);
-  assertEquals(s.lineage?.lease_holder ?? null, null, `${label}: the lineage lease was left held`);
-  assertEquals(s.lab.runs.at(-1)?.terminal, "search_exhausted", `${label}: the last slice did finish the mission`);
-  assertEquals(s.lab.reconciled.length, 0, `${label}: no terminal release, so nothing reconciled`);
-}
 const runsOf = (s: Settled) => s.lab.runs.map((r) => r.http === 200 ? String(r.decision) : `${r.http}:${r.reason}`);
 
 // ══════════════════════════════════════════════════════════════ baseline ══
@@ -218,28 +204,23 @@ Deno.test("[failure] 1 EVERY WRITE of the FIRST slice is lost: nothing can resum
   assertEquals(s.lab.purchases().length, 3);
 });
 
-Deno.test("[failure] 1 D4 DEFECT REPRODUCED — the LAST slice's result write is lost: the lineage ends terminal but the queue row is released resumable and is never claimed or settled again", async () => {
+// D4 (fixed): the last slice released its lineage `terminal`, but its result
+// write was lost, so the task row still read the previous slice's
+// `continuation_required`. The worker used to release the queue `resumable`
+// from that row, and `claim_next_lead_mission` never claims a row whose
+// lineage is terminal: the queue, task and plan were stranded for ever. The
+// worker now asks the lineage row, which decides, as it does for the claim.
+Deno.test("[failure] 1 D4 the LAST slice's result write is lost: the terminal lineage ends the mission — queue, task and lineage settle on the slice's own verdict", async () => {
   const s = await d22([{ kind: "end_write_lost", attempt: 3 }]);
-  assert(isD4(s), `not the D4 signature: queue ${s.queue.status}, lineage ${s.lineage?.status}`);
-  assertD4Contained(s, "end_write_lost@3");
-  // The worker read the previous slice's row …
-  assertEquals((s.queue as unknown as { last_outcome: { status: string } }).last_outcome.status, "continuation_required");
-  // … the claim release had already marked the task `complete` from memory …
-  assertEquals([s.task?.status, s.terminal], ["complete", "continuation_required"],
-    "today — if this fails, D4 is fixed: enable the [known-gap] test below and delete this one");
-  // … and nothing will claim the row again: the lineage row is the authority.
-  const t = await s.lab.tick();
-  assertEquals([t.claimed, t.reason], [false, "no_eligible_mission"]);
-});
-
-Deno.test({
-  name: "[known-gap] D4 a lost last-slice result write still settles the queue, task and lineage on the same ending",
-  ignore: true,
-  fn: async () => {
-    const s = await d22([{ kind: "end_write_lost", attempt: 3 }]);
-    assertSettledConsistently(s, "end_write_lost@3");
-    assertEquals(s.terminal, "search_exhausted");
-  },
+  assertSettledConsistently(s, "end_write_lost@3");
+  assertEquals(s.terminal, "search_exhausted", "the lineage's verdict, not the stale row's");
+  assertEquals(s.lab.runs.length, 3, "no extra slice: nothing re-ran, nothing was re-bought");
+  assertEquals(purchaseKeys(s), await lReplayPurchases());
+  assertEquals([s.queue.status, s.queue.attempts, s.queue.continuations], ["complete", 1, 2]);
+  // The worker's terminal reconciliation repaired the task row from the queue's ending.
+  const fix = s.lab.reconciled.at(-1)!;
+  assert(fix.violations.includes("task.terminal_status=continuation_required"), fix.violations.join(", "));
+  assertEquals(fix.remaining, []);
 });
 
 // ═══════════════════════════════════════ 2–3. worker death, lease expiry, reclaim ══
@@ -270,23 +251,48 @@ Deno.test("[failure] 3 a STALLED worker loses its lease mid-slice: another worke
   assertEquals(stalled.find((e) => e.at === "lineage_release")?.detail?.reason, "not_lease_holder");
 });
 
-Deno.test("[failure] 3 D1 DEFECT REPRODUCED — the stalled worker wakes after the mission finished and its end-of-slice write REOPENS the task (queue complete, lineage terminal, task continuation_required)", async () => {
+// D1 (fixed). The stale worker's end-of-slice write used to land over the
+// finished mission's result: status reopened to `ready / continuation_required`
+// and the finished execution state replaced by its own stale slice. Every
+// result write is now ONE conditional UPDATE fenced on the generation its claim
+// set (`checkpoint_version`) and, before the slice's verdict, on an open row
+// (`fencedTaskUpdate`): the stale write changes zero rows.
+Deno.test("[failure] 3 D1 the stalled worker wakes after the mission finished: its end-of-slice write is REFUSED in the write itself — the finished result stands, unchanged", async () => {
   const s = await stalledTakeover();
-  assertEquals([s.queue.status, s.lineage?.status], ["complete", "terminal"]);
-  assertEquals([s.task?.status, s.terminal], ["ready", "continuation_required"],
-    "today: the stale write lands — if this fails, D1 is fixed: enable the [known-gap] test below and delete this one");
+  assertSettledConsistently(s, "stalled takeover");
+  assertEquals([s.task?.status, s.terminal], ["complete", "search_exhausted"]);
+  assertEquals(s.task?.result, finishedResult, "byte for byte the result the mission finished with");
+  assert(s.lab.events.some((e) => e.attempt === 2 && e.at === "end_write_fenced"), "refused, and said so");
 });
 
-Deno.test({
-  name: "[known-gap] D1 a stale generation's end-of-slice write never reopens a finished mission's task",
-  ignore: true,
-  fn: async () => {
-    const s = await stalledTakeover();
-    assertSettledConsistently(s, "stalled takeover");
-  },
+Deno.test("[failure] 3 D1 a stale FIRST slice wakes after a newer slice wrote a newer checkpoint: its write is refused — the newer checkpoint and progress stand, and the mission completes", async () => {
+  const lab = await ChaosLab.open(D22());
+  const a = await lab.stalledWorker();      // worker A: slice 1, stage writes landed, end write pending
+  await lab.advance(400);                    // A's queue lease expires
+  for (let i = 0; i < 6 && lab.runs.length === 0; i++) {  // worker B resumes: one slice, not terminal
+    const t = await lab.tick();
+    if (!t.claimed) await lab.advance(60);
+  }
+  assertEquals(lab.runs.map((r) => r.decision), ["replenishment_required"], "B ran one newer slice");
+  const newer = (await lab.taskRow())?.result;
+  await a.resume();                          // A wakes and writes slice 1's result
+  const after = (await lab.taskRow())?.result;
+  assertEquals(after, newer, "A's stale slice changed nothing");
+  assert(lab.events.some((e) => e.attempt === 1 && e.at === "end_write_fenced"));
+  // And the lineage carries on from B's state to the same ending, nothing bought twice.
+  await lab.runToSettle();
+  const task = await lab.taskRow();
+  const s: Settled = {
+    lab, queue: await lab.lab.row(lab.queueId), task, lineage: await lab.lineageRow(), claimHeld: await lab.claimHeld(),
+    lastQualified: [...lab.runs].reverse().find((r) => r.qualified)?.qualified ?? [], terminal: task?.result?.terminal_status,
+  };
+  assertSettledConsistently(s, "stale first slice");
+  assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
 });
 
 let stalled: Promise<Settled> | null = null;
+/** The task result as the mission finished, before the stalled worker woke. */
+let finishedResult: Record<string, unknown> | null | undefined;
 function stalledTakeover(): Promise<Settled> {
   stalled ??= (async () => {
     const lab = await ChaosLab.open(D22());
@@ -295,6 +301,7 @@ function stalledTakeover(): Promise<Settled> {
     const a = await lab.stalledWorker();    // worker A: slice 2 computed, end write pending
     await lab.advance(400);                 // A's queue lease, lineage lease and claim all expire
     await lab.runToSettle();                // worker B reclaims and finishes the mission
+    finishedResult = (await lab.taskRow())?.result;
     await a.resume();                       // A wakes and completes its slice
     const task = await lab.taskRow();
     return {
@@ -348,6 +355,14 @@ Deno.test("[failure] 6 the FIRST PAGE is still running when slice 1 ends: the ne
   assertEquals(p1.filter((r) => r.reused).length, 1, "adopted once");
   assertEquals(s.lab.ledger.filter((r) => r.status === "started").length, 0, "no run left unread");
   assertEquals(s.terminal, "search_exhausted");
+  // D3: a run pending ONCE no longer stops every later discovery pass after
+  // its first selection (`pendingFor` read the attempt history): the slice
+  // after the adoption re-plans, and buys its re-planned query.
+  assert(s.lab.purchases().some((p) => p.attempt >= 3 && REPLAN.test(JSON.stringify(
+    s.lab.ledger.find((r) => r.idempotency_key === p.idempotency_key)?.request_input))),
+  "a re-planned query was bought after the adoption");
+  // (The lead itself is not asserted: one slice later, the lineage asks
+  // questions production never asked, and the fixture holds no answers for them.)
 });
 
 Deno.test("[failure] 6 a COMPANY-DETAILS read still running at slice end is adopted next slice — never bought twice", async () => {
@@ -358,29 +373,60 @@ Deno.test("[failure] 6 a COMPANY-DETAILS read still running at slice end is adop
   assertEquals(s.lastQualified, [CONTINUUM]);
 });
 
-Deno.test("[failure] 6 D3 DEFECT REPRODUCED — a REPLENISHMENT PAGE still running at slice end is never adopted: the lineage waits on it until the continuation ceiling and ends without its lead", async () => {
+// D3 (fixed). A replenishment page or a re-planned query still running at
+// slice end used to be NEVER asked again: discovery re-asks only its own
+// strategy, and once the replenishment slice ended discovery was marked done.
+// The lineage waited on the paid run as `awaiting_provider_run` until the
+// continuation ceiling and ended `budget_exhausted` without its lead. The
+// engine now records the selection that started a pending discovery run,
+// reopens discovery DRAIN-ONLY to ask it again, and adopts — never buys.
+/** Adoptions that READ a finished run (a re-read that found it still executing is not one). */
+const adoptedRuns = (s: Settled) => s.lab.ledger.filter((r) => r.reused && r.status === "reused").length;
+/** Purchases whose run was never read: still `started`, and not a re-read of one. */
+const startedLeft = (s: Settled) => s.lab.ledger.filter((r) => !r.reused && r.status === "started").length;
+
+Deno.test("[failure] 6 D3 a REPLENISHMENT PAGE still running at slice end is asked again and ADOPTED — paid once, read, and the lineage ends exactly as its clean run", async () => {
   const s = await d22([], "page 2");
-  const runs = runsOf(s);
-  assertEquals(runs.slice(0, 2), ["replenishment_required", "awaiting_provider_run"]);
-  assertEquals(runs.at(-1), "continuation_ceiling");
-  assert(runs.slice(1, -1).every((r) => r === "awaiting_provider_run"), runs.join(","));
-  // The paid page is never read: its ledger row is still `started` at the end.
-  assertEquals(s.lab.ledger.filter((r) => r.status === "started").length, 1);
-  assertEquals([s.queue.status, s.terminal, s.lastQualified], ["complete", "budget_exhausted", []],
-    "today — if this fails, D3 is fixed: enable the [known-gap] test below and delete this one");
-  // Nothing is bought twice even so.
+  assertSettledConsistently(s, "page 2 pending");
+  assertEquals(runsOf(s).slice(0, 3), ["replenishment_required", "awaiting_provider_run", "replenishment_required"]);
+  assertEquals(adoptedRuns(s), 1, "the pending page, re-read by its run id");
+  assertEquals(startedLeft(s), 0, "no paid run left unread");
+  assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
+  assertEquals(questionsOf(s), await lReplayQuestions(), "the same questions as the clean run, each bought once");
+});
+
+for (const pending of ["page 3", "re-plan query 1", "re-plan query 3"]) {
+  Deno.test(`[failure] 6 D3 a pending ${pending.toUpperCase()} is asked again and adopted — never bought twice, never left unread, the lead found`, async () => {
+    const s = await d22([], pending);
+    assertSettledConsistently(s, `${pending} pending`);
+    assertEquals(runsOf(s).filter((r) => r === "awaiting_provider_run").length, 1, "one slice of waiting, not the ceiling");
+    assert(adoptedRuns(s) >= 1);
+    assertEquals(startedLeft(s), 0);
+    assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
+  });
+}
+
+Deno.test("[failure] 6 D3 a run STILL executing when asked again stays awaited — then adopted when it finishes", async () => {
+  const s = await d22([], "page 2", 2);
+  assertSettledConsistently(s, "page 2 still running x2");
+  assertEquals(runsOf(s).filter((r) => r === "awaiting_provider_run").length, 3);
+  assertEquals(adoptedRuns(s), 1);
+  assertEquals(startedLeft(s), 0);
+  assertEquals(s.lastQualified, [CONTINUUM]);
   assertEquals(s.lab.duplicatePurchases(), []);
 });
 
-Deno.test({
-  name: "[known-gap] D3 a replenishment page still running at slice end is adopted by the next slice and the lineage finds its lead",
-  ignore: true,
-  fn: async () => {
-    const s = await d22([], "page 2");
-    assertSettledConsistently(s, "page 2 pending");
-    assertEquals(s.lab.ledger.filter((r) => r.status === "started").length, 0);
-    assertEquals(s.lastQualified, [CONTINUUM]);
-  },
+Deno.test("[failure] 6 D3 BOUNDED: a run that never finishes stops holding the lineage after PENDING_RUN_MAX_POLLS asks — the lineage ends, nothing is bought twice, the run stays on record", async () => {
+  const s = await d22([], "page 2", 50);
+  assertSettledConsistently(s, "page 2 never finishes");
+  const waits = runsOf(s).filter((r) => r === "awaiting_provider_run").length;
+  assertEquals(waits, PENDING_RUN_MAX_POLLS, "waited exactly the bound — not to the continuation ceiling");
+  assertNotEquals(runsOf(s).at(-1), "continuation_ceiling");
+  assertEquals(s.queue.status, "complete");
+  // Still listed — a later ask would adopt it — and still on the ledger as started: never re-bought.
+  const pendingLeft = (s.task?.result?.capability_execution_state as { pending_runs: Array<{ polls?: number }> }).pending_runs;
+  assertEquals(pendingLeft.map((p) => p.polls), [PENDING_RUN_MAX_POLLS]);
+  assertEquals(startedLeft(s), 1);
 });
 
 // ═══════════════════════════════ 7–8. seeded fault schedules: the invariants hold ══
@@ -412,9 +458,6 @@ for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
   const faults = schedule(seed);
   Deno.test(`[failure] 7–8 seeded schedule ${seed} ${JSON.stringify(faults.map((f) => `${f.kind}@${f.attempt}`))}: nothing bought twice; queue, task, lineage, claim and ledger agree`, async () => {
     const s = await d22(faults);
-    // A schedule that loses the LAST slice's result write hits D4 (below):
-    // asserted as the defect it is, with every invariant that still holds.
-    if (isD4(s)) return assertD4Contained(s, `seed ${seed} (D4)`);
     assertSettledConsistently(s, `seed ${seed}`);
     if (s.queue.status === "complete") {
       assertEquals(s.terminal, "search_exhausted");

@@ -47,8 +47,9 @@ const SRC = await Deno.readTextFile(
 function preflightWrite(): string {
   const at = SRC.indexOf("paid_execution_preflight: paidPreflight,");
   assert(at > 0, "the preflight write must exist");
-  const start = SRC.lastIndexOf('await supabase.from("tasks").update({', at);
-  const end = SRC.indexOf('.eq("id", task.id);', at);
+  // Written through the generation fence since D1 (`fencedTaskUpdate`).
+  const start = SRC.lastIndexOf("await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence,", at);
+  const end = SRC.indexOf("} catch (e) {", at);
   assert(start > 0 && end > start, "could not isolate the preflight write");
   // COMMENTS STRIPPED. The block carries a long note explaining the fix, which
   // necessarily names the very keys these tests assert are absent from the CODE.

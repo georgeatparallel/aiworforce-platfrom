@@ -65,11 +65,19 @@ const sameKeys = (a: readonly string[], b: readonly string[]) =>
 
 export class FixtureProvider {
   readonly calls: RecordedProviderCall[] = [];
+  /** Adoptions answered "still running" so far, per recorded response (`still_running_polls`). */
+  private readonly polls: Map<FixtureProviderResponse, number>;
   /**
    * `runIdPrefix` makes run ids unique across slices (each slice builds its own
    * provider): a lineage-wide ledger keyed by run id needs them distinct.
    */
-  constructor(private readonly responses: readonly FixtureProviderResponse[], private readonly opts: { runIdPrefix?: string } = {}) {}
+  constructor(
+    private readonly responses: readonly FixtureProviderResponse[],
+    private readonly opts: { runIdPrefix?: string; polls?: Map<FixtureProviderResponse, number> } = {},
+  ) {
+    // Shared across a lineage's slices when given: each slice builds its own provider.
+    this.polls = opts.polls ?? new Map();
+  }
 
   /** The `invoke` the guarded invoker wraps — same call shape `ledgerBoundCall` and the engine send. */
   invoke = (call: {
@@ -97,6 +105,17 @@ export class FixtureProvider {
         idempotency_key: spec?.idempotency_key ?? null, rows: 0, input, pending: true,
       });
       return Promise.reject(Object.assign(new Error("provider run still executing"), { toolResult: { run_id, pending: true } }));
+    }
+    // STILL EXECUTING ON ADOPTION (`still_running_polls`): the same run id, pending again.
+    if (hit.pending_once && call.resumeRunId && (this.polls.get(hit) ?? 0) < (hit.still_running_polls ?? 0)) {
+      this.polls.set(hit, (this.polls.get(hit) ?? 0) + 1);
+      this.calls.push({
+        actor: call.actorKey, capability: call.capabilityId ?? spec?.capability ?? null, candidate_keys: keys,
+        input_hash: call.inputHash ?? "", estimate_usd: spec?.cost.estimate_usd ?? null,
+        idempotency_key: spec?.idempotency_key ?? null, rows: 0, input, pending: true, adopted: true,
+      });
+      return Promise.reject(Object.assign(new Error("provider run still executing"),
+        { toolResult: { run_id: call.resumeRunId, pending: true } }));
     }
     // A recorded run id, as the provider would report it — so the ledger and adoption paths run.
     call.onProviderRun?.({ run_id: call.resumeRunId ?? `${this.opts.runIdPrefix ?? ""}replay-${this.calls.length + 1}`, dataset_id: null });

@@ -166,6 +166,17 @@ async function main() {
         continuation_decision: typeof row.r_continuation_decision === "string" ? row.r_continuation_decision : null,
       };
     },
+    // Three short fields: never the lineage's state document itself.
+    readLineageOutcome: async (lineageId) => {
+      const { data, error } = await db.from("lead_lineages")
+        .select("status, terminal_reason, r_terminal_status:current_state->>terminal_status")
+        .eq("lineage_id", lineageId).maybeSingle();
+      if (error) { log("[worker] lineage outcome read failed", error.message); return null; }
+      if (!data) return null;
+      const l = data as { status?: unknown; terminal_reason?: unknown; r_terminal_status?: unknown };
+      const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+      return { status: str(l.status), terminal_reason: str(l.terminal_reason), terminal_status: str(l.r_terminal_status) };
+    },
     log,
   });
 

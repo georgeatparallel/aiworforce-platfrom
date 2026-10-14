@@ -16,7 +16,9 @@ Deno.test("every task-result write in run-agent goes through the progress guard"
   const src = code(runAgent);
   const writes = [...src.matchAll(/from\("tasks"\)\s*\.update\(\{\s*(?:\/\/[^\n]*\n\s*)*result:\s*([^\n]{0,40})/g)];
   const multi = [...src.matchAll(/\.from\("tasks"\)\.update\(\{\s*\n(?:\s*\/\/[^\n]*\n)*\s*result:\s*([^\n]{0,40})/g)];
-  const all = [...writes, ...multi].map((m) => m[1].trim());
+  // D1: the slice's result writes go through the generation fence.
+  const fenced = [...src.matchAll(/fencedTaskUpdate\(supabase as unknown as FencedTaskDb, task\.id, sliceFence, \{ requireOpen: (?:true|false) \}, \{\s*(?:\/\/[^\n]*\n\s*)*(?:status: [^\n]*\n\s*)?result:\s*([^\n]{0,40})/g)];
+  const all = [...writes, ...multi, ...fenced].map((m) => m[1].trim());
   assert(all.length >= 6, `found ${all.length} result writes`);
   for (const w of all) assert(w.startsWith("guardResult("), `unguarded result write: ${w}`);
   assertEquals((src.match(/guardResult\("/g) ?? []).length, 9, "nine write paths, each named");

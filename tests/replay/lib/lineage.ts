@@ -16,7 +16,7 @@
 // cap here is a runaway guard for the broken behaviour, never the answer.
 
 import {
-  claimProgressCount, decideAutoContinuation, foldSlice, type LineageProgress, readLineageProgress,
+  awaitedPendingRuns, claimProgressCount, decideAutoContinuation, foldSlice, type LineageProgress, readLineageProgress,
   resolveMaxContinuations, resolveMaxLineageCostUnits, settleV2Outcome,
 } from "../../../supabase/functions/_shared/leadAutoContinuation.ts";
 import { attemptedRoutes, verifyOpKey } from "../../../supabase/functions/_shared/claimVerifier.ts";
@@ -161,7 +161,8 @@ export function foldAndDecide(fx: LineageFixture, s: EngineSlice, progressBefore
     continuationsUsed: progress.continuations_used, maxContinuations: resolveMaxContinuations(),
     costUnitsUsed: progress.cost_units_used, maxCostUnits: resolveMaxLineageCostUnits(),
     barrenSlices: progress.barren_slices, providerFailed: false,
-    pendingRuns: ((s.state.pending_runs as unknown[] | undefined) ?? []).length,
+    // run-agent's `awaitedPendingRuns(…).awaited` (D3).
+    pendingRuns: awaitedPendingRuns(s.state.pending_runs as Array<{ polls?: number; started_at?: string }> | undefined, Date.now()).awaited,
     discoveryRoutesRemain: ds ? !ds.exhausted : false,
   } as never);
   const terminal = d_terminal(decision, p5.qualified, requested, mission);
