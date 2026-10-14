@@ -209,7 +209,12 @@ It's only needed if a session must outlive a GitHub job.
      `sb_secret_…` key), `TEST_SUPABASE_ANON_KEY` and the four provider keys.
    Test-scoped keys only. Add a required reviewer if the plan allows it.
 5. Move the workflow into `.github/workflows/` through a reviewed PR to the
-   **default branch**, because GitHub only offers `workflow_dispatch` there.
+   **default branch, which is `launch/hardening`**, because GitHub only offers
+   `workflow_dispatch` there. The repository is **public**:
+   - Actions minutes cost nothing;
+   - Environment protection (required reviewers) is available;
+   - the Actions logs are public, which is why the workflow keeps worker
+     output off the log.
    The move is a CI-only change, separate from runtime changes.
 6. Enqueue one mission for the test workspace, through a reviewed SQL script
    or the enqueue function deployed to the **test** project.
