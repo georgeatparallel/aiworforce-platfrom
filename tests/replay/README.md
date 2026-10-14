@@ -12,7 +12,10 @@ npm run test:lead-v2-regression    # the Lab + the targeted Lead V2 edge/UI test
 
 `matrix/` is the query regression matrix (20 request categories and wording
 variants, hand-written expectations); `invariants/leadV2Invariants.test.ts`
-asserts the twenty-five properties every mission must keep (19–25: termination, progress, leases, deadlines, cancellation, qualified-company counts).
+asserts the twenty-eight properties every mission must keep (19–25: termination, progress, leases, deadlines, cancellation, qualified-company counts; 26–28: checkpoint slimming), and
+`invariants/verificationStop.test.ts` adds 29–32: the verification phase stops with its slice (deadline,
+cancellation, lost lease), buys nothing after the stop, carries what is in flight by run id, and is
+not counted barren for it.
 
 ```
 Golden missions:                 PASS  (6/6)
@@ -125,8 +128,8 @@ for today's behaviour and an ignored `[known-gap]` test for the fix:
 |---|---|---|
 | D1 (fixed) | A worker that stalls past its lease woke after another worker finished the mission (or wrote a newer checkpoint); its end-of-slice write landed over the newer result. Every slice result write is now one conditional UPDATE fenced on the generation its claim set (`tasks.checkpoint_version`) and, before the slice's verdict, on an open row (`fencedTaskUpdate`) | `lineageFailureInjection` §3 |
 | D2 | A verifier purchase is deduped only by the checkpointed `spend_ledger`; a lost end-of-slice write (or a worker dying after verification) makes the next slice buy the same verification again, same idempotency key | `verificationLostWrite` |
-| D3 | A replenishment page still running at slice end is never adopted: the next decision is `awaiting_provider_run`, so no replenishment debt is passed and the page is never re-asked; the lineage waits to the continuation ceiling | `lineageFailureInjection` §6 |
-| D4 | The LAST slice's result write is lost: the lineage is released `terminal` from memory, the worker reads the stale row (`continuation_required`) and releases the queue `resumable`, and `claim_next_lead_mission` never claims a row whose lineage is terminal — the queue row is stranded and never reconciled | `lineageFailureInjection` §1, seeded schedules |
+| D3 (fixed) | A replenishment page or re-planned query still running at slice end was never adopted: discovery re-asks only its own strategy, and once the replenishment slice ended it was marked done, so the lineage waited to the continuation ceiling. The engine now records the selection that started a pending discovery run and reopens discovery DRAIN-ONLY to ask it again, adoption-only; `pendingFor` reads runs pending now, not the attempt history; and `awaitedPendingRuns` bounds the wait (`PENDING_RUN_MAX_POLLS`, `PENDING_RUN_MAX_WAIT_MS`) | `lineageFailureInjection` §6 |
+| D4 (fixed) | The LAST slice's result write is lost: the lineage is released `terminal` from memory, the worker read the stale row (`continuation_required`) and released the queue `resumable`, and `claim_next_lead_mission` never claims a row whose lineage is terminal — the queue row was stranded. The worker now asks the lineage row when the task row says the run did not end (`mapTaskOutcome(row, lineage)`); the terminal release reconciles task and plan to the lineage's verdict | `lineageFailureInjection` §1, seeded schedules |
 
 Lab fidelity notes: `replayEngineSlice` passes the production `readPendingRun`
 (run-agent always does), so a pending provider run is adopted by run id; the

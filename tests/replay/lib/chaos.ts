@@ -59,6 +59,7 @@ import { terminalStatusOf } from "../../../supabase/functions/_shared/leadMissio
 import type { CheckpointSnapshot } from "../../../supabase/functions/_shared/leadCapabilityEngine.ts";
 import { createLeadMissionRunner } from "../../../worker/leadMissionRunner.ts";
 import type { RunAgentRunOptions } from "../../../supabase/functions/run-agent/index.ts";
+import type { FixtureProviderResponse } from "./fixture.ts";
 import { FixtureProvider } from "./provider.ts";
 import {
   type FencedTaskDb, type FencedTaskQuery, fencedTaskUpdate, OPEN_RESULT_FILTER, resolveSliceGeneration, type SliceFence,
@@ -146,6 +147,8 @@ export class ChaosLab {
   }> = [];
   /** What the worker's terminal reconciliation found and wrote. */
   readonly reconciled: Array<{ violations: string[]; written: string[]; remaining: string[] }> = [];
+  /** A run's "still executing" answers, counted across the lineage's slices (`still_running_polls`). */
+  private readonly providerPolls = new Map<FixtureProviderResponse, number>();
   /** Every handler invocation, answered or not: the slice attempt number. */
   invocations = 0;
   private killed = false;
@@ -220,13 +223,17 @@ export class ChaosLab {
   // ── THE TRANSPORT'S LEDGER ─────────────────────────────────────────────────
 
   private providerFor(attempt: number): FixtureProvider {
-    const p = new FixtureProvider(this.fx.provider_responses, { runIdPrefix: `a${attempt}-` });
+    const p = new FixtureProvider(this.fx.provider_responses, { runIdPrefix: `a${attempt}-`, polls: this.providerPolls });
     const invoke = p.invoke;
     p.invoke = async (call) => {
       const spec = call.providerCallSpec;
       const row: LedgerRow = {
         task_id: this.taskId, capability: call.actorKey, provider_id: call.actorKey, provider_run_id: null, dataset_id: null,
-        status: "started", request_input: { input: call.input ?? {}, provider_call_spec: spec ?? null },
+        status: "started", request_input: {
+          input: call.input ?? {}, provider_call_spec: spec ?? null,
+          // As the transport records an adoption (`auditInput.resume_run_id`).
+          ...(call.resumeRunId ? { resume_run_id: call.resumeRunId } : {}),
+        },
         idempotency_key: spec?.idempotency_key ?? null, estimate_usd: spec?.cost.estimate_usd ?? null,
         started_at: new Date(Date.UTC(2026, 9, 12, 0, 0, this.ledger.length)).toISOString(), created_at: null,
         attempt, reused: !!call.resumeRunId,
@@ -503,7 +510,10 @@ export class ChaosLab {
       () => releaseLineageLease({
         db: this.rpcFailing(() => failingLease), lineageId: this.taskId, workspaceId: REPLAY_WORKSPACE,
         holderTaskId: this.taskId, expectedVersion: lease.stateVersion,
-        nextState: { [LINEAGE_PROGRESS_KEY]: f.progress }, madeProgress: !f.progress.barren_slices,
+        // run-agent's `mergeLineageState(…)`: the slice's verdict rides in the
+        // same call that marks the row terminal.
+        nextState: { terminal_status: terminal ?? "continuation_required", [LINEAGE_PROGRESS_KEY]: f.progress },
+        madeProgress: !f.progress.barren_slices,
         ...(lineageIsFinished(f.decision as never) ? { terminalReason: String(f.decision.reason) } : {}),
       }),
       (r) => !r.released && "reason" in r && r.reason === "release_unavailable",
@@ -557,6 +567,13 @@ export class ChaosLab {
           lineage_slices: typeof progress?.continuations_used === "number" ? progress.continuations_used : null,
           continuation_decision: (result.auto_continuation as { decision?: string } | undefined)?.decision ?? null,
         };
+      },
+      // worker/main.ts `readLineageOutcome`.
+      readLineageOutcome: async (lineageId) => {
+        const r = (await this.lab.db.query<{ status: string | null; terminal_reason: string | null; ts: string | null }>(
+          `select status, terminal_reason, current_state->>'terminal_status' as ts from public.lead_lineages where lineage_id = $1`,
+          [lineageId])).rows[0];
+        return r ? { status: r.status, terminal_reason: r.terminal_reason, terminal_status: r.ts } : null;
       },
     });
     return {

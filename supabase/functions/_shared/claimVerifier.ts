@@ -101,7 +101,14 @@ export type VerifierCallOutcome =
   | { status: "running"; run_id: string; provider_call_id: string }
   /** Nothing was bought: budget, readiness, or a provider that refuses this mission. */
   | { status: "refused"; reason: string }
-  | { status: "failed"; reason: string };
+  | { status: "failed"; reason: string }
+  /**
+   * NOT STARTED: the slice's deadline, a cancellation or a lost lease stopped
+   * it before anything was reserved or sent (`verificationStop.ts`). Unlike a
+   * refusal it says nothing about the company or the route — the claim stays
+   * unanswered, and a run being adopted stays pending, for the next slice.
+   */
+  | { status: "deferred"; reason: string };
 
 export interface VerifierDeps {
   call(c: VerifierCall): Promise<VerifierCallOutcome>;
@@ -109,6 +116,12 @@ export interface VerifierDeps {
   ready(actorKey: string): boolean;
   now(): string;
   log(event: string, meta?: Record<string, unknown>): void;
+  /**
+   * Non-null once the slice may start no further external operation — asked
+   * before work that does not go through `call` (a page collection, a model
+   * re-grounding). `call` itself answers `deferred` once stopped. Absent: never.
+   */
+  stop?(op?: string | null): { reason: string; detail: string } | null;
 }
 
 /** A provider run a verifier is waiting on, carried in the checkpoint. */
@@ -122,6 +135,13 @@ export interface PendingVerifierRun {
   started_at: string;
   /** What the verifier already knows about these companies, to finish the decision on adoption. */
   carry?: Record<string, unknown>;
+  /**
+   * NOT A PROVIDER RUN. Verification the slice's stop cut short after part of
+   * it was bought (Atomus read, Pvalyou not yet asked): carried so the next
+   * slice finishes it from what was bought instead of buying it again. Its
+   * `run_id` is empty and it is never counted as a provider run in flight.
+   */
+  deferred?: boolean;
 }
 
 export interface VerifierFinding {

@@ -107,6 +107,11 @@ const discoveredOf = (t: VerificationTarget): FundingRecordFact[] => (t.graph ? 
 const heldAtomusOf = (t: VerificationTarget): FundingRecordFact | null =>
   discoveredOf(t).find((r) => r.actor === ATOMUS_FUNDING_ACTOR_KEY) ?? null;
 
+/** Pending stages for Pvalyou steps a stopped slice deferred (`PendingVerifierRun.deferred`). */
+export const DEFERRED_PVALYOU_STAGE = "pvalyou_deferred" as const;
+export const DEFERRED_PVALYOU_RECENCY_STAGE = "pvalyou_recency_deferred" as const;
+type DeferredFundingStage = typeof DEFERRED_PVALYOU_STAGE | typeof DEFERRED_PVALYOU_RECENCY_STAGE;
+
 export interface FundingStageVerifierOptions {
   /**
    * Ask Pvalyou when Atomus leaves a recency claim open. Off for the funding
@@ -158,6 +163,35 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
         }
       };
 
+      // ── STOPPED BEFORE A PVALYOU READ (deadline, cancellation, lost lease) ──
+      //
+      // Not an answer: no finding marks the route, so the claim stays open.
+      // What THIS slice already bought is not bought again:
+      //   * the Atomus record is recorded as evidence (`heldAtomusOf` reads it);
+      //   * the whole step — targets, Atomus answers INCLUDING "no record",
+      //     inputs — is carried as a `deferred` pending entry, so the next slice
+      //     asks Pvalyou from it. Without the carry a company Atomus had no
+      //     record for would be re-batched and its Atomus read bought twice.
+      // The carried companies are held from other verifiers until it resumes,
+      // exactly as a running Pvalyou run's are.
+      const deferAfterAtomus = (carry: PvalyouCarry, reason: string, stage: DeferredFundingStage) => {
+        for (const t of carry.targets) {
+          const atomus = carry.atomus[t.company_key] ?? null;
+          if (!atomus) continue;
+          findings.push({
+            company_key: t.company_key, answered: false,
+            item: fundingRecordEvidenceItem({ company_key: t.company_key, record: atomus, mission_id: ctx.mission_id, observed_at: at }),
+            detail: { stage, deferred: true, reason },
+          });
+        }
+        pending.push({
+          verifier: FUNDING_STAGE_VERIFIER_KEY, stage, actor_key: PVALYOU_FUNDING_ACTOR_KEY, run_id: "",
+          input: {}, candidate_keys: carry.targets.map((t) => t.company_key), started_at: at,
+          carry: carry as unknown as Record<string, unknown>, deferred: true,
+        });
+        deps.log("funding_verifier_deferred", { stage, companies: carry.targets.length, reason });
+      };
+
       const runPvalyou = async (carry: PvalyouCarry, resume?: PendingVerifierRun) => {
         const input = resume?.input ?? {
           tier: "basic", companies: carry.targets.map((t) => carry.inputs[t.company_key]),
@@ -174,6 +208,16 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
             started_at: resume?.started_at ?? at, carry: carry as unknown as Record<string, unknown>,
           });
           deps.log("funding_verifier_run_pending", { run_id: out.run_id, companies: carry.targets.length });
+          return;
+        }
+        if (out.status === "deferred") {
+          // An adoption not even asked: the SAME run, carried unchanged.
+          if (resume) {
+            pending.push(resume);
+            deps.log("funding_verifier_run_carried", { run_id: resume.run_id, stage: "pvalyou" });
+          } else {
+            deferAfterAtomus(carry, out.reason, DEFERRED_PVALYOU_STAGE);
+          }
           return;
         }
         // Refused or failed: nothing to cite. atomus alone can still FAIL (already
@@ -235,6 +279,16 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
           deps.log("funding_recency_fallback_pending", { run_id: out.run_id, companies: carry.targets.length });
           return;
         }
+        if (out.status === "deferred") {
+          // Never asked, so never "attempted": the fallback stays available.
+          if (resume) {
+            pending.push(resume);
+            deps.log("funding_verifier_run_carried", { run_id: resume.run_id, stage: "pvalyou_recency" });
+          } else {
+            deferAfterAtomus(carry, out.reason, DEFERRED_PVALYOU_RECENCY_STAGE);
+          }
+          return;
+        }
         const reads = out.status === "ok" ? out.rows.map(normalizePvalyouFunding) : [];
         if (out.status !== "ok") deps.log("funding_recency_fallback_unavailable", { status: out.status, reason: out.reason });
         for (const t of carry.targets) {
@@ -257,6 +311,13 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
       }
       for (const p of ctx.pending.filter((x) => x.verifier === FUNDING_STAGE_VERIFIER_KEY && x.stage === "pvalyou_recency")) {
         await runRecencyFallback(p.carry as unknown as PvalyouCarry, p);
+      }
+      // …and the steps a stopped slice deferred: asked now, from what it bought.
+      for (const p of ctx.pending.filter((x) => x.verifier === FUNDING_STAGE_VERIFIER_KEY && x.deferred)) {
+        const carry = p.carry as unknown as PvalyouCarry | undefined;
+        if (!carry?.targets?.length) continue;
+        if (p.stage === DEFERRED_PVALYOU_STAGE) await runPvalyou(carry);
+        else if (p.stage === DEFERRED_PVALYOU_RECENCY_STAGE) await runRecencyFallback(carry);
       }
       const inFlight = new Set(ctx.pending.flatMap((p) => p.candidate_keys));
       const fresh = targets.filter((t) => !inFlight.has(t.company_key));
@@ -301,6 +362,10 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
             // The call is written on the record, so it survives the merge.
             atomusRecords[t.company_key] = r?.record ? stampFundingCall(r.record, atomusCallId) : null;
           }
+        } else if (out.status === "deferred") {
+          // Nothing bought, nothing answered: every fresh company stays open.
+          deps.log("funding_verifier_deferred", { stage: "atomus", companies: withPage.length, reason: out.reason });
+          return { findings, pending };
         } else {
           deps.log("funding_verifier_atomus_unavailable", { status: out.status, reason: (out as { reason?: string }).reason });
         }

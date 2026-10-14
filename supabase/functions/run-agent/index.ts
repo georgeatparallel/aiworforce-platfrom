@@ -161,7 +161,7 @@ import { formatFunnel, unbalancedStages } from "../_shared/leadMissionFunnel.ts"
 // P2 path that actually buys pages for them, and runs only under
 // EVIDENCE_ENRICHMENT=execute.
 import { computeEvidenceDebts } from "../_shared/webEvidenceDebt.ts";
-import { runEvidenceCollection } from "../_shared/webEvidenceRunner.ts";
+import { recordMapMemory, runEvidenceCollection } from "../_shared/webEvidenceRunner.ts";
 import { reevaluateWithWebEvidence } from "../_shared/webEvidenceReevaluation.ts";
 import { regroundPendingClaims } from "../_shared/webEvidenceRegrounding.ts";
 import { selectCompanyPages } from "../_shared/webEvidenceSelection.ts";
@@ -176,6 +176,7 @@ import { applyVerifierFinding, markRouteUnaffordable } from "../_shared/leadCapa
 import { attemptedRoutes, ledgerAffordability, ledgerBoundCall } from "../_shared/claimVerifier.ts";
 import { verifierSpecCompiler } from "../_shared/verifierCallSpec.ts";
 import { runClaimVerificationPhase } from "../_shared/claimVerificationPhase.ts";
+import { verificationStopGate, type VerificationStop } from "../_shared/verificationStop.ts";
 import { buildClaimPlan } from "../_shared/claimPlan.ts";
 import {
   businessModelVerifier, claimPageBudget, claimPageDebts, claimPagePlan,
@@ -431,7 +432,7 @@ import {
   releaseLineageLease, type RpcDb as LeaseRpcDb,
 } from "../_shared/lineageLease.ts";
 import {
-  decideAutoContinuation, settleV2Outcome, foldSlice, readLineageProgress, lineageIsFinished,
+  awaitedPendingRuns, decideAutoContinuation, settleV2Outcome, foldSlice, readLineageProgress, lineageIsFinished,
   claimProgressCount, resolveMaxContinuations, resolveMaxLineageCostUnits,
   AUTO_CONTINUATION_VERSION, LINEAGE_PROGRESS_KEY, type LineageProgress,
 } from "../_shared/leadAutoContinuation.ts";
@@ -1271,6 +1272,15 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // One line per major phase, with time since the invocation started and since
   // the previous phase. Query B d22d9ee6's slice 4 ran 6.5 minutes against a
   // 300-second ceiling and nothing said where.
+  // ── VERIFICATION CUT SHORT BY THE SLICE'S STOP ─────────────────────────────
+  //
+  // Set when the claim-verification phase withheld work because the deadline,
+  // a cancellation or a lost lease said stop (`verificationStop.ts`). Read by
+  // the continuation fold: such a slice deferred work by the clock, which is
+  // not evidence the pool is barren.
+  let verificationStoppedBy: VerificationStop | null = null;
+  /** Armed only for the duration of the claim-verification phase (`baseCtx.stopWaiting`). */
+  let verificationWaitStop: (() => boolean) | null = null;
   let lastPhaseAt = invocationStartMs;
   const markPhase = (name: string, extra: Record<string, unknown> = {}) => {
     const now = Date.now();
@@ -1743,6 +1753,12 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
       // Resolved attribution, not the raw body value: the orchestrated path is
       // reachable from a browser too, so it must honour the same trust boundary.
       user_id: taskUserId,
+      // STOP WAITING ON A STARTED APIFY RUN — never stop the run. Inert (null)
+      // except while the claim-verification phase runs, which arms it with its
+      // stop gate: once the slice must stop, a verifier's run stays pending,
+      // its id already recorded, and the next slice adopts it. The engine and
+      // the funding screen run before the phase, so their waits are unchanged.
+      stopWaiting: () => verificationWaitStop?.() ?? false,
     };
 
     // 1) Firecrawl scrape — if instruction/input contains URLs.
@@ -5256,6 +5272,14 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 const engineRun = capabilityRun;
                 const vState = engineRun.state;
                 const vMission = persistedMission;
+                // ── THE SLICE'S STOP, ASKED BEFORE EVERY EXTERNAL OPERATION ────
+                //
+                // The run's own deadline — the worker's revocable one, revoked on
+                // a lost lease or a cancellation — at the engine's checkpoint
+                // reserve. Every verifier call, every page and map, and every
+                // re-grounding model call asks it first; once it says stop,
+                // nothing new starts and what is deferred stays open.
+                const verificationGate = verificationStopGate(terminalGuard.deadline);
                 // Under the mission's readiness, as at the compile site and in
                 // the engine: a round stage is hard exactly when a verifier this
                 // mission may run can prove it.
@@ -5305,6 +5329,10 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                     const run = await runEvidenceCollection({
                       workspace_id, debts, budget: claimPageBudget(debts.length, intents, maxPages),
                       deps: {
+                        stop: (op) => verificationGate.check(op ?? null),
+                        // A map bought earlier in this mission is recalled, never
+                        // asked again (and never lost to the ledger's idempotent skip).
+                        mapMemory: recordMapMemory(engineRun.state.web_evidence_map_selections ??= {}),
                         plan: () => Promise.resolve(claimPagePlan(debts, intents)),
                         extract: null,
                         db: supabase,
@@ -5449,6 +5477,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 });
                 // ONE compiler for the purchase AND the affordability gate.
                 const vSpec = await verifierSpecFor(vState);
+                verificationWaitStop = () => verificationGate.check() !== null;
                 const phase = await runClaimVerificationPhase({
                   mission_id: String(task.id),
                   claim_plan: claimPlan,
@@ -5465,7 +5494,8 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   verifiers: [fundingStageVerifier(), businessModel, ...(hiringVerifier ? [hiringVerifier] : [])],
                   readiness: leadReadiness,
                   unavailable,
-                  pending: vState.verifier_pending_runs ?? [],
+                  // Provider runs in flight, then steps a stopped slice deferred.
+                  pending: [...(vState.verifier_pending_runs ?? []), ...(vState.verifier_deferred_steps ?? [])],
                   deps: {
                     // THE SAME SPINE AS EVERY ENGINE CALL: a ProviderCallSpec
                     // (readiness, contract, units, estimate vs ceiling), the
@@ -5490,13 +5520,23 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                     const company = engineRun.companies.find((c) => c.key === key);
                     if (company) markRouteUnaffordable(company, verifier);
                   },
+                  // Deadline, cancellation, lost lease: nothing new starts.
+                  stop: verificationGate,
                   log: verifierLog,
                 });
-                markPhase("claim_verification");
+                verificationWaitStop = null;
+                markPhase("claim_verification", phase.stopped_by ? { stopped_by: phase.stopped_by.reason } : {});
+                // Carried in the checkpoint: provider runs still executing (or a
+                // stopped slice did not get to adopt), each with its run id…
                 vState.verifier_pending_runs = phase.pending;
+                // …and, apart from them, steps the stop deferred after a partial
+                // purchase — never counted as a run in flight.
+                vState.verifier_deferred_steps = phase.deferred_steps ?? [];
+                verificationStoppedBy = phase.stopped_by ?? null;
                 console.log("[run-agent][claim-verifier]", {
                   task_id: task.id, order: phase.order, ran: phase.ran, stopped: phase.stopped, irrelevant: phase.irrelevant,
                   pending_runs: phase.pending.length,
+                  stopped_by: phase.stopped_by ?? null, deferred: phase.deferred ?? [],
                 });
                 // ── SETTLE WHAT THE VERIFIERS BOUGHT ─────────────────────────
                 //
@@ -5526,6 +5566,8 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 if (phase.changed > 0) engineRun.resume_records = engineRun.companies.map(toResumeRecord);
               } catch (e) {
                 console.error("[run-agent][claim-verifier][failed]", String(e));
+              } finally {
+                verificationWaitStop = null;
               }
             }
 
@@ -6701,6 +6743,10 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             (c) => wasInvestigated(c.investigation_state)).length
           : 0;
         const progress = foldSlice(priorProgress, {
+          // ── A SLICE THE CLOCK CUT SHORT PROVES NOTHING EITHER WAY ──────
+          // Verification work deferred by the deadline, a cancellation or a
+          // lost lease is still owed; such a slice does not count as barren.
+          deferredByStop: verificationStoppedBy !== null,
           // Lead V2: the canonical count. V1: the legacy Brain verdict.
           qualifiedInPool: p5Decision ? p5Decision.qualified : sliceQualified,
           uniqueCompaniesInvestigatedInPool: uniqueInvestigated,
@@ -6780,7 +6826,10 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           // was still executing, and then abandon its 1,394 rows.
           // …and a claim verifier's provider run still executing (a pvalyou cold
           // read outlives a slice): adopted next slice, never re-bought.
-          pendingRuns: (capabilityRun?.state.pending_runs?.length ?? 0) +
+          // D3: a run asked again PENDING_RUN_MAX_POLLS times, or past
+          // PENDING_RUN_MAX_WAIT_MS, stops holding the lineage
+          // (`awaitedPendingRuns`); it stays listed, so it is still adopted.
+          pendingRuns: awaitedPendingRuns(capabilityRun?.state.pending_runs, Date.now()).awaited +
             (capabilityRun?.state.verifier_pending_runs?.length ?? 0),
           // ── CAN ANYTHING STILL WIDEN THE POOL? ──────────────────────────
           //
