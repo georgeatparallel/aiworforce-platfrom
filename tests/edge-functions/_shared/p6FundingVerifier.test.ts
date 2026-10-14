@@ -521,7 +521,7 @@ Deno.test("run-agent runs the verifiers on canonical gaps, before the view, boun
     ") => ledgerBoundCall({",
     "spec: spec ?? await verifierSpecFor(vState),",
     "call: await verifierCallFor(vState, vSpec),",
-    "call: await verifierCallFor(state),",
+    "const call = await verifierCallFor(state);",
     // The verifier path is the spine: spec, guard, readiness-aware criteria, settlement.
     "const verifierSpecFor = async (vState: CapabilityExecutionState) => verifierSpecCompiler({",
     "invoke: guardedInvoker(null, (call) => capabilityInvoke(call),",
@@ -529,7 +529,7 @@ Deno.test("run-agent runs the verifiers on canonical gaps, before the view, boun
     `console.log("[run-agent][p2-spine][claim-verifier]"`,
     "return company ? applyVerifierFinding(company, f, verifier) : false;",
     "engineRun.resume_records = engineRun.companies.map(toResumeRecord)",
-    "(capabilityRun?.state.verifier_pending_runs?.length ?? 0)",
+    "awaitedPendingRuns(capabilityRun?.state.verifier_pending_runs?.filter((p) => !p.deferred), Date.now()).awaited",
   ]) assert(src.includes(wired), `run-agent must carry: ${wired}`);
 });
 

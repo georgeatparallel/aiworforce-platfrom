@@ -137,6 +137,12 @@ export interface PendingVerifierRun {
   /** What the verifier already knows about these companies, to finish the decision on adoption. */
   carry?: Record<string, unknown>;
   /**
+   * Slices that asked this run again and found it still executing. With
+   * `started_at`, what bounds how long it may hold the lineage
+   * (`awaitedPendingRuns`, PENDING_RUN_MAX_POLLS / PENDING_RUN_MAX_WAIT_MS).
+   */
+  polls?: number;
+  /**
    * NOT A PROVIDER RUN. Verification the slice's stop cut short after part of
    * it was bought (Atomus read, Pvalyou not yet asked): carried so the next
    * slice finishes it from what was bought instead of buying it again. Its

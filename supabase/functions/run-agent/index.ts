@@ -4313,14 +4313,32 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   plan: fundingScreen.plan,
                   recentlyChecked: recentlyFundingChecked,
                   priorSearches: priorFundingScreenSearches,
-                  screen: async (targets, state) => (await fundingStageVerifier({ fallback: false }).verify(targets, {
-                    call: await verifierCallFor(state),
-                    now: () => new Date().toISOString(),
-                    log: (event, meta) => console.log(`[run-agent][funding-screen][${event}]`, { task_id: task.id, ...(meta ?? {}) }),
-                    ready: (actor) => routeActorReady(actor, "funding_verification", leadReadiness).ready &&
-                      unavailableProvider(state.unavailable_providers, actor,
-                        leadReadiness.decide(actor, "funding_verification").readiness, readEnvSafe) === null,
-                  }, { mission_id: String(task.id), pending: [] })).findings,
+                  // The screen's own reads still owed (`funding_screen.pending`) are
+                  // resumed — adopted by run id, never bought again — and the reads it
+                  // still owes are handed back, so the engine never marks a screen
+                  // complete before its paid read has answered.
+                  screen: async (targets, state, pending) => {
+                    const call = await verifierCallFor(state);
+                    // DEADLINE, CANCELLATION, LOST LEASE: the same gate the
+                    // verification phase asks before every call. A stopped screen
+                    // buys nothing and adopts nothing; its companies stay owed.
+                    const gate = verificationStopGate(terminalGuard.deadline);
+                    const r = await fundingStageVerifier({ fallback: false }).verify(targets, {
+                      call: (c) => {
+                        const stop = gate.check();
+                        return stop
+                          ? Promise.resolve({ status: "deferred" as const, reason: `${stop.reason}: ${stop.detail}` })
+                          : call(c);
+                      },
+                      now: () => new Date().toISOString(),
+                      log: (event, meta) => console.log(`[run-agent][funding-screen][${event}]`, { task_id: task.id, ...(meta ?? {}) }),
+                      ready: (actor) => routeActorReady(actor, "funding_verification", leadReadiness).ready &&
+                        unavailableProvider(state.unavailable_providers, actor,
+                          leadReadiness.decide(actor, "funding_verification").readiness, readEnvSafe) === null,
+                      stop: (op) => gate.check(op ?? null),
+                    }, { mission_id: String(task.id), pending });
+                    return { findings: r.findings, pending: r.pending };
+                  },
                 },
               } : {}),
               runBudget,
@@ -6847,8 +6865,16 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           // D3: a run asked again PENDING_RUN_MAX_POLLS times, or past
           // PENDING_RUN_MAX_WAIT_MS, stops holding the lineage
           // (`awaitedPendingRuns`); it stays listed, so it is still adopted.
+          // The funding screen's own read, and a verifier's run, are bounded the
+          // same way: polled and aged, they stop holding the lineage too (a
+          // carried step a stop deferred is never a run in flight).
           pendingRuns: awaitedPendingRuns(capabilityRun?.state.pending_runs, Date.now()).awaited +
-            (capabilityRun?.state.verifier_pending_runs?.length ?? 0),
+            awaitedPendingRuns(capabilityRun?.state.verifier_pending_runs?.filter((p) => !p.deferred), Date.now()).awaited +
+            awaitedPendingRuns(capabilityRun?.state.funding_screen?.pending?.filter((p) => !!p.run_id), Date.now()).awaited +
+            // A screen a stop deferred has no run yet, but is still owed an answer.
+            (capabilityRun?.state.funding_screen && capabilityRun.state.funding_screen.screened !== true &&
+              (capabilityRun.state.funding_screen.waits ?? 0) > 0 &&
+              !(capabilityRun.state.funding_screen.pending ?? []).some((p) => !!p.run_id) ? 1 : 0),
           // ── CAN ANYTHING STILL WIDEN THE POOL? ──────────────────────────
           //
           // Read from the engine's own record of how discovery ended, never
