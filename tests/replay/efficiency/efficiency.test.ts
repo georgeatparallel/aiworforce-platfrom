@@ -225,6 +225,17 @@ Deno.test("[claims] efficiency: missing and expired evidence remains UNKNOWN and
     null,
     "No recorded price means no invented estimate",
   );
+  run.companies[0].independent_label = "MATCH";
+  assertEquals(routingMetrics(run).supported_matches, 1);
+  run.companies[0].independent_label = "NON_MATCH";
+  assertEquals(routingMetrics(run).unsupported_matches, 1);
+  run.companies[0].independent_label = "MATCH";
+  run.companies[0].evidence[0].value = "Canada";
+  assertEquals(
+    routingMetrics(run).false_exclusions,
+    fraction(1, 1),
+    "A reviewed MATCH excluded by contradictory provider proof counts as a false exclusion in the synthetic scorer control",
+  );
 });
 
 Deno.test("[claims] efficiency: malformed duplicate trace rows are rejected and synthetic prices cannot masquerade as recorded spend", () => {
