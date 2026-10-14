@@ -3,7 +3,7 @@
 import { assert, assertEquals, assertFalse } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { parseLeadMissionDeterministic } from "../../../supabase/functions/_shared/leadMission.ts";
 import {
-  excludeV2OwnedTasks, prepareV2LeadCount, loadV2OwnedTaskIds, mapRefusal, mapTaskOutcome,
+  excludeV2OwnedTasks, prepareV2LeadCount, loadV2OwnedTaskIds, loadV2OwnedTaskIdsStrict, mapRefusal, mapTaskOutcome,
   missionFromKickoff, queueStatusFor, terminalStatusOf, validateV2KickoffBody, withResume,
   type QueueLookupDb,
 } from "../../../supabase/functions/_shared/leadMissionV2Request.ts";
@@ -120,4 +120,27 @@ Deno.test("V2 ownership lookup is tolerant: any failure reads as 'no V2 tasks'",
   assertEquals((await loadV2OwnedTaskIds(db(async () => ({ data: null, error: { message: "relation does not exist" } })), ["a"])).size, 0);
   assertEquals((await loadV2OwnedTaskIds(db(async () => { throw new Error("network"); }), ["a"])).size, 0);
   assertEquals((await loadV2OwnedTaskIds(db(async () => ({ data: [{ task_id: "x" }], error: null })), [])).size, 0);
+});
+
+Deno.test("V2 ownership, STRICT (the sweeper): an unreadable answer is null — never 'no V2 tasks' — while an absent table still means none", async () => {
+  const db = (res: { data?: unknown; error?: unknown } | "throw") => ({
+    from: () => ({ select: () => ({ in: () => res === "throw" ? Promise.reject(new Error("socket")) : Promise.resolve({ data: res.data ?? null, error: res.error ?? null }) }) }),
+  });
+  assertEquals(await loadV2OwnedTaskIdsStrict(db({ data: [{ task_id: "t1" }, { task_id: null }] }) as never, ["t1", "t2"]), new Set(["t1"]));
+  assertEquals(await loadV2OwnedTaskIdsStrict(db({ error: { code: "57014", message: "statement timeout" } }) as never, ["t1"]), null);
+  assertEquals(await loadV2OwnedTaskIdsStrict(db("throw") as never, ["t1"]), null);
+  assertEquals(await loadV2OwnedTaskIdsStrict(db({ data: "nonsense" }) as never, ["t1"]), null);
+  for (const error of [{ code: "42P01", message: "relation \"lead_mission_queue\" does not exist" }, { code: "PGRST205", message: "Could not find the table" }]) {
+    assertEquals(await loadV2OwnedTaskIdsStrict(db({ error }) as never, ["t1"]), new Set(), error.code);
+  }
+  assertEquals(await loadV2OwnedTaskIdsStrict(db("throw") as never, []), new Set(), "nothing to ask about");
+  // The tolerant read is unchanged for its other callers.
+  assertEquals(await loadV2OwnedTaskIds(db({ error: { code: "57014" } }) as never, ["t1"]), new Set());
+});
+
+Deno.test("V2 ownership: the stalled-lead sweeper skips its pass when ownership is unreadable", () => {
+  const src = Deno.readTextFileSync(new URL("../../../supabase/functions/resume-stalled-leads/index.ts", import.meta.url));
+  assert(src.includes("await loadV2OwnedTaskIdsStrict(admin as never, rows.map((r) => r.id));"));
+  assert(src.includes('return json({ skipped: "v2_ownership_unreadable", candidates: rows.length });'));
+  assert(!src.includes("await loadV2OwnedTaskIds(admin"), "the tolerant read is not the sweeper's");
 });

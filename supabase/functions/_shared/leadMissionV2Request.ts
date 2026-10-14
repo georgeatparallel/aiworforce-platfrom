@@ -216,6 +216,34 @@ export interface QueueLookupDb {
  * not yet applied) or any error reads as "no V2 tasks" — there cannot be any
  * then — so this can never stop the V1 sweeper from doing its job.
  */
+/**
+ * The SWEEPER's question, answered strictly: null when it cannot be answered.
+ *
+ * `loadV2OwnedTaskIds` reads any error as "no V2 tasks", which is right while
+ * the queue table may not exist — and wrong for a sweeper that would then
+ * resume (and end the lineage of) a task the V2 worker owns, because one read
+ * failed. An ABSENT table still means none exist (42P01 / PGRST205); any other
+ * failure is "unknown", and the caller skips the pass rather than guess.
+ */
+export async function loadV2OwnedTaskIdsStrict(db: QueueLookupDb, taskIds: string[]): Promise<Set<string> | null> {
+  if (taskIds.length === 0) return new Set();
+  try {
+    const { data, error } = await db.from("lead_mission_queue").select("task_id").in("task_id", taskIds);
+    if (error) {
+      const code = String((error as { code?: unknown }).code ?? "");
+      const msg = String((error as { message?: unknown }).message ?? "");
+      return code === "42P01" || code === "PGRST205" || /relation .* does not exist|could not find the table/i.test(msg)
+        ? new Set() : null;
+    }
+    if (!Array.isArray(data)) return null;
+    return new Set(
+      (data as Array<{ task_id?: string | null }>).map((r) => r.task_id).filter((x): x is string => !!x),
+    );
+  } catch {
+    return null;
+  }
+}
+
 export async function loadV2OwnedTaskIds(db: QueueLookupDb, taskIds: string[]): Promise<Set<string>> {
   if (taskIds.length === 0) return new Set();
   try {

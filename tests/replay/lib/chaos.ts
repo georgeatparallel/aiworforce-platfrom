@@ -154,6 +154,8 @@ export class ChaosLab {
   private killed = false;
   /** Set by `stalledWorker`: the next slice to reach its end-of-slice write waits here. */
   private hold: { reached: () => void; gate: Promise<void> } | null = null;
+  /** A hold right after the lineage lease is taken, before anything is restored or bought. */
+  private leaseHold: { reached: () => void; gate: Promise<void> } | null = null;
   private readonly deps: Record<string, unknown>;
   readonly taskId: string;
   queueId = "";
@@ -404,6 +406,13 @@ export class ChaosLab {
 
     // THIS SLICE'S GENERATION (run-agent `sliceFence`, D1).
     const fence: SliceFence = { generation: await resolveSliceGeneration(this.generationDb as never, this.taskId, claimedVersion) };
+    if (this.leaseHold) {
+      const h = this.leaseHold;
+      this.leaseHold = null;
+      this.note(attempt, "stalled_after_lease");
+      h.reached();
+      await h.gate;
+    }
 
     // 3. RESTORE: the checkpoint, plus what the ledger knows that it does not.
     const prior = (await this.taskRow())?.result ?? null;
@@ -475,6 +484,8 @@ export class ChaosLab {
       await h.gate;
     }
     // 6. THE END-OF-SLICE WRITE.
+    /** run-agent `sliceSuperseded`: the fence refused this slice's verdict. */
+    let superseded = false;
     if (this.fault(attempt, "end_write_lost")) {
       this.note(attempt, "end_write_lost");
     } else {
@@ -487,6 +498,7 @@ export class ChaosLab {
         company_first_state: { terminal_status: terminal },
       }), terminal ? "complete" : "ready", fence, true);
       if (w.fenced) this.note(attempt, "end_write_fenced", { generation: fence.generation });
+      superseded = w.fenced;
     }
 
     // 7. RELEASE THE CLAIM — retried on a transient failure, exactly as run-agent.
@@ -504,7 +516,13 @@ export class ChaosLab {
     }
     // 8. RELEASE THE LINEAGE — the completion barrier. Retried only on
     // `release_unavailable`; terminal only for an ending that leaves nothing to
-    // resume (`lineageIsFinished`), exactly as run-agent.
+    // resume (`lineageIsFinished`), exactly as run-agent. NOT by a superseded
+    // slice: the holder is the task id the live generation shares, so its
+    // release would clear that generation's lease and write stale state.
+    if (superseded) {
+      this.note(attempt, "lineage_release_skipped", { reason: "superseded" });
+      return respond(200, { success: true, superseded: true, terminal, decision: String(f.decision.reason) });
+    }
     const failingLease = this.fault(attempt, "lineage_release_fails");
     const { result: rel } = await retryTransient(
       () => releaseLineageLease({
@@ -658,6 +676,28 @@ export class ChaosLab {
     const done = this.tick();
     await Promise.race([atEnd, done.then(() => { throw new Error("the stalled worker never reached its end-of-slice write"); })]);
     return { resume: async () => { open(); await done; } };
+  }
+
+  /**
+   * A worker that takes the mission over and STALLS right after its lineage
+   * lease, before restoring or buying anything — so a stale worker can wake
+   * while this generation holds the lineage. Ticks until a claim reaches the
+   * hold; `resume()` lets the slice run on.
+   */
+  async stalledAfterLease(maxTicks = 8): Promise<{ resume: () => Promise<void> }> {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    let reached!: () => void;
+    const atLease = new Promise<void>((r) => { reached = r; });
+    this.leaseHold = { reached, gate };
+    for (let i = 0; i < maxTicks; i++) {
+      const done = this.tick();
+      const r = await Promise.race([atLease.then(() => "held" as const), done.then((t) => (t.claimed ? "ran" as const : "idle" as const))]);
+      if (r === "held") return { resume: async () => { open(); await done; } };
+      if (r === "ran") throw new Error("a slice ran without reaching the lease hold");
+      await this.advance(60);
+    }
+    throw new Error("no worker took the mission over");
   }
 
   // ── WHAT A TEST ASSERTS ON ─────────────────────────────────────────────────
