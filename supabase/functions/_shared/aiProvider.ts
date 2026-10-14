@@ -69,7 +69,10 @@ export interface GenerateOpts {
    * `modelSpendCeiling` cannot see. Omitted, nothing is bounded and every
    * existing caller behaves exactly as before.
    */
-  budget?: { check(): { allowed: boolean; exceeded: string | null } };
+  budget?: {
+    check(): { allowed: boolean; exceeded: string | null };
+    reserveAttempt?(model?: string): { allowed: boolean; exceeded: string | null };
+  };
 }
 
 export interface GenerateResult {
@@ -364,7 +367,7 @@ export async function generateText(opts: GenerateOpts): Promise<GenerateResult> 
     // bounded result rather than throwing: the caller gets `ok: false` with a
     // code that names the bound, so a partial answer stays a partial answer
     // instead of becoming an unhandled failure.
-    const verdict = opts.budget?.check();
+    const verdict = opts.budget?.reserveAttempt?.(att.model) ?? opts.budget?.check();
     if (verdict && !verdict.allowed) {
       console.warn("[aiProvider] model budget reached", {
         fn: opts.functionName, task: opts.taskType,

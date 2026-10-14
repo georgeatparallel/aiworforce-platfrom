@@ -318,6 +318,7 @@ export function describeSpend(v: SpendVerdict): Record<string, unknown> {
  * it belongs in configuration where it can be read, not in a constant here.
  */
 export const RUN_MAX_CALLS_ENV = "MODEL_RUN_MAX_CALLS";
+export const RUN_MAX_ALL_CALLS_ENV = "MODEL_RUN_MAX_ALL_CALLS";
 export const RUN_MAX_INPUT_ENV = "MODEL_RUN_MAX_INPUT_TOKENS";
 export const RUN_MAX_OUTPUT_ENV = "MODEL_RUN_MAX_OUTPUT_TOKENS";
 export const RUN_MAX_TOTAL_ENV = "MODEL_RUN_MAX_TOTAL_TOKENS";
@@ -325,11 +326,18 @@ export const RUN_MAX_TOTAL_ENV = "MODEL_RUN_MAX_TOTAL_TOKENS";
 export function resolveRunBudget(read?: EnvReader): {
   max_calls: number; max_input_tokens: number;
   max_output_tokens: number; max_total_tokens: number;
+  max_all_calls?: number; require_priced?: boolean;
 } | null {
   const r = read ?? ((k: string) => (globalThis as { Deno?: { env: { get(k: string): string | undefined } } })
     .Deno?.env.get(k));
-  const calls = Number(String(r(RUN_MAX_CALLS_ENV) ?? "").trim());
-  if (!Number.isFinite(calls) || calls <= 0) return null;
+  const allRaw = r(RUN_MAX_ALL_CALLS_ENV);
+  const all = allRaw === undefined ? undefined : Number(allRaw.trim());
+  const max_all_calls = all === undefined ? undefined : Number.isSafeInteger(all) && all >= 0 && allRaw?.trim() !== "" ? all : 0;
+  const pricedRaw = r("MODEL_RUN_REQUIRE_PRICED");
+  const require_priced = pricedRaw !== undefined && pricedRaw !== "false";
+  const legacy = Number(String(r(RUN_MAX_CALLS_ENV) ?? "").trim());
+  if ((!Number.isFinite(legacy) || legacy <= 0) && max_all_calls === undefined && !require_priced) return null;
+  const calls = Number.isFinite(legacy) && legacy > 0 ? legacy : max_all_calls ?? Number.MAX_SAFE_INTEGER;
   const n = (key: string, fallback: number) => {
     const v = Number(String(r(key) ?? "").trim());
     return Number.isFinite(v) && v > 0 ? v : fallback;
@@ -341,6 +349,8 @@ export function resolveRunBudget(read?: EnvReader): {
     max_input_tokens: input,
     max_output_tokens: output,
     max_total_tokens: n(RUN_MAX_TOTAL_ENV, input + output),
+    ...(max_all_calls === undefined ? {} : { max_all_calls }),
+    ...(require_priced ? { require_priced } : {}),
   };
 }
 

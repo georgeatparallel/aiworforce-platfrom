@@ -123,6 +123,7 @@ export interface BuildBindingInput {
    * rule `leadMissionCompilerBinding` states.
    */
   onModelCall?: GptDeps["onModelCall"];
+  budget?: GptDeps["budget"];
   /**
    * Qualified companies already found. Classification stops once coverage is
    * sufficient for the requested quota — interpreting more companies cannot
@@ -183,7 +184,7 @@ export function buildSemanticClassificationBinding(
   // asked for; it no longer selects anything. No JSON schema is sent — see
   // gptStrategistModel.ts: `plannerWrapper` already owns these shapes.
   const generate = input.generate ??
-    createGptStrategistGenerateJson({ onModelCall: input.onModelCall }, (() => {
+    createGptStrategistGenerateJson({ onModelCall: input.onModelCall, budget: input.budget }, (() => {
     // ROUTED, LIKE EVERY OTHER STAGE. This passed nothing, so it inherited the
     // `reasoning` tier and silently resolved to gpt-4.1 — a model choice made
     // by omission, invisible in the cost trace, for one company's description.

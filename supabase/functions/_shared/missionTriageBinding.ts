@@ -109,6 +109,7 @@ export interface BuildTriageBindingInput {
    * rule `leadMissionCompilerBinding` states.
    */
   onModelCall?: GptDeps["onModelCall"];
+  budget?: GptDeps["budget"];
   /** Candidates expected, so the batch allowance is never larger than the work. */
   poolSize?: number;
   /**
@@ -178,7 +179,7 @@ export function buildMissionTriageBinding(
     pool_size: input.poolSize ?? undefined,
   });
   const generate = input.generate ??
-    createGptStrategistGenerateJson({ onModelCall: input.onModelCall }, {
+    createGptStrategistGenerateJson({ onModelCall: input.onModelCall, budget: input.budget }, {
     // THE ROUTER'S MODEL AND EFFORT. Both these stages run on Luna at effort
     // `none`: they read evidence already paid for, and an undecidable verdict
     // degrades to a defined outcome rather than escalating — so a second model

@@ -2097,6 +2097,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // touches it, so moving it up is free; the drain after the run still
         // sees the same object.
         const modelCalls = new ModelCallCollector(resolveRunBudget());
+        modelCalls.stopBeforeAttempt = () => terminalGuard.deadline.expired();
         pendingModelDrain.arm(
           modelCalls, createLedgerWriter(supabase as never),
           () => task && workspace_id
@@ -2112,8 +2113,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // when none is passed — which builds one with no `onModelCall`, and
             // that is how every strategist call came to be unrecorded.
             provider: createLeadStrategistProvider({
-              onModelCall: modelCalls.sink,
-              budget: modelCalls,
+              onModelCall: modelCalls.sink, budget: modelCalls,
             }).provider,
             workspaceId: workspace_id,
             agentSlug: agent_slug,
@@ -2736,7 +2736,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // and the workspace allow-list must pass.
         const classificationBinding = buildSemanticClassificationBinding({
           workspaceId: workspace_id,
-          onModelCall: modelCalls.sink,
+          onModelCall: modelCalls.sink, budget: modelCalls,
           requestedLeadCount: quota.requestedLeadCount,
         });
 
@@ -2773,7 +2773,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         const modelRouting = new ModelRoutingLedger();
         const missionEvaluationBinding = buildMissionEvaluationBinding({
           workspaceId: workspace_id,
-          onModelCall: modelCalls.sink,
+          onModelCall: modelCalls.sink, budget: modelCalls,
           requestedCount: quota.requestedLeadCount,
           shortlistSize: resolveInvestigationBudget({
             requestedCount: quota.requestedLeadCount,
@@ -2805,7 +2805,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // prequalification verdict stands exactly as it does today.
         const triageBinding = buildMissionTriageBinding({
           workspaceId: workspace_id,
-          onModelCall: modelCalls.sink,
+          onModelCall: modelCalls.sink, budget: modelCalls,
           poolSize: discoveryRows,
           // THE ROUTER'S SIGNAL. Triage is the same work at any quota; what the
           // quota changes is whether a misordering costs a position or a lead.
@@ -2829,7 +2829,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // was already permitted to.
         const groundedBinding = buildGroundedBrainBinding({
           workspaceId: workspace_id,
-          onModelCall: modelCalls.sink,
+          onModelCall: modelCalls.sink, budget: modelCalls,
           originalUserQuery: persistedMission?.original_user_query ?? null,
           missionDirectives: persistedMission?.directives
             ? {
@@ -2852,7 +2852,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // and the engine keeps the per-company path exactly as it was.
         const poolBinding = buildPoolBinding({
           workspaceId: workspace_id,
-          onModelCall: modelCalls.sink,
+          onModelCall: modelCalls.sink, budget: modelCalls,
           originalUserQuery: persistedMission?.original_user_query ?? null,
           missionDirectives: (persistedMission?.directives ?? null) as never,
         });
@@ -2899,7 +2899,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
 
         const multiRoundBinding = buildMultiRoundBinding({
           workspaceId: workspace_id,
-          onModelCall: modelCalls.sink,
+          onModelCall: modelCalls.sink, budget: modelCalls,
         });
         let multiRoundSummary:
           ReturnType<typeof roundSummaryForWorkbench> | null = null;
@@ -3434,7 +3434,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               // `mergeCompanyBrainIntoMission` enforces on the mission itself.
               planDiscovery: makeGptDiscoveryPlanner({
                 readEnv: readEnvSafe,
-                onModelCall: modelCalls.sink,
+                onModelCall: modelCalls.sink, budget: modelCalls,
                 log: (m, meta) => console.log(`[gpt-discovery] ${m}`, meta ?? ""),
               }, {
                 brain: {
@@ -3474,13 +3474,13 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               ...(String(readEnvSafe("LEAD_V2_ROUTE_CONTROL") ?? "").trim().toLowerCase() === "off" ? {} : {
                 controlRoutes: makeGptRouteController({
                   readEnv: readEnvSafe,
-                  onModelCall: modelCalls.sink,
+                  onModelCall: modelCalls.sink, budget: modelCalls,
                   log: (m, meta) => console.log(`[gpt-route-control] ${m}`, meta ?? ""),
                 }, { onRoute: (r) => modelRouting.record(r) }),
               }),
               planExecution: makeGptExecutionPlanner({
                 readEnv: readEnvSafe,
-                onModelCall: modelCalls.sink,
+                onModelCall: modelCalls.sink, budget: modelCalls,
                 log: (m, meta) => console.log(`[gpt-execution-plan] ${m}`, meta ?? ""),
               }, {
                 brain: {
@@ -4912,14 +4912,14 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 if (evidenceMode === "execute" && report.debts.length > 0) {
                   const planRoute = routeModel("evidence_planning");
                   const extractRoute = routeModel("evidence_extraction");
-                  const planGen = createGptStrategistGenerateJson({ onModelCall: modelCalls.sink }, {
+                  const planGen = createGptStrategistGenerateJson({ onModelCall: modelCalls.sink, budget: modelCalls }, {
                     model: planRoute.model,
                     reasoningEffort: planRoute.reasoning_effort,
                     tier: planRoute.tier,
                     purpose: planRoute.stage,
                     reason: planRoute.reason,
                   });
-                  const extractGen = createGptStrategistGenerateJson({ onModelCall: modelCalls.sink }, {
+                  const extractGen = createGptStrategistGenerateJson({ onModelCall: modelCalls.sink, budget: modelCalls }, {
                     model: extractRoute.model,
                     reasoningEffort: extractRoute.reasoning_effort,
                     tier: extractRoute.tier,
@@ -5016,7 +5016,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 const reevalCtx = engineRun?.reevaluation_context ?? null;
                 if (reevalCtx && evidenceMode === "execute") {
                   const reevalRoute = routeModel("mission_evaluation");
-                  const reevalGen = createGptStrategistGenerateJson({ onModelCall: modelCalls.sink }, {
+                  const reevalGen = createGptStrategistGenerateJson({ onModelCall: modelCalls.sink, budget: modelCalls }, {
                     model: reevalRoute.model,
                     reasoningEffort: reevalRoute.reasoning_effort,
                     tier: reevalRoute.tier,
@@ -6680,7 +6680,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   criteria, anchor, candidates,
                   enabled: String(readEnvSafe("LEAD_V2_REASONER") ?? "").trim().toLowerCase() !== "off",
                   reason: makeGptOpportunityReasoner({
-                    readEnv: readEnvSafe, onModelCall: modelCalls.sink,
+                    readEnv: readEnvSafe, onModelCall: modelCalls.sink, budget: modelCalls,
                     log: (m, meta) => console.log(`[gpt-opportunity-reasoner] ${m}`, meta ?? ""),
                   }, { onRoute: (r) => modelRouting.record(r) }),
                 });
@@ -8354,6 +8354,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // strategist transport had before its seam was connected: the seam existed
   // and nothing was passed to it.
   const genericModelCalls = new ModelCallCollector(resolveRunBudget());
+  genericModelCalls.stopBeforeAttempt = () => terminalGuard.deadline.expired();
 
   const ai = await generateText({
     taskType: "agent_execution",

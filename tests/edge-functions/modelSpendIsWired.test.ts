@@ -131,7 +131,7 @@ Deno.test("every binding that defaults its own generate accepts the seam", () =>
       `${b} must accept an onModelCall seam`,
     );
     assert(
-      /createGptStrategistGenerateJson\(\{\s*onModelCall:\s*input\.onModelCall\s*\}/
+      /createGptStrategistGenerateJson\(\{\s*onModelCall:\s*input\.onModelCall,\s*budget:\s*input\.budget\s*\}/
         .test(src),
       `${b} accepts the seam but does not pass it to its default generate, ` +
         `which is the same as not accepting it`,

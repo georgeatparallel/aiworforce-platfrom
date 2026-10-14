@@ -34,6 +34,9 @@
 // provider access. `LedgerWriter` is the only seam, which is what makes the whole
 // lifecycle testable offline.
 
+// Price metadata is pure; modelCostModel imports ExecutionCost as a type only.
+import { canonicalModelId, MODEL_PRICES } from "./modelCostModel.ts";
+
 // TYPE-ONLY, and deliberately so. `modelCostModel` imports `ExecutionCost` from
 // this module, so a value import here would be a cycle. Types are erased, so
 // this one is not.
@@ -1085,10 +1088,13 @@ export interface ModelRunBudget {
   max_input_tokens: number;
   max_output_tokens: number;
   max_total_tokens: number;
+  /** Optional all-attempt cap; request-local, never a durable mission reservation. */
+  max_all_calls?: number;
+  require_priced?: boolean;
 }
 
 export type BudgetBreach =
-  | "calls" | "input_tokens" | "output_tokens" | "total_tokens";
+  | "calls" | "input_tokens" | "output_tokens" | "total_tokens" | "all_calls" | "unknown_price" | "stopped";
 
 export interface ModelBudgetVerdict {
   /** May another model call be made? */
@@ -1107,6 +1113,11 @@ export interface ModelBudgetVerdict {
 
 export class ModelCallCollector {
   private readonly calls: Array<{ telemetry: ModelCallTelemetry; ok: boolean }> = [];
+  private readonly usage: Array<{ telemetry: ModelCallTelemetry; ok: boolean }> = [];
+  private admitted = 0;
+  private uncertainAttempt = false;
+  /** Read at each attempt, including a retry/fallback after cancellation. */
+  stopBeforeAttempt: (() => boolean) | null = null;
   /**
    * Calls already drained by THIS collector. A second drain in the same run —
    * the failure-path flush after the success-path drain — continues the
@@ -1125,11 +1136,27 @@ export class ModelCallCollector {
   /** The `onModelCall` seam, ready to pass to `GptDeps`. */
   readonly sink = (telemetry: ModelCallTelemetry, ok: boolean): void => {
     this.calls.push({ telemetry, ok });
+    this.usage.push({ telemetry, ok });
   };
+
+  /** Synchronous reservation BEFORE transport; pending/failed attempts never refund a slot. */
+  reserveAttempt(model?: string): { allowed: boolean; exceeded: BudgetBreach | null } {
+    if (this.stopBeforeAttempt?.()) return { allowed: false, exceeded: "stopped" };
+    if (this.budget?.require_priced && (!model || !MODEL_PRICES[canonicalModelId(model)])) {
+      return { allowed: false, exceeded: "unknown_price" };
+    }
+    const verdict = this.check();
+    if (!verdict.allowed) return verdict;
+    if (this.budget?.max_all_calls !== undefined) this.admitted++;
+    return { allowed: true, exceeded: null };
+  }
 
   get length(): number {
     return this.calls.length;
   }
+
+  /** No receipt/usage proof: strict pricing mode permits no further paid attempt. */
+  holdUncertainAttempt(): void { this.uncertainAttempt = true; }
 
   /**
    * May another model call be made?
@@ -1144,7 +1171,7 @@ export class ModelCallCollector {
    */
   check(): ModelBudgetVerdict {
     let unpriced = 0, inTok = 0, outTok = 0, pricedCalls = 0, usd = 0;
-    for (const c of this.calls) {
+    for (const c of this.usage) {
       const t = c.telemetry;
       const cost = t.actual_cost_usd ?? t.estimated_cost_usd;
       // `unknown` is the marker `priceModelCall` sets for a model with no
@@ -1170,7 +1197,10 @@ export class ModelCallCollector {
     if (!this.budget) return { ...base, allowed: true, exceeded: null };
     const b = this.budget;
     const exceeded: BudgetBreach | null =
-      unpriced >= b.max_calls ? "calls"
+      this.stopBeforeAttempt?.() ? "stopped"
+        : b.require_priced && (this.uncertainAttempt || unpriced > 0) ? "unknown_price"
+        : b.max_all_calls !== undefined && Math.max(this.admitted, this.usage.length) >= b.max_all_calls ? "all_calls"
+        : unpriced >= b.max_calls ? "calls"
         : inTok >= b.max_input_tokens ? "input_tokens"
         : outTok >= b.max_output_tokens ? "output_tokens"
         : inTok + outTok >= b.max_total_tokens ? "total_tokens"

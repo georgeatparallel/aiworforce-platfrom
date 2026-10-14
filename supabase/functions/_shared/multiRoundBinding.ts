@@ -138,6 +138,7 @@ export function buildMultiRoundBinding(input: {
    * rule `leadMissionCompilerBinding` states.
    */
   onModelCall?: GptDeps["onModelCall"];
+  budget?: GptDeps["budget"];
 }): MultiRoundBinding {
   const e = isMultiRoundEnabled(input.workspaceId, input.read);
   let attempts = 0;
@@ -149,7 +150,7 @@ export function buildMultiRoundBinding(input: {
   // asked for; it no longer selects anything. See gptStrategistModel.ts for why
   // no JSON schema is sent here.
   const generate = input.generate ??
-    createGptStrategistGenerateJson({ onModelCall: input.onModelCall }, (() => {
+    createGptStrategistGenerateJson({ onModelCall: input.onModelCall, budget: input.budget }, (() => {
     // ROUTED, LIKE EVERY OTHER STAGE. This passed nothing, so it inherited the
     // `reasoning` tier and silently resolved to gpt-4.1 — a model choice made
     // by omission, invisible in the cost trace, for a strategic replan.

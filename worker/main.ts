@@ -35,6 +35,7 @@ import {
 } from "../supabase/functions/_shared/leadMissionCancellation.ts";
 import { resolvePlanNoticesForQueueEnd, supabaseNoticeDb } from "../supabase/functions/_shared/runNotices.ts";
 import { createLeadMissionRunner } from "./leadMissionRunner.ts";
+import { missionWallClockEnabled } from "../supabase/functions/_shared/missionWallClock.ts";
 import { installTimestampedConsole } from "./logTimestamps.ts";
 import { newStatus, healthView, startHealthServer } from "./health.ts";
 import { buildInfo } from "../supabase/functions/_shared/buildStamp.ts";
@@ -143,6 +144,7 @@ async function main() {
   const log = (msg: string, meta?: unknown) => console.log(msg, meta ?? "");
 
   const runner = createLeadMissionRunner({
+    enforceMissionWallClock: missionWallClockEnabled(env("LEAD_V2_SMOKE_WALL_CLOCK")),
     handler: handleRunAgent,
     serviceRoleKey: key,
     functionsBaseUrl: `${url.replace(/\/+$/, "")}/functions/v1`,
@@ -228,7 +230,8 @@ async function main() {
     // task row lost `lead_lineage_progress` must not restart it (Query B
     // d22d9ee6). Best effort — an unreadable count simply sets no floor.
     try {
-      const { data: q } = await db.from("lead_mission_queue").select("continuations").eq("id", mission.queueId).maybeSingle();
+      const { data: q } = await db.from("lead_mission_queue").select("continuations,created_at").eq("id", mission.queueId).maybeSingle();
+      mission.enqueuedAt = (q as { created_at?: string | null } | null)?.created_at ?? null;
       const n = Number((q as { continuations?: unknown } | null)?.continuations);
       mission.continuations = Number.isInteger(n) && n >= 0 ? n : null;
     } catch {

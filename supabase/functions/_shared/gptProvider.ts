@@ -178,6 +178,7 @@ export interface GptRequest {
  */
 export const PROVIDER_FAILURE_CODES = [
   "no_api_key", "http_error", "transport_error",
+  "model_budget_exhausted",
   /**
    * The balance is gone. A PROVIDER failure like the others, and the only one
    * that no amount of waiting, retrying or re-prompting can clear.
@@ -256,6 +257,11 @@ export interface GptDeps {
    * way, so a call site that has no ledger behaves exactly as before.
    */
   onModelCall?: (t: ModelCallTelemetry, ok: boolean) => void;
+  budget?: {
+    check(): { allowed: boolean; exceeded: string | null };
+    reserveAttempt?(model?: string): { allowed: boolean; exceeded: string | null };
+    holdUncertainAttempt?(): void;
+  };
 }
 
 import {
@@ -478,6 +484,12 @@ export async function gptStructured<T>(
   // two calls whatever the provider does — see MAX_TRANSIENT_RETRIES.
   let failure: Extract<GptResult<T>, { ok: false }> | null = null;
   for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
+    const admission = deps.budget?.reserveAttempt?.(model) ?? deps.budget?.check();
+    if (admission && !admission.allowed) {
+      failure = { ok: false, code: "model_budget_exhausted", detail: `model attempt refused (${admission.exceeded})`, latency_ms: elapsed(), retryable: false, attempts };
+      if (attempts === 0) return failure;
+      break;
+    }
     attempts = attempt + 1;
     let transientWaitMs: number | null = null;
     try {
@@ -531,6 +543,7 @@ export async function gptStructured<T>(
       transientWaitMs = DEFAULT_RETRY_WAIT_MS;
     }
 
+    deps.budget?.holdUncertainAttempt?.();
     if (transientWaitMs == null || attempt === MAX_TRANSIENT_RETRIES) break;
     log("gpt_transient_retry", {
       purpose: req.purpose, model, attempt: attempts,

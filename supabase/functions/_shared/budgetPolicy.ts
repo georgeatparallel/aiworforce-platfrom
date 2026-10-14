@@ -116,7 +116,7 @@ export interface SpendReservation {
   candidate_allowance?: CandidateAllowance;
 }
 
-export type RefusalCeiling = "call" | "candidate" | "route" | "mission" | "mission_credits";
+export type RefusalCeiling = "call" | "candidate" | "route" | "mission" | "mission_credits" | "price";
 
 /**
  * WHAT THE DATABASE SAYS THIS LINEAGE HAS ALREADY COMMITTED, read at the start
@@ -333,7 +333,9 @@ export function candidateCeilingRefusal(
 export function reserve(l: SpendLedger, q: ReserveRequest): ReserveDecision {
   const existing = l.reservations.find((r) => r.idempotency_key === q.idempotency_key &&
     r.status !== "refused_budget" && r.status !== "released");
-  if (existing) return { ok: true, reservation: existing };
+  if (existing && typeof existing.estimate_usd === "number" && Number.isFinite(existing.estimate_usd) && existing.estimate_usd >= 0) {
+    return { ok: true, reservation: existing };
+  }
 
   const candidates = [...(q.candidate_keys ?? [])];
   const reservation: SpendReservation = {
@@ -349,6 +351,11 @@ export function reserve(l: SpendLedger, q: ReserveRequest): ReserveDecision {
   };
 
   const est = reservation.estimate_usd;
+  // Reject missing/non-finite/negative quotes before committing anything. A prior
+  // reservation above still adopts its original purchase without re-buying it.
+  if (existing || typeof q.estimate_usd !== "number" || !Number.isFinite(q.estimate_usd) || q.estimate_usd < 0) {
+    return refuse("price", 0, est);
+  }
   const callLimit = callCeilingFor(l.ceilings, q.purpose, q.route_anchor);
   if (est > callLimit + 1e-9) return refuse("call", callLimit, est);
 

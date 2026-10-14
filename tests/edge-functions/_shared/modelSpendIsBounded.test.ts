@@ -635,9 +635,9 @@ Deno.test("FAIL SAFE: an unrecognised haiku snapshot does not inherit this price
 Deno.test("L2 is OFF unless a limit is configured", () => {
   assertEquals(resolveRunBudget(() => undefined), null,
     "no config means no bound — today's behaviour, unchanged");
-  assertEquals(resolveRunBudget(() => "0"), null, "zero is not a bound, it is a mistake");
-  assertEquals(resolveRunBudget(() => "-5"), null);
-  assertEquals(resolveRunBudget(() => "abc"), null);
+  assertEquals(resolveRunBudget((k) => k === RUN_MAX_CALLS_ENV ? "0" : undefined), null, "zero is not a bound, it is a mistake");
+  assertEquals(resolveRunBudget((k) => k === RUN_MAX_CALLS_ENV ? "-5" : undefined), null);
+  assertEquals(resolveRunBudget((k) => k === RUN_MAX_CALLS_ENV ? "abc" : undefined), null);
 
   const b = resolveRunBudget((k) => k === RUN_MAX_CALLS_ENV ? "40" : undefined);
   assertEquals(b?.max_calls, 40);
