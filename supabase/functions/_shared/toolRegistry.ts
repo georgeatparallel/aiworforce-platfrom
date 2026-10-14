@@ -30,6 +30,7 @@ import {
   type ExecutionReason, type LedgerDb,
 } from "./executionLedger.ts";
 import { writeMemoryFromToolCall } from "./memoryWriter.ts";
+import { APIFY_START_UNCERTAIN } from "./verifierPurchaseRecovery.ts";
 import { buildLinkedinEngagementInput, buildLinkedinProfilePostsInput } from "./linkedinEngagementInput.ts";
 import { normalizeLinkedinEngagementItem } from "./linkedinEngagementOutput.ts";
 import { normalizeApifyJobRow } from "./apifyJobsNormalizer.ts";
@@ -1189,13 +1190,29 @@ async function execSourceWithApify(
     };
   }
   if (!startRes.ok) {
+    // ── A START WHOSE OUTCOME IS UNKNOWN IS NOT A REFUSAL ─────────────────
+    //
+    // Our own 20 s abort, a dropped connection (status 0) or an Apify 5xx can
+    // all land AFTER Apify created — and billed — the run; only the answer
+    // was lost. Reported as `apify_start_failed`, the ledger read it as
+    // "nothing was bought" and a later slice bought the same question again
+    // (verifierPurchaseRecovery D2). So it is UNCERTAIN, and says so. A 4xx
+    // is a definite refusal — no run exists — and keeps its meaning. A
+    // resume is a GET on a run that already exists: nothing it fails to read
+    // is a purchase, so it keeps its meaning too.
+    if (!resumeRunId && (startRes.status === 0 || startRes.status >= 500)) {
+      return { ok: false, error: `${APIFY_START_UNCERTAIN}:${startRes.status}` };
+    }
     return { ok: false, error: `apify_start_failed:${startRes.status}` };
   }
 
   const run = startRes.data?.data ?? startRes.data ?? {};
   const run_id: string | undefined = run.id;
   const dataset_id: string | undefined = run.defaultDatasetId;
-  if (!run_id) return { ok: false, error: "apify_missing_run_id" };
+  // A 2xx start that names no run: the run may well exist — uncertain, as above.
+  if (!run_id) {
+    return { ok: false, error: resumeRunId ? "apify_missing_run_id" : `${APIFY_START_UNCERTAIN}:missing_run_id` };
+  }
 
   // ── PERSIST BEFORE WAITING ───────────────────────────────────────────────
   //
