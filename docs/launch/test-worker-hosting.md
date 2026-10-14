@@ -34,9 +34,33 @@ else, with no production data copied in. Creating it is the first approval.
 
 The order is the one `tests/db-contract/bootstrap.sh` applies to real
 Postgres 17 on every CI run. That run proves these files build a working
-schema in this order. Apply each file in a single transaction with `psql`
-against the **test** project's connection string. Not `supabase db push`,
-which this repository refuses (docs/SUPABASE_TARGETING.md).
+schema in this order. Not `supabase db push`, which this repository refuses
+(docs/SUPABASE_TARGETING.md).
+
+**Use the guarded script; don't apply files by hand:**
+
+```sh
+TEST_PROJECT_REF=<new-ref> TEST_DB_URL='<the NEW project's postgres URL>' \
+  scripts/test-project/build-test-schema.sh --confirm <new-ref> [--with-held-billing-fix]
+```
+
+**It refuses before connecting** when:
+- the ref is empty, `ohsdatpvfdjdemstoiuj` or `wqnigjhcwjxtmordrwno`;
+- `--confirm` doesn't repeat the ref;
+- the URL doesn't name the ref, or names a refused project;
+- any file is missing.
+
+**It refuses before writing** when:
+- the database is not empty;
+- `pg_cron` and `pg_net` aren't enabled.
+
+It then applies Steps A to D (D only with the flag) and Step E's detach (see
+below). It ends by proving no cron job calls a hosted project.
+
+**Tested locally:** a disposable Postgres with the contract lane's platform
+shim, which stands in for Supabase's platform objects. All 49 files applied,
+leaving only the two in-database jobs. `tests/infra/testWorkerProposal.test.ts`
+checks the refusals with a stub `psql`.
 
 **Step A: held baseline (fresh databases only, never production)**
 
@@ -112,8 +136,8 @@ which this repository refuses (docs/SUPABASE_TARGETING.md).
 - `20261015120000_provider_purchase_claims.sql`: a proposal, not wired into
   any code.
 
-**Step E: detach the schedules that call production. Mandatory, immediately
-after Step B.**
+**Step E: detach the schedules that call production. Mandatory; the script
+does it in the same transaction as each scheduling migration.**
 
 `20260825140000_monitoring_cron.sql` and
 `20260826170000_resume_stalled_leads_cron.sql` schedule `net.http_post` to the
@@ -124,10 +148,16 @@ a timer.
   `monitoring_tick_key`. Without it production rejects them, but they still
   reach production.
 - **Never put a production key in the test project's vault.**
-- Run `scripts/local-supabase/01-local-cron-detach.sql`, which unschedules
-  every job whose command calls `net.http_post` or names `supabase.co`. Then
-  confirm `select jobname, command from cron.job` lists only the in-database
-  jobs (`sweep-stuck-runs`, `release-stale-credit-reservations`).
+- `scripts/local-supabase/01-local-cron-detach.sql` unschedules every job
+  whose command calls `net.http_post` or names `supabase.co`. The build script
+  applies it **in the same transaction** as each file that calls
+  `cron.schedule`. A hosted-calling job therefore never commits and cannot
+  fire, not even once during the build, which a separate detach step
+  afterwards could not guarantee.
+- **Afterwards, confirm by hand:** `select jobname, command from cron.job`
+  lists only `sweep-stuck-runs` and `release-stale-credit-reservations`.
+- **Never run the build, or the detach, against production.** Production
+  needs those schedules.
 
 ## 3. The worker host: a manual GitHub Actions job
 
@@ -169,7 +199,8 @@ It's only needed if a session must outlive a GitHub job.
 ## 4. Activation (each step needs explicit approval, in this order)
 
 1. Create the non-production Supabase project. Record its ref.
-2. Apply Steps A to D to it, then Step E, and verify `cron.job`.
+2. Enable `pg_cron` and `pg_net` on it, run `scripts/test-project/build-test-schema.sh`
+   (Steps A to E), and confirm `cron.job` by hand.
 3. Seed one internal test workspace and grant it a small number of credits
    (`credits_grant`).
 4. Create the GitHub Environment `discovery-test`:
