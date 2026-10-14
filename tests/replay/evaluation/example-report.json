@@ -1,0 +1,75 @@
+{
+  "schema": "discovery-mission-evaluation-v1",
+  "replay_observation_date": "2026-10-14T12:00:00.000Z",
+  "example": "selected fields from one synthetic control; not production performance",
+  "scenario": "multi_constraint_match",
+  "provenance": "synthetic_control",
+  "label_ref": "labels.synthetic.json#/scenarios/multi_constraint_match",
+  "counts": {
+    "discovered": 1,
+    "qualified": 1,
+    "rejected": 0,
+    "unresolved": 0
+  },
+  "company_discovery_yield": {
+    "numerator": 1,
+    "denominator": 1,
+    "percent": 100
+  },
+  "evidence": {
+    "supported_hard_decisions": {
+      "numerator": 4,
+      "denominator": 4,
+      "percent": 100
+    },
+    "unknown_hard_checks": 0,
+    "companies_with_unknown": 0,
+    "exact_headcount_proofs": 0,
+    "employee_band_proofs": 1
+  },
+  "provider_calls": {
+    "total_transport": 5,
+    "purchases": 5,
+    "adoptions": 0,
+    "pending_responses": 0,
+    "duplicate_purchases": 0,
+    "unreserved_calls": 0,
+    "per_qualified_company": 5,
+    "by_actor": {
+      "apify_funding_atomus": 1,
+      "apify_linkedin_company_details": 1,
+      "apify_linkedin_company_search": 2,
+      "apify_linkedin_job_search": 1
+    }
+  },
+  "cost": {
+    "ledger_committed_estimate_usd": 0.0627,
+    "provenance": "offline production pricing/spec estimates; synthetic purchases, no actual charges",
+    "priced_purchases": {
+      "numerator": 5,
+      "denominator": 5,
+      "percent": 100
+    },
+    "actual_provider_receipts_usd": null,
+    "settled_customer_credits": null,
+    "actual_model_usd": null,
+    "estimated_usd_per_qualified_company": 0.0627,
+    "mission_ceiling_usd": 2
+  },
+  "execution": {
+    "terminal": "completed",
+    "queue_status": "complete",
+    "failures": [],
+    "failure_observation_scope": "returned company provider-error markers and driver faults/exceptions; no complete live provider/model error telemetry",
+    "slices": [
+      {
+        "decision": "quota_met",
+        "qualified": 1,
+        "pending_runs": 0
+      }
+    ],
+    "refusal_codes": []
+  },
+  "acceptance_pass": true,
+  "live_smoke_authorized": false
+}
