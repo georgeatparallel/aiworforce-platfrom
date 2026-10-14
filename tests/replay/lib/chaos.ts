@@ -60,6 +60,9 @@ import type { CheckpointSnapshot } from "../../../supabase/functions/_shared/lea
 import { createLeadMissionRunner } from "../../../worker/leadMissionRunner.ts";
 import type { RunAgentRunOptions } from "../../../supabase/functions/run-agent/index.ts";
 import { FixtureProvider } from "./provider.ts";
+import {
+  type FencedTaskDb, type FencedTaskQuery, fencedTaskUpdate, OPEN_RESULT_FILTER, resolveSliceGeneration, type SliceFence,
+} from "../../../supabase/functions/_shared/fencedTaskWrite.ts";
 import { replayEngineSlice } from "./engine.ts";
 import {
   applyRecordedWebsiteReread, foldAndDecide, type LineageFixture, recordedGrounder, recordedReplanner, replenishmentFrom,
@@ -269,11 +272,69 @@ export class ChaosLab {
   }
 
   /** Every task-result write goes through the production progress guard, as run-agent's do. */
-  private async writeResult(path: string, next: (prior: Record<string, unknown>) => Record<string, unknown>, status: string) {
+  /**
+   * Every task-result write goes through the production progress guard AND the
+   * production fence (`fencedTaskUpdate`), as run-agent's do: one conditional
+   * UPDATE on `checkpoint_version` (and, before the slice's verdict, an open row).
+   */
+  private async writeResult(
+    path: string, next: (prior: Record<string, unknown>) => Record<string, unknown>, status: string,
+    fence: SliceFence, requireOpen: boolean,
+  ) {
     const prior = (await this.taskRow())?.result ?? {};
     const g = guardProgressWrite(path, prior, next(prior));
-    await this.lab.db.query(`update public.tasks set result = $2, status = $3, updated_at = now() where id = $1`,
-      [this.taskId, JSON.stringify(g.result), status]);
+    return await fencedTaskUpdate(this.fencedDb, this.taskId, fence, { requireOpen }, { result: g.result, status });
+  }
+
+  /**
+   * PostgREST's update builder over the lab database: exactly the filters
+   * `fencedTaskUpdate` sends (`eq`, and the open-row `or`), as one statement.
+   */
+  private get fencedDb(): FencedTaskDb {
+    const db = this.lab.db;
+    return {
+      from: (table: string) => ({
+        update: (patch: Record<string, unknown>) => {
+          const where: string[] = [];
+          const params: unknown[] = [];
+          const set = Object.keys(patch).map((k) => {
+            params.push(k === "result" ? JSON.stringify(patch[k]) : patch[k]);
+            return `${k} = $${params.length}`;
+          });
+          const q: FencedTaskQuery = {
+            eq: (column, value) => { params.push(value); where.push(`${column} = $${params.length}`); return q; },
+            or: (filters) => {
+              if (filters !== OPEN_RESULT_FILTER) throw new Error(`lab adapter: unsupported or(${filters})`);
+              where.push(`(result->>'terminal_status' is null or result->>'terminal_status' = 'continuation_required')`);
+              return q;
+            },
+            select: async () => {
+              const r = await db.query<{ id: string }>(
+                `update public.${table} set ${set.join(", ")}, updated_at = now() where ${where.join(" and ")} returning id`, params);
+              return { data: r.rows, error: null };
+            },
+          };
+          return q;
+        },
+      }),
+    };
+  }
+
+  /** run-agent's `resolveSliceGeneration` read, over the lab database. */
+  private get generationDb() {
+    const db = this.lab.db;
+    return {
+      from: (_t: string) => ({
+        select: (_c: string) => ({
+          eq: (_k: string, v: unknown) => ({
+            maybeSingle: async () => ({
+              data: (await db.query(`select checkpoint_version from public.tasks where id = $1`, [v])).rows[0] ?? null,
+              error: null,
+            }),
+          }),
+        }),
+      }),
+    };
   }
 
   private checkpointResult(state: Record<string, unknown>, records: unknown[]) {
@@ -311,6 +372,7 @@ export class ChaosLab {
 
     // 1. THE CONTINUATION CLAIM — a resumed slice only. Held by someone: 409.
     let claimId: string | null = null;
+    let claimedVersion: number | null = null;
     if (resume) {
       claimId = crypto.randomUUID();
       const c = await claimContinuationViaRpc({ db: this.db, taskId: this.taskId, workspaceId: REPLAY_WORKSPACE, claimId });
@@ -319,6 +381,7 @@ export class ChaosLab {
         this.note(attempt, "claim_refused", { reason: c.reason });
         return respond(409, { success: false, error: "continuation_refused", reason: c.reason }, c.reason);
       }
+      claimedVersion = c.checkpointVersion;
     }
     // 2. THE LINEAGE LEASE.
     const lease = await acquireLineageLease({
@@ -332,6 +395,9 @@ export class ChaosLab {
       }
       return respond(409, { success: false, error: "lineage_busy", reason }, reason);
     }
+
+    // THIS SLICE'S GENERATION (run-agent `sliceFence`, D1).
+    const fence: SliceFence = { generation: await resolveSliceGeneration(this.generationDb as never, this.taskId, claimedVersion) };
 
     // 3. RESTORE: the checkpoint, plus what the ledger knows that it does not.
     const prior = (await this.taskRow())?.result ?? null;
@@ -369,10 +435,14 @@ export class ChaosLab {
             this.note(attempt, "stage_write_refused", { prior_terminal: priorTerminal });
             return { written: false, reason: `prior_terminal:${priorTerminal}` };
           }
-          await this.writeResult("stage_boundary", (p) => ({
+          const w = await this.writeResult("stage_boundary", (p) => ({
             ...p, task_status: "partial", terminal_status: "continuation_required", company_first_state: { terminal_status: null },
             ...this.checkpointResult(snap.state as unknown as Record<string, unknown>, snap.resume_records as unknown[]),
-          }), "running");
+          }), "running", fence, true);
+          if (w.fenced) {
+            this.note(attempt, "stage_write_fenced", { generation: fence.generation });
+            return { written: false, reason: "fenced_stale_generation" };
+          }
           return { written: true };
         },
       },
@@ -402,14 +472,15 @@ export class ChaosLab {
     if (this.fault(attempt, "end_write_lost")) {
       this.note(attempt, "end_write_lost");
     } else {
-      await this.writeResult("slice_end", (p) => ({
+      const w = await this.writeResult("slice_end", (p) => ({
         ...p, ...this.checkpointResult(s.state, s.resume_records),
         [LINEAGE_PROGRESS_KEY]: f.progress,
         auto_continuation: { decision: String(f.decision.reason), continue: f.decision.continue },
         task_status: terminal ? "complete" : "partial",
         terminal_status: terminal ?? "continuation_required",
         company_first_state: { terminal_status: terminal },
-      }), terminal ? "complete" : "ready");
+      }), terminal ? "complete" : "ready", fence, true);
+      if (w.fenced) this.note(attempt, "end_write_fenced", { generation: fence.generation });
     }
 
     // 7. RELEASE THE CLAIM — retried on a transient failure, exactly as run-agent.

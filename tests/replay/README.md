@@ -123,7 +123,7 @@ for today's behaviour and an ignored `[known-gap]` test for the fix:
 
 | | Defect | Where |
 |---|---|---|
-| D1 | A worker that stalls past its lease wakes after another worker finished the mission; its end-of-slice write (no prior-terminal check, unlike the stage writer) reopens the task to `ready / continuation_required` | `lineageFailureInjection` §3 |
+| D1 (fixed) | A worker that stalls past its lease woke after another worker finished the mission (or wrote a newer checkpoint); its end-of-slice write landed over the newer result. Every slice result write is now one conditional UPDATE fenced on the generation its claim set (`tasks.checkpoint_version`) and, before the slice's verdict, on an open row (`fencedTaskUpdate`) | `lineageFailureInjection` §3 |
 | D2 | A verifier purchase is deduped only by the checkpointed `spend_ledger`; a lost end-of-slice write (or a worker dying after verification) makes the next slice buy the same verification again, same idempotency key | `verificationLostWrite` |
 | D3 | A replenishment page still running at slice end is never adopted: the next decision is `awaiting_provider_run`, so no replenishment debt is passed and the page is never re-asked; the lineage waits to the continuation ceiling | `lineageFailureInjection` §6 |
 | D4 | The LAST slice's result write is lost: the lineage is released `terminal` from memory, the worker reads the stale row (`continuation_required`) and releases the queue `resumable`, and `claim_next_lead_mission` never claims a row whose lineage is terminal — the queue row is stranded and never reconciled | `lineageFailureInjection` §1, seeded schedules |

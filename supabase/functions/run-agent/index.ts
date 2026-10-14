@@ -140,6 +140,9 @@ import {
 } from "../_shared/pendingRunRecovery.ts";
 import { LEAD_EXECUTION_CALLS_TABLE } from "../_shared/executionLedger.ts";
 import {
+  type FencedTaskDb, fencedTaskUpdate, resolveSliceGeneration, type SliceFence,
+} from "../_shared/fencedTaskWrite.ts";
+import {
   createRunTerminalGuard, supabaseTerminalGuardDb,
 } from "../_shared/leadRunTerminalGuard.ts";
 import {
@@ -1280,7 +1283,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // The lease taken on the RPC path lives in COLUMNS, so it must be released
   // explicitly when the round ends. Held here because the claim is taken in this
   // block but released after the sourcing outcome is written, far below.
-  let heldClaim: { claimId: string; viaRpc: boolean } | null = null;
+  let heldClaim: { claimId: string; viaRpc: boolean; checkpointVersion?: number | null } | null = null;
   // THE RESUMED ROW'S OWN RESULT. A same-row continuation's engine state and
   // checkpoint live here, not in the request body — see the `state:` argument
   // to `runCapabilityPlan`.
@@ -1390,7 +1393,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
     }
 
     task = { id: decision.taskId };
-    heldClaim = { claimId, viaRpc: rpc.available };
+    heldClaim = {
+      claimId, viaRpc: rpc.available,
+      // THIS GENERATION'S FENCING TOKEN (D1): the row's version this claim set.
+      checkpointVersion: "checkpointVersion" in rpc ? rpc.checkpointVersion : null,
+    };
     console.log("[run-agent][company-first] resuming task", {
       task_id: decision.taskId, next_round: decision.nextRound,
       claim: attempt.reason, claim_path: rpc.available ? "rpc" : "compatibility_fallback",
@@ -1506,6 +1513,16 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
       lineage_id: lineageRootId,
     }, 409);
   }
+
+  // ── THIS SLICE'S GENERATION (D1) ────────────────────────────────────────
+  //
+  // The `checkpoint_version` its claim set (a resume), or the row's own (a
+  // first slice, which claims nothing). Every result write below is fenced on
+  // it in SQL (`fencedTaskUpdate`): a newer claim bumps it, so a stale
+  // generation's writes change zero rows.
+  const sliceFence: SliceFence = {
+    generation: await resolveSliceGeneration(supabase as never, task.id, heldClaim?.checkpointVersion ?? null),
+  };
 
   // THE ROW SAYS WHICH LINEAGE IT BELONGS TO. `tasks_one_live_generation_per_lineage`
   // is a unique index over exactly this column, so it is also the database's own
@@ -2901,7 +2918,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // failed task left no route telemetry at all, which is why its intent had
         // to be reconstructed from Actor payloads after the money was gone.
         try {
-          await supabase.from("tasks").update({
+          await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: false }, {
             // ── MERGED, NOT REPLACED. THIS IS A CONTINUATION'S OWN ROW. ──────
             //
             // This was a wholesale `result: { … }` replace, and on a
@@ -2943,7 +2960,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 intelligence_mode: intelligence.mode,
               },
             }),
-          }).eq("id", task.id);
+          });
         } catch (e) {
           console.log("[run-agent][paid-preflight][persist-error]", String(e));
         }
@@ -3308,9 +3325,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   .from("tasks").select("result").eq("id", task.id).maybeSingle();
                 const prior = (cur?.result && typeof cur.result === "object")
                   ? cur.result as Record<string, unknown> : {};
-                await supabase.from("tasks").update({
+                await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                   result: guardResult("progress_publish", prior as Record<string, unknown> | null, { ...prior, workbench_progress: p }),
-                }).eq("id", task.id);
+                });
               } catch (e) {
                 console.log("[run-agent][capability-engine][progress-error]", String(e));
               }
@@ -3558,7 +3575,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                         .from("tasks").select("result").eq("id", task.id).maybeSingle();
                       const prior = (cur?.result && typeof cur.result === "object")
                         ? cur.result as Record<string, unknown> : {};
-                      await supabase.from("tasks").update({
+                      await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                         result: guardResult("stage_checkpoint", prior as Record<string, unknown> | null, {
                           ...prior,
                           [POOL_EVAL_RESULT_KEY]: buildPoolCheckpoint({
@@ -3568,7 +3585,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             accounting: poolBinding.accounting,
                           }),
                         }),
-                      }).eq("id", task.id);
+                      });
                     } catch (e) {
                       console.log("[run-agent][stage2][checkpoint-error]", String(e));
                     }
@@ -3751,7 +3768,10 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   }
                   const progressCarried = progressOwed;
                   progressOwed = null;
-                  await supabase.from("tasks").update({
+                  // FENCED IN THE WRITE (D1): the read above is advisory; this
+                  // UPDATE lands only while no newer generation has claimed the
+                  // row and nothing has finalized it.
+                  const stageWrite = await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                     result: guardResult("stage_boundary", prior as Record<string, unknown> | null, {
                       ...prior,
                       ...(progressCarried !== null ? { workbench_progress: progressCarried } : {}),
@@ -3822,7 +3842,14 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                     // getting a chance to execute. `projectStatus` owns the
                     // mapping so this cannot drift from every other writer.
                     status: projectStatus("continuation_required").rowStatus,
-                  }).eq("id", task.id);
+                  });
+                  if (stageWrite.fenced) {
+                    console.warn("[run-agent][checkpoint] refused: a newer generation owns the row", {
+                      task_id: task.id, generation: sliceFence.generation,
+                    });
+                    await flushProgress();
+                    return { written: false, reason: "fenced_stale_generation" };
+                  }
 
                   // AND THE PLAN STOPS SAYING "EXECUTING". It is the row the
                   // execution card reads for its own pill; leaving it
@@ -5627,7 +5654,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   .from("tasks").select("result").eq("id", task.id).maybeSingle();
                 const prior = (cur?.result && typeof cur.result === "object")
                   ? cur.result as Record<string, unknown> : {};
-                await supabase.from("tasks").update({
+                await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                   result: guardResult("final_snapshot", prior as Record<string, unknown> | null, {
                     ...prior,
                     workbench_progress: finalProgress,
@@ -5917,7 +5944,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                       entries: portfolio.entries,
                     },
                   }),
-                }).eq("id", task.id);
+                });
               }
             } catch (e) {
               console.log("[run-agent][capability-engine][final-progress-error]", String(e));
@@ -6916,7 +6943,12 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // 161 s and did not land, and nothing said so; the next read found the
         // lineage progress it carried missing and the queue counted the slice
         // as a retry. Behaviour is unchanged; the failure is now reported.
-        const { error: sliceResultError } = await supabase.from("tasks").update({
+        // FENCED IN THE WRITE (D1). A worker that stalled past its lease wakes
+        // after another generation took the mission over — finished it, or
+        // wrote a newer checkpoint. This UPDATE lands only while this slice's
+        // generation still owns the row (`checkpoint_version`) and nothing has
+        // finalized it; otherwise zero rows change and the slice says so.
+        const sliceResultWrite = await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
           status: statuses.rowStatus,
           result: guardResult("slice_result", priorTaskResult as Record<string, unknown> | null, {
             ...priorTaskResult,
@@ -7129,7 +7161,13 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               ? { ...routeRecord, drift: routeDrift(routeRecord) }
               : { error: routeResolution.ok ? null : routeResolution.errors },
           }),
-        }).eq("id", task.id);
+        });
+        const sliceResultError = sliceResultWrite.error;
+        if (sliceResultWrite.fenced) {
+          console.error("[run-agent][slice-result] refused: a newer generation owns the row", {
+            task_id: task.id, generation: sliceFence.generation,
+          });
+        }
         if (sliceResultError) {
           console.error("[run-agent][slice-result] persist failed", {
             task_id: task.id, code: sliceResultError.code ?? null,
@@ -7238,9 +7276,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             spend: lineageSpend,
           });
           {
-            const { error: outcomeErr } = await supabase.from("tasks")
-              .update({ result: guardResult("run_outcome", committedResult, { ...committedResult, [RUN_OUTCOME_RESULT_KEY]: runOutcome }) })
-              .eq("id", task.id);
+            const { error: outcomeErr } = await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: false }, { result: guardResult("run_outcome", committedResult, { ...committedResult, [RUN_OUTCOME_RESULT_KEY]: runOutcome }) });
             if (outcomeErr) {
               // BEST EFFORT, AND SAID SO. The outcome describes a run that has
               // already happened; failing the run because its description could
@@ -7419,7 +7455,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           const { data: cur } = await supabase.from("tasks")
             .select("result").eq("id", task.id).maybeSingle();
           const prior = ((cur as { result?: Record<string, unknown> } | null)?.result ?? {});
-          const { error: markErr } = await supabase.from("tasks").update({
+          const { error: markErr } = await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: false }, {
             result: guardResult("continuation_mark", prior as Record<string, unknown> | null, {
               ...prior,
               [AUTO_RESUME_SUPPRESSED_KEY]: {
@@ -7428,7 +7464,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 reason: "single_generation requested by a service-role caller",
               },
             }),
-          }).eq("id", task.id);
+          });
           if (markErr) {
             // SAY SO LOUDLY. A failed marker means the sweeper WILL continue
             // this lineage, which is the opposite of what the caller asked for,
@@ -7570,7 +7606,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         if (autoDecision.continue && !effectivelyContinuing) {
           const { data: currentRow } = await supabase
             .from("tasks").select("result").eq("id", task.id).maybeSingle();
-          await supabase.from("tasks").update({
+          await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: false }, {
             result: guardResult("failed_handoff", ((currentRow as { result?: Record<string, unknown> } | null)?.result ?? null) as Record<string, unknown> | null, {
               ...(((currentRow as { result?: Record<string, unknown> } | null)?.result ??
                 {}) as Record<string, unknown>),
@@ -7584,7 +7620,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 dispatch: dispatchOutcome,
               },
             }),
-          }).eq("id", task.id);
+          });
         }
 
         // FINALIZE THE PLAN. The company-first branch returns here, far above the
