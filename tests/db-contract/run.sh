@@ -47,18 +47,36 @@ PGOPTIONS="-c client_min_messages=warning" "$root/tests/db-contract/bootstrap.sh
 # A login password for PostgREST's role, valid for this database's lifetime.
 psql "$db_url" -X -q -c "alter role authenticator with login password '$auth_pw'" >/dev/null
 
-PGRST_DB_URI="postgres://authenticator:$auth_pw@$hostport/$db" \
-PGRST_DB_SCHEMAS=public PGRST_DB_ANON_ROLE=anon PGRST_JWT_SECRET="$jwt_secret" \
-PGRST_DB_MAX_ROWS=1000 PGRST_DB_EXTRA_SEARCH_PATH=public,extensions \
-PGRST_SERVER_HOST=127.0.0.1 PGRST_SERVER_PORT="$port" PGRST_DB_POOL=4 \
-  "$bin" >"$log" 2>&1 &
-pgrst_pid=$!
-for _ in $(seq 1 60); do
-  curl -fsS -o /dev/null "http://127.0.0.1:$port/" 2>/dev/null && break
-  kill -0 "$pgrst_pid" 2>/dev/null || { echo "postgrest exited:" >&2; cat "$log" >&2; exit 1; }
-  sleep 0.5
+# A random port can already be taken ("Address in use", seen in a local run). A bind failure
+# happens before any test runs, so it is retried on a fresh port, at most three
+# times. Any other PostgREST failure stops the run, as before. Liveness is
+# checked before readiness, so another server on the port is never mistaken
+# for ours.
+start_postgrest() {
+  PGRST_DB_URI="postgres://authenticator:$auth_pw@$hostport/$db" \
+  PGRST_DB_SCHEMAS=public PGRST_DB_ANON_ROLE=anon PGRST_JWT_SECRET="$jwt_secret" \
+  PGRST_DB_MAX_ROWS=1000 PGRST_DB_EXTRA_SEARCH_PATH=public,extensions \
+  PGRST_SERVER_HOST=127.0.0.1 PGRST_SERVER_PORT="$port" PGRST_DB_POOL=4 \
+    "$bin" >"$log" 2>&1 &
+  pgrst_pid=$!
+  for _ in $(seq 1 60); do
+    kill -0 "$pgrst_pid" 2>/dev/null || return 1
+    curl -fsS -o /dev/null "http://127.0.0.1:$port/" 2>/dev/null && return 0
+    sleep 0.5
+  done
+  return 2
+}
+for attempt in 1 2 3; do
+  start_postgrest && break
+  rc=$?
+  if [ $rc -eq 1 ] && grep -q "Address in use" "$log" && [ -z "${DB_CONTRACT_PORT:-}" ] && [ $attempt -lt 3 ]; then
+    echo "port $port in use; retrying PostgREST on another port" >&2
+    port=$(( 30000 + RANDOM % 20000 )); pgrst_pid=""
+    continue
+  fi
+  [ $rc -eq 1 ] && { echo "postgrest exited:" >&2; cat "$log" >&2; exit 1; }
+  echo "postgrest not ready:" >&2; cat "$log" >&2; exit 1
 done
-curl -fsS -o /dev/null "http://127.0.0.1:$port/" || { echo "postgrest not ready:" >&2; cat "$log" >&2; exit 1; }
 echo "postgrest $("$bin" --version 2>/dev/null | head -1) on :$port, postgres $(psql "$db_url" -XAtc 'show server_version')"
 
 set +e
