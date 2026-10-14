@@ -65,6 +65,7 @@ Deno.test("test worker: spend controls are set, fail-closed, and never from prod
 Deno.test("test worker: one worker session that drains on SIGTERM, on the worker's own Deno", () => {
   const run = steps.find((s) => (s.run ?? "").includes("worker/main.ts"))!.run!;
   assert(run.includes("timeout -s TERM --kill-after=10m"));
+  assert(run.includes('> "$RUNNER_TEMP/worker.log" 2>&1'), "worker output stays off the public Actions log");
   assert(run.includes("deno run --allow-env --allow-net --allow-read worker/main.ts"));
   const deno = steps.find((s) => s.uses?.startsWith("denoland/setup-deno"));
   assert(read("worker/Dockerfile").includes(`denoland/deno:${deno?.with?.["deno-version"]?.replace(/^v/, "")}`));
