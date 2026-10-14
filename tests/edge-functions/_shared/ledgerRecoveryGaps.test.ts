@@ -431,13 +431,51 @@ Deno.test("recovered pending runs carry NO rebuilt D3 selection and no guessed c
   assertFalse("selection" in r);
 });
 
-Deno.test("credits still settle on a run id: an uncertain start carries none, so its settlement is unchanged", () => {
+/** runTool with a credit ledger that records every credit RPC it receives. */
+async function creditCallsFor(answer: () => Promise<Response>): Promise<Array<{ fn: string; args: Record<string, unknown> }>> {
+  const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+  const admin = {
+    from: () => noopQuery(),
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      if (fn === "credits_reserve") return Promise.resolve({ data: { ok: true, replayed: false, transaction_id: "txn-1", balance_after: 4 }, error: null });
+      if (fn === "credits_finalize") return Promise.resolve({ data: { ok: true, actual_credits: args.p_actual }, error: null });
+      return Promise.resolve({ data: null, error: null });
+    },
+  };
+  const real = globalThis.fetch;
+  globalThis.fetch = (() => answer()) as typeof globalThis.fetch;
+  try {
+    await runTool("source_with_apify", ENVELOPE, { ...CTX, admin } as never);
+  } finally {
+    globalThis.fetch = real;
+  }
+  return calls.filter((c) => c.fn.startsWith("credits_"));
+}
+
+Deno.test("credits: through runTool, an uncertain start keeps its reservation; a definite 4xx refusal is refunded", async () => {
+  for (const answer of [() => Promise.reject(new TypeError("connection reset")), json(503, {}), json(201, { data: {} })]) {
+    const calls = await creditCallsFor(answer);
+    assertEquals(calls.map((c) => c.fn), ["credits_reserve"], "reserved, and then neither charged nor refunded: held");
+  }
+  const refused = await creditCallsFor(json(409, { error: { message: "refused" } }));
+  assertEquals(refused.map((c) => c.fn), ["credits_reserve", "credits_finalize"]);
+  assertEquals([refused[1].args.p_actual, refused[1].args.p_status], [0, "not_charged"], "no run exists: refunded whole");
+});
+
+Deno.test("credits: an uncertain start's reservation is HELD, never refunded as if nothing was bought", () => {
+  // Billing decision (2026-10-14): hold until the outcome is known or the
+  // explicit policy applies (credits_release_stale at 30 minutes).
   const reg = src("supabase/functions/_shared/toolRegistry.ts");
-  assert(reg.includes("const started = result.ok || typeof (result.data as { run_id?: unknown } | null)\n      ?.run_id === \"string\";"),
-    "the settle path is untouched");
-  const i = reg.indexOf("A START WHOSE OUTCOME IS UNKNOWN IS NOT A REFUSAL");
-  const block = reg.slice(i, reg.indexOf("// ── PERSIST BEFORE WAITING", i));
-  assertFalse(block.includes("data:"), "the uncertain result adds no data (no run id), so `started` is what it was");
+  const i = reg.indexOf("const settlement = creditSettlementFor(result);");
+  assert(i > 0, "the settle path decides through creditSettlementFor");
+  const block = reg.slice(i, reg.indexOf('console.log("[credits][settlement]"', i));
+  assert(block.indexOf('settlement.action === "hold"') < block.indexOf("settleProviderCall("),
+    "a hold is decided before, and instead of, any settle");
+  assertFalse(reg.includes("const started = result.ok ||"), "no second, unguarded settle decision");
+  const u = reg.indexOf("A START WHOSE OUTCOME IS UNKNOWN IS NOT A REFUSAL");
+  const ublock = reg.slice(u, reg.indexOf("// ── PERSIST BEFORE WAITING", u));
+  assertFalse(ublock.includes("data:"), "the uncertain result carries no run id, so only the hold keeps it from a refund");
 });
 
 // ── THE SPEND LEDGER COUNTS AN UNCERTAIN START ──────────────────────────────
