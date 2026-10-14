@@ -97,3 +97,45 @@ Deno.test("a retry that returns a real record retains its normal success path an
   assertEquals(run.thirdCalls, []);
   assertEquals(run.second.companies.find((c) => c.enriched)?.stage_block, null);
 });
+
+Deno.test("the enforced execution spine avoids changed-batch purchases of already-answered companies", async () => {
+  const run = await replayEmptyEnrichment({
+    specMode: "enforce",
+    initialRecord: true,
+    emptyCompanies: 11,
+  });
+  assertEquals(run.first.companies.length, 12);
+  assertEquals(
+    run.first.companies.filter((c) => c.enrichment_outcome === "empty").length,
+    9,
+  );
+  assertEquals(
+    run.first.companies.filter((c) => c.enrichment_outcome === "success")
+      .length,
+    1,
+  );
+  assertEquals(
+    run.first.companies.filter((c) => c.enrichment_outcome === "provider_error")
+      .length,
+    2,
+  );
+  assertEquals(
+    run.calls,
+    [],
+    "Only the original unanswered batch remains; its prior reservation still guards it",
+  );
+  assertEquals(run.thirdCalls, []);
+  assertEquals(
+    run.second.companies.filter((c) => c.enriched).length,
+    1,
+    "Prior real evidence is preserved",
+  );
+  assertEquals(
+    run.second.companies.filter((c) =>
+      c.enrichment_outcome === "provider_error"
+    ).length,
+    2,
+    "A guarded unanswered call never becomes empty evidence",
+  );
+  assertEquals(run.qualified, []);
+});

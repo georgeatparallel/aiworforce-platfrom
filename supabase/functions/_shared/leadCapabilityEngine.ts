@@ -3805,6 +3805,8 @@ export async function runCapabilityPlan(
    * Reset at the start of every call, read immediately after.
    */
   let lastCallBlock: "deferred" | "provider_error" | null = null;
+  /** A successful read, including adoption. A guard skip is not an empty answer. */
+  let lastCallAnswered = false;
   /**
    * D3: set while a pending discovery run's own question is being asked again.
    * Such a call may ADOPT that run and nothing else: if the question no longer
@@ -3877,6 +3879,7 @@ export async function runCapabilityPlan(
     // CLEARED PER CALL. A stale block from an earlier batch would mark a
     // perfectly answered one as deferred.
     lastCallBlock = null;
+    lastCallAnswered = false;
     lastCallRef = { route_id: null, plan_version: currentPlan()?.version ?? null, provider_call_id: null };
     const spec = CAPABILITY_REGISTRY[capability];
     // COUNTED AT RECORD TIME, not before the await. The resolution stage runs two
@@ -4277,6 +4280,7 @@ export async function runCapabilityPlan(
         Date.now() - startedAt, deadlineOperationFor(capability, provider));
       deps.onCallComplete?.(call.batchIdentity);
       record(rows.length > 0 ? "ok" : "empty", rows.length, null);
+      lastCallAnswered = true;
       // THE LEDGER OF WHAT WAS BOUGHT, written only after the answer arrived.
       //
       // An errored or still-pending call records nothing, so a retry is never
@@ -7704,7 +7708,7 @@ export async function runCapabilityPlan(
           // and qualification holds on it rather than deciding.
           for (const url of batch) {
             for (const c of byUrl.get(url) ?? []) {
-              if (c.enriched) continue;
+              if (c.enriched || !lastCallAnswered) continue;
               c.enrichment_outcome = "empty";
               // This call answered; an earlier error/deferral is no longer owed.
               // Failed/deferred calls continue above and never reach this branch.

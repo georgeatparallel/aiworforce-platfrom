@@ -16,6 +16,8 @@ export async function replayEmptyEnrichment(
     retryOutcome?: "provider_error" | "deferred" | "not_attempted";
     legacyMissingOutcome?: boolean;
     retryAnswer?: "empty" | "success" | "failed";
+    specMode?: "enforce";
+    initialRecord?: boolean;
   } = {},
 ) {
   const count = o.emptyCompanies ?? 10;
@@ -38,6 +40,21 @@ export async function replayEmptyEnrichment(
     website: `https://control${n}.example`,
     employeeCountRange: { start: 11, end: 50 },
   });
+  const record = (url: string) => ({
+    name: `Control${/control-(\d+)/.exec(url)?.[1] ?? ""}`,
+    linkedinUrl: url,
+    website: `https://control${/control-(\d+)/.exec(url)?.[1] ?? ""}.example`,
+    description: "A SaaS software application for businesses.",
+    employeeCountRange: { start: 11, end: 50 },
+    locations: [{
+      parsed: {
+        text: "Austin, TX, United States",
+        countryFull: "United States",
+      },
+      country: "US",
+      headquarter: true,
+    }],
+  });
   const brain = {
     employee_min: 11,
     employee_max: 50,
@@ -50,6 +67,15 @@ export async function replayEmptyEnrichment(
     plan,
     brain,
     maxCandidates: 60,
+    ...(o.specMode
+      ? {
+        specMode: o.specMode,
+        specScope: {
+          workspace_id: "synthetic-efficiency",
+          lineage_id: "synthetic-root",
+        },
+      }
+      : {}),
     readEnv: (key: string) =>
       key === "LEAD_INVESTIGATION_BUDGET"
         ? "30"
@@ -74,7 +100,7 @@ export async function replayEmptyEnrichment(
               "synthetic provider failure on the remaining batch",
             );
           }
-          return Promise.resolve([]);
+          return Promise.resolve(o.initialRecord ? [record(urls[0])] : []);
         }
         return Promise.resolve(rows.map((_, n) => identity(n)));
       },
@@ -109,23 +135,7 @@ export async function replayEmptyEnrichment(
             throw new Error("synthetic retry still failed");
           }
           if (o.retryAnswer === "success") {
-            return Promise.resolve(urls.map((url) => ({
-              name: `Control${/control-(\d+)/.exec(url)?.[1] ?? ""}`,
-              linkedinUrl: url,
-              website: `https://control${
-                /control-(\d+)/.exec(url)?.[1] ?? ""
-              }.example`,
-              description: "A SaaS software application for businesses.",
-              employeeCountRange: { start: 11, end: 50 },
-              locations: [{
-                parsed: {
-                  text: "Austin, TX, United States",
-                  countryFull: "United States",
-                },
-                country: "US",
-                headquarter: true,
-              }],
-            })));
+            return Promise.resolve(urls.map(record));
           }
           return Promise.resolve([]);
         }
