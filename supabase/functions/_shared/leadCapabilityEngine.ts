@@ -7575,7 +7575,11 @@ export async function runCapabilityPlan(
       // not assign it. That gap re-bought this batch once per continuation for
       // the life of any lineage that rediscovered; see the note there.
       const actionable = companies.filter((c) =>
-        c.identity && identityIsActionable(c.identity) && !c.enriched);
+        c.identity && identityIsActionable(c.identity) && !c.enriched &&
+        // An answered-empty read is terminal for this mission. A stage reopened
+        // for another company owes only errors, deferrals and first attempts.
+        // Empty is still no qualification evidence, never a negative fact.
+        c.enrichment_outcome !== "empty");
       // DEDUPED. Two YC rows can resolve to one LinkedIn company; enriching it
       // twice pays twice for the same record.
       const byUrl = new Map<string, EngineCompany[]>();
@@ -7700,8 +7704,11 @@ export async function runCapabilityPlan(
           // and qualification holds on it rather than deciding.
           for (const url of batch) {
             for (const c of byUrl.get(url) ?? []) {
-              if (c.enriched || c.enrichment_outcome !== "not_attempted") continue;
+              if (c.enriched) continue;
               c.enrichment_outcome = "empty";
+              // This call answered; an earlier error/deferral is no longer owed.
+              // Failed/deferred calls continue above and never reach this branch.
+              if (c.stage_block?.capability === cap) c.stage_block = null;
             }
           }
         }
