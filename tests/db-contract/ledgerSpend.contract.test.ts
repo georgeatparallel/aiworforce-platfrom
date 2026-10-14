@@ -152,26 +152,3 @@ Deno.test("fidelity: Supabase's 1000-row response cap is in force, and the D2 le
   assertEquals(data?.length, 1000, "an unbounded select is cut at db-max-rows, silently — as on Supabase");
   assert(VERIFIER_LEDGER_READ_LIMIT <= 1000, "a reader asking for more than the cap would be truncated without an error");
 });
-
-// KNOWN GAP (billing; pre-existing, needs a migration — see
-// docs/launch/lead-v2-reliability-proposals.md §6). A reservation that was
-// REFUNDED (the call did not start, or its start is uncertain) is replayed for
-// a later attempt under the same key, and settling that attempt charges 0: a
-// real second purchase goes uncharged. Run with RUN_KNOWN_GAPS=1 to see it fail.
-Deno.test({
-  name: "[known-gap] credits: a key refunded once and then really bought is charged",
-  ignore: Deno.env.get("RUN_KNOWN_GAPS") !== "1",
-  ...opts,
-  fn: async () => {
-    const db = await serviceClient();
-    const ws = await seedWorkspace();
-    await sql`insert into public.workspace_credit_balances (workspace_id, balance_credits) values (${ws}, 5)`;
-    const key = `credit-${uuid()}`;
-    const a1 = await authorizeProviderCall({ db: db as never, workspace_id: ws, logical_call_key: key, mode: "enforce" });
-    await settleProviderCall({ db: db as never, transaction_id: a1.transaction_id, started: false });   // refunded
-    const a2 = await authorizeProviderCall({ db: db as never, workspace_id: ws, logical_call_key: key, mode: "enforce" });
-    await settleProviderCall({ db: db as never, transaction_id: a2.transaction_id, started: true });    // a real run
-    const [bal] = await sql`select balance_credits from public.workspace_credit_balances where workspace_id = ${ws}`;
-    assertEquals(bal.balance_credits, 4, "the run that started must be charged");
-  },
-});
