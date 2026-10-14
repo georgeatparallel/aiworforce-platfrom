@@ -1,0 +1,473 @@
+{
+  "provenance": "synthetic_control",
+  "execution_mode": "enforced_spine",
+  "samples": 12,
+  "unique_discovered": 12,
+  "calls_by_slice": [
+    2,
+    2,
+    0
+  ],
+  "company_queries_by_slice": [
+    12,
+    11,
+    0
+  ],
+  "repeated_answered_empty_queries": 9,
+  "evidence_supported_qualified": 0,
+  "yield": {
+    "numerator": 0,
+    "denominator": 12,
+    "percentage": 0
+  },
+  "unknown_truth": {
+    "numerator": 12,
+    "denominator": 12,
+    "percentage": 100
+  },
+  "unknown_outcomes": {
+    "numerator": 12,
+    "denominator": 12,
+    "percentage": 100
+  },
+  "unsupported_matches": 0,
+  "positives_with_unknown_truth": 0,
+  "false_exclusions": {
+    "numerator": 0,
+    "denominator": 0,
+    "percentage": null
+  },
+  "provider_calls_per_qualified": null,
+  "estimated_usd": null,
+  "estimated_usd_per_qualified": null,
+  "cost_limitation": "Scripted transport invocations, including a failure; no settled receipts or recorded per-call prices. Zero qualified makes cost per qualified undefined.",
+  "outcomes": [
+    {
+      "company_key": "control0.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "pass",
+          "reason": "geography Austin, TX, United States matches United States",
+          "evidence_ids": [
+            "ev_1e8f058654bacb10a341c1a2"
+          ],
+          "provenance": {
+            "evidence_id": "ev_1e8f058654bacb10a341c1a2",
+            "dimension": "geography",
+            "status": "proven",
+            "method": "provider_field",
+            "confidence": "high",
+            "actor": "apify_linkedin_company_details",
+            "grounding_decision": null,
+            "business_model_decision": null,
+            "url": null,
+            "excerpt": null
+          }
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control1.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control2.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control3.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control4.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control5.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control6.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control7.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control8.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control9.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control10.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    },
+    {
+      "company_key": "control11.example",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "criterion_id": "industry:saas",
+          "dimension": "industry",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "business model is not established"
+        },
+        {
+          "criterion_id": "geography:united_states",
+          "dimension": "geography",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "geography is not established"
+        },
+        {
+          "criterion_id": "hiring:_event_hiring_subject_company_qualifier_role_families_engine",
+          "dimension": "hiring",
+          "kind": "hard",
+          "result": "unknown",
+          "evidence_ids": [],
+          "provenance": null,
+          "reason": "hiring is not established"
+        }
+      ],
+      "truth": "UNKNOWN"
+    }
+  ],
+  "baseline_commit": "fec34976d1d88a2539a9aaf8a8e27e5fe2be923a",
+  "generation": "Executed the 12-company enforced-spine synthetic cohort against the original engine using researchBenchmark.ts --snapshot; not recorded production performance.",
+  "cohort_sha256": {
+    "../../edge-functions/_shared/emptyEnrichmentReplay.ts": "120ab39ac3861d90f58d2e771c82a90077760b8300365a1400b487bce8266dc2",
+    "synthetic-labels.json": "0aedfa16f4065a68178de2bb5a4a291306df0b7d06f8e2bbb5c264e1f5c88d83"
+  }
+}

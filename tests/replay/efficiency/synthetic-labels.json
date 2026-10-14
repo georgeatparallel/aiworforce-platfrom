@@ -1,0 +1,57 @@
+{
+  "provenance": {
+    "kind": "synthetic_controls",
+    "annotator": "Codex",
+    "method": "No complete mandatory industry and hiring proof is supplied. One company record supplies some fresh firmographics; empty/guarded answers do not decide mission fit. All synthetic controls remain UNKNOWN."
+  },
+  "rows": [
+    {
+      "company_key": "control0.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control1.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control2.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control3.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control4.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control5.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control6.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control7.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control8.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control9.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control10.example",
+      "label": "UNKNOWN"
+    },
+    {
+      "company_key": "control11.example",
+      "label": "UNKNOWN"
+    }
+  ]
+}
