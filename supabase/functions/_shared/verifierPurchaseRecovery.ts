@@ -71,8 +71,21 @@ export function unreadablePriorPurchases(reason: string): PriorPurchases {
   return { lookup: () => ({ kind: "unknown", reason }) };
 }
 
-/** A failure before any run could exist is not a purchase; a timeout or abort might be. */
-const MAY_HAVE_STARTED = /abort|time[d_ -]*out|timeout|network|fetch|connection|reset|socket|unfinished/i;
+/**
+ * The failure code of an Apify start whose outcome is unknown: the POST was
+ * aborted or lost (status 0), Apify answered 5xx, or a 2xx named no run. The
+ * run may exist and be billed (`toolRegistry`, `execSourceWithApify`).
+ */
+export const APIFY_START_UNCERTAIN = "apify_start_uncertain";
+
+/**
+ * A failure before any run could exist is not a purchase; a timeout or abort
+ * might be — and so might a start whose answer was lost (`APIFY_START_UNCERTAIN`).
+ * A definite refusal (`apify_start_failed` on a 4xx, schema, auth, credits)
+ * matches none of these: no run exists, so it may be bought again.
+ */
+const MAY_HAVE_STARTED =
+  /abort|time[d_ -]*out|timeout|network|fetch|connection|reset|socket|unfinished|apify_start_uncertain/i;
 
 const FINISHED = new Set(["succeeded", "empty", "reused"]);
 const IN_FLIGHT = new Set(["started", "timed_out"]);
