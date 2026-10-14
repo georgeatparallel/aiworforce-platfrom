@@ -65,7 +65,11 @@ const sameKeys = (a: readonly string[], b: readonly string[]) =>
 
 export class FixtureProvider {
   readonly calls: RecordedProviderCall[] = [];
-  constructor(private readonly responses: readonly FixtureProviderResponse[]) {}
+  /**
+   * `runIdPrefix` makes run ids unique across slices (each slice builds its own
+   * provider): a lineage-wide ledger keyed by run id needs them distinct.
+   */
+  constructor(private readonly responses: readonly FixtureProviderResponse[], private readonly opts: { runIdPrefix?: string } = {}) {}
 
   /** The `invoke` the guarded invoker wraps — same call shape `ledgerBoundCall` and the engine send. */
   invoke = (call: {
@@ -85,7 +89,7 @@ export class FixtureProvider {
     if (hit.pending_once && !call.resumeRunId) {
       // The run started (it is paid for) and has not finished: the shape the
       // guarded invoker surfaces, so `ledgerBoundCall` records it as running.
-      const run_id = `replay-pending-${this.calls.length + 1}`;
+      const run_id = `${this.opts.runIdPrefix ?? ""}replay-pending-${this.calls.length + 1}`;
       call.onProviderRun?.({ run_id, dataset_id: null });
       this.calls.push({
         actor: call.actorKey, capability: call.capabilityId ?? spec?.capability ?? null, candidate_keys: keys,
@@ -95,7 +99,7 @@ export class FixtureProvider {
       return Promise.reject(Object.assign(new Error("provider run still executing"), { toolResult: { run_id, pending: true } }));
     }
     // A recorded run id, as the provider would report it — so the ledger and adoption paths run.
-    call.onProviderRun?.({ run_id: `replay-${this.calls.length + 1}`, dataset_id: null });
+    call.onProviderRun?.({ run_id: call.resumeRunId ?? `${this.opts.runIdPrefix ?? ""}replay-${this.calls.length + 1}`, dataset_id: null });
     this.calls.push({
       actor: call.actorKey, capability: call.capabilityId ?? spec?.capability ?? null, candidate_keys: keys,
       input_hash: call.inputHash ?? "", estimate_usd: spec?.cost.estimate_usd ?? null,

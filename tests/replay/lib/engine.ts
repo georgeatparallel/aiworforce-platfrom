@@ -18,6 +18,7 @@ import { PRODUCTION_READINESS, readinessPolicy, type ReadinessPolicy } from "../
 import { stubMissionEvaluator } from "../../edge-functions/_shared/missionEvaluatorFixture.ts";
 import type { ReplayFixture } from "./fixture.ts";
 import { FixtureProvider, noNetwork } from "./provider.ts";
+import { readPendingRun } from "../../../supabase/functions/_shared/capabilityExecution.ts";
 
 export interface EngineFixture extends ReplayFixture {
   /** A mission stored elsewhere in the repo (e.g. tests/fixtures/lead-v2/…), relative to the repo root. */
@@ -62,15 +63,21 @@ export async function replayEngineSlice(fx: EngineFixture, o: {
   deps?: Record<string, unknown>;
   /** Carried replenishment fields beyond pages (e.g. `page_fingerprints`), as run-agent reads them from the checkpoint. */
   replenishExtra?: Record<string, unknown>;
+  /** The provider for this slice (a ledger-writing wrapper, unique run ids). Default: a fresh strict FixtureProvider. */
+  provider?: FixtureProvider;
 } = {}): Promise<EngineSlice> {
   noNetwork();
   const mission = missionOf(fx);
   const readiness = readinessOf(fx);
-  const provider = new FixtureProvider(fx.provider_responses);
+  const provider = o.provider ?? new FixtureProvider(fx.provider_responses);
   const m = fx.engine.model_responses;
   const lineage = `lineage-${fx.provenance.task_id}`;
   const result = await runCapabilityPlan({
     invoke: provider.invoke,
+    // HOW A RUN STILL EXECUTING IS RECOGNISED — run-agent always passes the
+    // production reader. Without it a `pending_once` row read as a provider
+    // failure, and the engine moved past a run it should have been waiting on.
+    readPendingRun,
     verifyEmployer: () => ({ verified: true, outcome: "ok" }),
     evaluateMission: stubMissionEvaluator({ mission_fit: m.evaluate_mission?.mission_fit ?? "pass" }),
     planExecution: () => Promise.resolve(structuredClone(m.plan_execution)),

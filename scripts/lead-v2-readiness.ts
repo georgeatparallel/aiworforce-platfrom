@@ -27,6 +27,7 @@ const CATEGORIES: Array<[tag: string, label: string]> = [
   ["continuation", "Continuation invariants"],
   ["matrix", "Query regression matrix"],
   ["invariant", "Lead V2 invariants"],
+  ["failure", "Failure-injection lineages"],
 ];
 
 const root = new URL("../", import.meta.url);
