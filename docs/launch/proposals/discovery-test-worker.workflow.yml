@@ -25,7 +25,7 @@ on:
       session_minutes:
         description: "Worker session length before it is asked to drain (max 25)"
         required: true
-        default: "20"
+        default: "5"
         type: string
 
 permissions:
@@ -57,14 +57,16 @@ jobs:
       # ── Fail-closed spend controls ───────────────────────────────────────
       LEAD_CREDIT_ENFORCEMENT: enforce
       LINEAGE_LEASE_ENFORCED: "true"
-      LEAD_V2_MISSION_PROVIDER_USD_CAP: "0.25"
-      LEAD_V2_MISSION_CREDIT_CAP: "10"
+      # #89's smoke limits (tests/replay/evaluation/smoke-mission.proposed.json).
+      LEAD_V2_MISSION_PROVIDER_USD_CAP: "0.20"   # provider USD, checked before every paid call
+      LEAD_V2_MISSION_CREDIT_CAP: "5"            # paid provider calls (1 credit each) = 5 purchases
+      LEAD_MAX_AUTO_CONTINUATIONS: "1"           # at most 2 slices
       MODEL_SPEND_ENFORCEMENT: enforce
-      MODEL_SPEND_CEILING_USD: "1.00"
+      MODEL_SPEND_CEILING_USD: "0.05"            # recorded model spend; the last call may overshoot by its own cost
       MODEL_SPEND_PERIOD_DAYS: "1"
-      MODEL_RUN_MAX_CALLS: "50"
+      MODEL_RUN_MAX_CALLS: "2"                   # per slice, so at most 4 per mission
       # ── Worker bounds ────────────────────────────────────────────────────
-      LEAD_WORKER_MAX_RUNTIME_MS: "300000"
+      LEAD_WORKER_MAX_RUNTIME_MS: "150000"       # per slice; 2 slices fit in #89's 300 s
       # ── Providers: test-scoped keys; the Apify account carries its own spending limit ──
       APIFY_API_TOKEN: ${{ secrets.TEST_APIFY_API_TOKEN }}
       FIRECRAWL_API_KEY: ${{ secrets.TEST_FIRECRAWL_API_KEY }}

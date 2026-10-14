@@ -196,6 +196,27 @@ defaults:
 `worker/Dockerfile`, about $2 a month while running and stopped between tests.
 It's only needed if a session must outlive a GitHub job.
 
+## 3a. The first mission's limits (#89) and what enforces each
+
+#89 proposes the first smoke in
+`tests/replay/evaluation/smoke-mission.proposed.json`: one US B2B software
+company, 11 to 50 employees, an open Account Executive posting. The table maps
+each of its limits to the control that enforces it.
+
+| #89 limit | Enforced by | How firm |
+|---|---|---|
+| provider $0.20 | `LEAD_V2_MISSION_PROVIDER_USD_CAP=0.20` | **hard**: checked before every paid call, lineage-wide |
+| 5 provider purchases / 20 credits | `LEAD_V2_MISSION_CREDIT_CAP=5`; the workspace grant (10 credits) under `LEAD_CREDIT_ENFORCEMENT=enforce` | **hard**: one credit per paid call |
+| 2 slices | `LEAD_MAX_AUTO_CONTINUATIONS=1` | **hard**. Never `0`: a value below 1 is ignored and falls back to 10 |
+| 3 discovered companies / rows | `run_budget.max_candidates: 3` in the enqueued mission | **hard** for the discovery pool. One discovery page is not a separate knob |
+| ≤5 adoption polls | `PENDING_RUN_MAX_POLLS = 5` (code) | **hard** |
+| 4 model calls | `MODEL_RUN_MAX_CALLS=2` per slice × 2 slices | **hard** |
+| model $0.05 | `MODEL_SPEND_CEILING_USD=0.05`, period 1 day, in the isolated project | **soft**: checked against *recorded* spend, so the last call can overshoot by its own cost |
+| 300 s | `LEAD_WORKER_MAX_RUNTIME_MS=150000` per slice; session `5` min; job timeout | **soft**: a slice drains past SIGTERM; worst case is about 10 minutes of wall clock |
+| per-provider caps (job search 2, company details 1, Firecrawl map 1, scrape 1) | **nothing in configuration** | **not enforceable** without code. Bounded only by the 5-purchase and $0.20 totals. Omit the keys of providers outside the set |
+| funding providers 0 | the mission requests no funding criterion | by mission shape, not by a gate |
+| unknown price blocks the call | the Firecrawl estimate needs `FIRECRAWL_USD_PER_CREDIT` | **set it from current pricing**, or leave Firecrawl out of the first mission |
+
 ## 4. Activation (each step needs explicit approval, in this order)
 
 1. Create the non-production Supabase project. Record its ref.
