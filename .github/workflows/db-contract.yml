@@ -1,0 +1,87 @@
+# Database contract — ADVISORY.
+#
+# The repository's real Supabase client and query modules against a REAL
+# Postgres and a REAL PostgREST, built from the repository's migrations in a
+# throwaway container. It exists because the offline fakes accepted a query
+# PostgREST rejects (D1, PR #73: `or` + `select=id` → 42703) — see
+# tests/db-contract/README.md.
+#
+# ADVISORY: this is its own workflow, so it is not one of the required checks
+# branch protection names. It goes red when it fails; it does not block a
+# merge. Promote it by adding "Database contract (Postgres + PostgREST)" to the
+# protected branches' required checks once it has been stable.
+#
+# Needs NO secrets and touches NO external system beyond pulling the pinned
+# images and binaries. Every credential is generated for the run:
+# the Postgres superuser password, PostgREST's `authenticator` password and the
+# JWT secret its service-role key is signed with. The held V2 queue migrations
+# are applied to this disposable database only.
+name: Database contract
+
+on:
+  pull_request:
+  push:
+    branches: [main, launch/hardening]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DENO_VERSION: v2.8.2
+  # Pinned TEST versions. Production's exact versions are not recorded in this
+  # repository; the baseline was dumped by pg_dump 17 (it sets
+  # transaction_timeout), so the lane runs Postgres 17. See the README.
+  POSTGRES_IMAGE: postgres:17.6
+  POSTGREST_VERSION: v12.2.3
+  POSTGREST_SHA256: 9f71269e61ac3a940281e93ff415760f5957e430e475ba4c3889f3ede7d5527c
+
+jobs:
+  db-contract:
+    name: Database contract (Postgres + PostgREST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+          cache: true
+
+      - name: Start a disposable Postgres (generated password)
+        run: |
+          pw="$(openssl rand -hex 16)"
+          echo "::add-mask::$pw"
+          docker run -d --name contract-pg -e POSTGRES_PASSWORD="$pw" \
+            -p 127.0.0.1:5432:5432 "$POSTGRES_IMAGE" >/dev/null
+          for _ in $(seq 1 60); do
+            docker exec contract-pg pg_isready -U postgres -q && break
+            sleep 1
+          done
+          docker exec contract-pg pg_isready -U postgres
+          echo "PG_ADMIN_URL=postgres://postgres:$pw@127.0.0.1:5432/postgres" >> "$GITHUB_ENV"
+
+      - name: Fetch the pinned PostgREST (checksum verified)
+        run: |
+          dir="$RUNNER_TEMP/postgrest"; mkdir -p "$dir"
+          curl -fsSL -o "$dir/postgrest.tar.xz" \
+            "https://github.com/PostgREST/postgrest/releases/download/$POSTGREST_VERSION/postgrest-$POSTGREST_VERSION-linux-static-x64.tar.xz"
+          echo "$POSTGREST_SHA256  $dir/postgrest.tar.xz" | sha256sum -c -
+          tar -xJf "$dir/postgrest.tar.xz" -C "$dir"
+          "$dir/postgrest" --version
+          echo "POSTGREST_BIN=$dir/postgrest" >> "$GITHUB_ENV"
+
+      - name: Contract tests
+        run: tests/db-contract/run.sh
+
+      - name: Mutation proof — reverting the D1 PostgREST fix must fail the contract
+        run: tests/db-contract/mutation.sh
+
+      - name: Postgres log on failure
+        if: failure()
+        run: docker logs contract-pg 2>&1 | tail -50
