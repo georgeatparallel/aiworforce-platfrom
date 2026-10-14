@@ -9,10 +9,16 @@ const ROOT = new URL("../../", import.meta.url);
 const read = (rel: string) => Deno.readTextFileSync(new URL(rel, ROOT));
 const PATH = "docs/launch/proposals/discovery-test-worker.workflow.yml";
 const RAW = read(PATH);
-// deno-lint-ignore no-explicit-any
-const wf = parse(RAW) as any;
+interface Step { name?: string; run?: string; uses?: string; with?: Record<string, string> }
+interface Workflow {
+  on: Record<string, unknown>;
+  permissions: Record<string, string>;
+  concurrency: Record<string, unknown>;
+  jobs: { worker: { environment: string; "timeout-minutes": number; env: Record<string, string>; steps: Step[] } };
+}
+const wf = parse(RAW) as Workflow;
 const job = wf.jobs.worker;
-const steps: Array<{ name?: string; run?: string; uses?: string }> = job.steps;
+const steps: Step[] = job.steps;
 const guard = steps[0].run ?? "";
 
 Deno.test("test worker: the proposal is not an active workflow", async () => {
@@ -43,7 +49,7 @@ Deno.test("test worker: the refusal step runs first and refuses production and t
 });
 
 Deno.test("test worker: spend controls are set, fail-closed, and never from production secrets", () => {
-  const env = job.env as Record<string, string>;
+  const env = job.env;
   assertEquals(env.LEAD_CREDIT_ENFORCEMENT, "enforce");
   assertEquals(env.LINEAGE_LEASE_ENFORCED, "true");
   assertEquals(env.MODEL_SPEND_ENFORCEMENT, "enforce");
@@ -60,8 +66,8 @@ Deno.test("test worker: one worker session that drains on SIGTERM, on the worker
   const run = steps.find((s) => (s.run ?? "").includes("worker/main.ts"))!.run!;
   assert(run.includes("timeout -s TERM --kill-after=10m"));
   assert(run.includes("deno run --allow-env --allow-net --allow-read worker/main.ts"));
-  const deno = steps.find((s) => s.uses?.startsWith("denoland/setup-deno")) as { with?: { "deno-version"?: string } };
-  assert(read("worker/Dockerfile").includes(`denoland/deno:${deno.with!["deno-version"]!.replace(/^v/, "")}`));
+  const deno = steps.find((s) => s.uses?.startsWith("denoland/setup-deno"));
+  assert(read("worker/Dockerfile").includes(`denoland/deno:${deno?.with?.["deno-version"]?.replace(/^v/, "")}`));
 });
 
 Deno.test("test worker: the hosting doc names the detach step for schedules that call production", () => {
