@@ -17,16 +17,20 @@
 // ledger is never rebuilt from them, and the provider transport does not
 // consult them before calling.
 //
-// D2 is pinned twice: the `DEFECT` test states what happens today; the
-// `[known-gap]` test (ignored) states what must happen.
+// D2 (fixed): `ledgerBoundCall` now asks the durable execution ledger too
+// (`verifierPurchaseRecovery.ts`): a run it names is adopted by id; a call that
+// may have started a run it cannot name is never bought again.
 //
 // ZERO network, ZERO provider spend, ZERO production writes.
 
-import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals, assertFalse } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { loadFixture } from "../lib/fixture.ts";
 import { replayVerificationAt } from "../lib/verification.ts";
 import { ledgerBoundCall } from "../../../supabase/functions/_shared/claimVerifier.ts";
 import { HIRING_ROUTE_ACTOR } from "../../../supabase/functions/_shared/hiringClaimVerifier.ts";
+import {
+  priorPurchasesFrom, UNCERTAIN_PURCHASE_SETTLE_MS, unreadablePriorPurchases, type VerifierLedgerRow,
+} from "../../../supabase/functions/_shared/verifierPurchaseRecovery.ts";
 
 const fx = loadFixture("canary8.hiring-affordability");
 const S1 = "before_hiring_verification:slice1";
@@ -52,25 +56,90 @@ Deno.test("[failure] D2 control: while the verifier's spend ledger SURVIVES, the
   assertEquals(a.provider.calls.length, 1, "skipped by idempotency key, nothing re-bought");
 });
 
-Deno.test("[failure] D2 DEFECT REPRODUCED — slice A's write is lost (or its worker dies) after the verifier bought: slice B restores the earlier checkpoint and BUYS THE SAME VERIFICATION AGAIN, under the same idempotency key", async () => {
-  const { bought } = await sliceA();
-  // Slice B: a fresh process resumes the checkpoint slice A never replaced.
-  const b = await replayVerificationAt(fx, S1, { verifiers: "hiring" });
-  assertEquals(b.provider.calls.length, 1,
-    "today — if this fails, D2 is fixed: enable the [known-gap] test below and delete this one");
+// ── D2, FIXED: THE DURABLE LEDGER DECIDES ─────────────────────────────────
+//
+// Slice B is handed what the execution ledger holds for this lineage (as
+// run-agent's `verifierPriorPurchases` reads `lead_execution_calls`). The row
+// below is the one the transport wrote for slice A's purchase: started, its
+// run id attached when the start POST returned, finalized `succeeded`.
+
+const T0 = Date.parse("2026-10-04T12:00:00Z");
+function durableRowOf(a: Awaited<ReturnType<typeof sliceA>>["a"], key: string, over: Partial<VerifierLedgerRow> = {}): VerifierLedgerRow {
+  const r = a.ledger.reservations.find((x) => x.idempotency_key === key)!;
+  assert(r.provider_run_id, "slice A's run id reached its reservation (onProviderRun)");
+  return {
+    idempotency_key: key, provider_run_id: r.provider_run_id, status: "succeeded",
+    started_at: new Date(T0).toISOString(), record_kind: "provider_call", ...over,
+  };
+}
+const sliceB = (prior: ReturnType<typeof priorPurchasesFrom>, nowMs = T0 + 60_000) =>
+  replayVerificationAt(fx, S1, { verifiers: "hiring", prior, now: () => nowMs });
+const adoptedTrace = (b: Awaited<ReturnType<typeof sliceB>>) =>
+  b.trace.find((e) => e.type === "call_adopted" && e.source === "execution_ledger");
+
+Deno.test("[failure] D2 slice A's write is lost after the verifier bought: slice B ADOPTS the run by id from the execution ledger — read again, never bought again", async () => {
+  const { a, bought } = await sliceA();
+  const b = await sliceB(priorPurchasesFrom([durableRowOf(a, bought.idempotency_key!)]));
+  assertEquals(b.provider.calls.filter((c) => !c.adopted).length, 0, "nothing bought");
+  assertEquals(b.provider.calls.length, 1, "one re-read");
   assertEquals(b.provider.calls[0].idempotency_key, bought.idempotency_key, "the same question, by its own key");
-  assertEquals(b.provider.calls[0].candidate_keys, [LLAMA]);
-  // Paid twice: each slice's ledger records it as its own executed reservation.
-  const reservation = b.ledger.reservations.find((r) => r.idempotency_key === bought.idempotency_key);
-  assertEquals(reservation?.status, "executed");
+  assertEquals(adoptedTrace(b)?.run_id, a.ledger.reservations.find((r) => r.idempotency_key === bought.idempotency_key)!.provider_run_id);
+  // The same answer as slice A's purchase …
+  assertEquals(b.phase.ran.map((r) => r.findings), a.phase.ran.map((r) => r.findings));
+  assertEquals(b.phase.changed, a.phase.changed);
+  // … and no new spend: an adoption makes no reservation (as the engine's adoption of a recovered run makes none).
+  assertEquals(b.ledger.reservations.length, b.ledgerBefore.reservations.length);
 });
 
-Deno.test({
-  name: "[known-gap] D2 a verification bought by a slice whose write was lost is adopted from the execution ledger, never bought again",
-  ignore: true,
-  fn: async () => {
-    await sliceA();
-    const b = await replayVerificationAt(fx, S1, { verifiers: "hiring" });
-    assertEquals(b.provider.calls.filter((c) => !c.adopted).length, 0);
-  },
+Deno.test("[failure] D2 a run the ledger still shows IN FLIGHT (run id attached, never finalized) is adopted by id, not bought again", async () => {
+  const { a, bought } = await sliceA();
+  for (const status of ["started", "timed_out", "failed"]) {
+    const b = await sliceB(priorPurchasesFrom([durableRowOf(a, bought.idempotency_key!, { status })]));
+    assertEquals(b.provider.calls.filter((c) => !c.adopted).length, 0, `${status}: nothing bought`);
+    assertEquals(adoptedTrace(b)?.ledger_status, status);
+  }
+});
+
+Deno.test("[failure] D2 UNCERTAIN: a call that may have started a run whose id was never recorded is NEVER bought again — deferred while a live holder could still attach it, then held unresolved", async () => {
+  const { bought } = await sliceA();
+  const uncertain = priorPurchasesFrom([{
+    idempotency_key: bought.idempotency_key, provider_run_id: null, status: "started",
+    started_at: new Date(T0).toISOString(), record_kind: "provider_call",
+  }]);
+  for (const [nowMs, held] of [[T0 + 60_000, "deferred"], [T0 + UNCERTAIN_PURCHASE_SETTLE_MS + 1, "unresolved"]] as const) {
+    const b = await sliceB(uncertain, nowMs);
+    assertEquals(b.provider.calls.length, 0, `${held}: nothing bought, nothing read`);
+    const skip = b.trace.find((e) => e.type === "call_idempotent_skip" && e.reason === "uncertain_prior_purchase");
+    assertEquals(skip?.held, held);
+    // Not answered either way: the claim stays open, never failed on a guess.
+    assertEquals(b.phase.changed, 0);
+    assertEquals(b.ledger.reservations.length, b.ledgerBefore.reservations.length, "no spend recorded or released");
+  }
+});
+
+Deno.test("[failure] D2 an UNREADABLE execution ledger rules nothing out: the purchase is deferred, never made blind", async () => {
+  await sliceA();
+  const b = await sliceB(unreadablePriorPurchases("execution ledger read failed"));
+  assertEquals(b.provider.calls.length, 0);
+  assertEquals(b.trace.find((e) => e.type === "call_idempotent_skip")?.reason, "execution_ledger_unreadable");
+});
+
+Deno.test("[failure] D2 a call that failed BEFORE any run existed (a refusal, no run id) was never bought: slice B buys it as before", async () => {
+  const { bought } = await sliceA();
+  const b = await sliceB(priorPurchasesFrom([{
+    idempotency_key: bought.idempotency_key, provider_run_id: null, status: "failed", failure_code: "http_400",
+    started_at: new Date(T0).toISOString(), record_kind: "provider_call",
+  }]));
+  assertEquals(b.provider.calls.filter((c) => !c.adopted).length, 1);
+});
+
+Deno.test("[failure] D2 nothing known (a first slice, or another lineage's key): verification buys exactly as before", async () => {
+  const { bought } = await sliceA();
+  const b = await sliceB(priorPurchasesFrom([{
+    idempotency_key: "some-other-key", provider_run_id: "run-x", status: "succeeded",
+    started_at: new Date(T0).toISOString(), record_kind: "provider_call",
+  }]));
+  assertEquals(b.provider.calls.length, 1);
+  assertEquals(b.provider.calls[0].idempotency_key, bought.idempotency_key);
+  assertFalse(b.provider.calls[0].adopted);
 });

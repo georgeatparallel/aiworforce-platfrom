@@ -140,6 +140,9 @@ import {
 } from "../_shared/pendingRunRecovery.ts";
 import { LEAD_EXECUTION_CALLS_TABLE } from "../_shared/executionLedger.ts";
 import {
+  type PriorPurchases, readPriorPurchases, type VerifierLedgerDb,
+} from "../_shared/verifierPurchaseRecovery.ts";
+import {
   type FencedTaskDb, fencedTaskUpdate, resolveSliceGeneration, type SliceFence,
 } from "../_shared/fencedTaskWrite.ts";
 import {
@@ -2446,12 +2449,27 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             return rp ? { plan_id: rp.plan_id, version: rp.version } : null;
           })(),
         });
+        // ── D2: WHAT EARLIER SLICES BOUGHT, FROM THE DURABLE LEDGER ──────────
+        //
+        // The spend ledger above is the checkpoint's; a lost end-of-slice write
+        // forgets a verification it bought, and the next slice bought it again
+        // under the same key. Read once per resumed slice, on first use, scoped
+        // to the parent task AND this workspace exactly as the completed- and
+        // pending-run recovery is (`verifierPurchaseRecovery.ts`). A failed read
+        // rules nothing out: verifier purchases are deferred, never repeated.
+        let verifierPrior: Promise<PriorPurchases> | null = null;
+        const verifierPriorPurchases = (): Promise<PriorPurchases> => verifierPrior ??= readPriorPurchases(
+          supabase as unknown as VerifierLedgerDb,
+          { table: LEAD_EXECUTION_CALLS_TABLE, parentTaskId: leadResumeParentTaskId, workspaceId: String(workspace_id ?? "") },
+          (msg, meta) => console.error(`[run-agent]${msg}`, meta),
+        );
         // `spec`: pass the compiler the verification phase also prices
         // affordability with, so the gate and the reservation read one estimate.
         const verifierCallFor = async (
           vState: CapabilityExecutionState, spec?: Awaited<ReturnType<typeof verifierSpecFor>>,
         ) => ledgerBoundCall({
           ledger: vState.spend_ledger!,
+          prior: await verifierPriorPurchases(),
           spec: spec ?? await verifierSpecFor(vState),
           actorIdFor: (actorKey) => hiringActorCard(actorKey)?.actor_id ?? null,
           invoke: guardedInvoker(null, (call) => capabilityInvoke(call), (actorKey, error) => {

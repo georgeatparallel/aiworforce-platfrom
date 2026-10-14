@@ -34,6 +34,7 @@ import type { CompanyEvidenceGraph } from "./evidenceGraph.ts";
 import { canStillQualify, evidenceGapsFor, type ClaimDefinition, CLAIM_REGISTRY } from "./evidenceGapRouter.ts";
 import { PRODUCTION_READINESS, type ReadinessPolicy } from "./routeReadiness.ts";
 import type { TraceEventType } from "./missionTrace.ts";
+import { type PriorPurchases, uncertainStillSettling } from "./verifierPurchaseRecovery.ts";
 
 export const CLAIM_VERIFIER_VERSION = "claim-verifier-v1" as const;
 
@@ -363,6 +364,14 @@ export interface LedgerCallDeps {
   /** A deterministic refusal (opt-in gate, vendor credit, auth): refused ONCE per mission. */
   onRefused?(actorKey: string, reason: string): void;
   /**
+   * D2: what the DURABLE execution ledger knows this lineage already bought,
+   * by idempotency key (`verifierPurchaseRecovery.ts`). Absent: the
+   * checkpointed spend ledger alone decides, as before.
+   */
+  prior?: PriorPurchases;
+  /** Wall clock for the uncertain-purchase window. Absent: `Date.now`. */
+  now?(): number;
+  /**
    * The mission trace — the SAME one the engine's own calls and every
    * settlement write to.
    *
@@ -423,7 +432,37 @@ export function ledgerBoundCall(d: LedgerCallDeps): (c: VerifierCall) => Promise
       return { status: "failed", reason: "already_executed: this exact call was bought earlier in the mission" };
     }
     if (existing && c.resume_run_id) trace("call_adopted", { capability: spec.capability, run_id: c.resume_run_id });
-    if (!existing) {
+    // ── D2: WHAT AN EARLIER SLICE BOUGHT, FROM THE DURABLE LEDGER ────────────
+    //
+    // The spend ledger above travels in the checkpoint, so a slice whose
+    // end-of-slice write was lost forgets what it bought. The execution ledger
+    // does not (`verifierPurchaseRecovery.ts`): a run it names is re-read by id;
+    // a call that may have started a run it cannot name is never bought again.
+    const prior = !existing && !c.resume_run_id ? d.prior?.lookup(key) ?? null : null;
+    if (prior && prior.kind !== "adopt") {
+      const settling = prior.kind === "unknown" || uncertainStillSettling(prior, (d.now ?? Date.now)());
+      const why = prior.kind === "unknown" ? "execution_ledger_unreadable" : "uncertain_prior_purchase";
+      trace("call_idempotent_skip", {
+        capability: spec.capability, reason: why, held: settling ? "deferred" : "unresolved",
+        ...(prior.kind === "uncertain" ? { ledger_status: prior.status, started_at: prior.started_at } : { detail: prior.reason }),
+      });
+      const detail = prior.kind === "uncertain"
+        ? `an earlier slice may have bought this call (${prior.status} at ${prior.started_at ?? "unknown"}, no provider run id recorded)`
+        : prior.reason;
+      // NOT a refusal of the provider (`onRefused` is not called) and NOT a
+      // failure of the company: nothing is bought, and the claim stays open.
+      return settling
+        ? { status: "deferred", reason: `${why}: ${detail}` }
+        : { status: "refused", reason: `${why}: ${detail}; held unresolved rather than bought again` };
+    }
+    const adoptRunId = prior?.kind === "adopt" ? prior.run_id : null;
+    if (adoptRunId) {
+      trace("call_adopted", { capability: spec.capability, run_id: adoptRunId, source: "execution_ledger", ledger_status: prior!.status });
+    }
+    // An adopted run is a re-read: no reservation, as the engine's adoption of
+    // a run recovered from the same ledger (`completed_runs`) makes none.
+    const buying = !existing && !adoptRunId;
+    if (buying) {
       const decision = reserve(d.ledger, {
         idempotency_key: key, provider_call_id, purpose: spec.purpose, route_id: spec.route_id, route_anchor: "funding",
         candidate_keys: spec.candidate_keys, estimate_usd: spec.cost.estimate_usd,
@@ -443,11 +482,11 @@ export function ledgerBoundCall(d: LedgerCallDeps): (c: VerifierCall) => Promise
       const rows = await d.invoke({
         actorKey: c.actor_key, actorId, capabilityId: spec.capability, input,
         inputHash: d.hash(input, c.actor_key), providerCallSpec: spec,
-        ...(c.resume_run_id ? { resumeRunId: c.resume_run_id } : {}),
+        ...((c.resume_run_id ?? adoptRunId) ? { resumeRunId: (c.resume_run_id ?? adoptRunId)! } : {}),
         onProviderRun: (r) => { attachProviderRun(d.ledger, key, r.run_id); },
       });
-      if (!existing) markExecuted(d.ledger, key, estimate);
-      trace("call_executed", { rows: rows.length, provisional_usd: estimate });
+      if (buying) markExecuted(d.ledger, key, estimate);
+      trace("call_executed", { rows: rows.length, provisional_usd: buying ? estimate : 0, ...(adoptRunId ? { adopted: true } : {}) });
       return { status: "ok", rows, provider_call_id };
     } catch (e) {
       const tr = ((e as { toolResult?: unknown }).toolResult ?? null) as
@@ -455,26 +494,26 @@ export function ledgerBoundCall(d: LedgerCallDeps): (c: VerifierCall) => Promise
       const runId = tr && typeof tr.run_id === "string" ? tr.run_id : null;
       const message = String((e as Error)?.message ?? e);
       if (runId && tr?.pending === true) {
-        if (!existing) markExecuted(d.ledger, key, estimate);
+        if (buying) markExecuted(d.ledger, key, estimate);
         attachProviderRun(d.ledger, key, runId);
-        trace("call_executed", { rows: 0, provisional_usd: estimate, run_id: runId, pending: true });
+        trace("call_executed", { rows: 0, provisional_usd: buying ? estimate : 0, run_id: runId, pending: true, ...(adoptRunId ? { adopted: true } : {}) });
         return { status: "running", run_id: runId, provider_call_id };
       }
       // The guard refused before the network: readiness, at the moment of spending.
       if (!runId && (e as { name?: string })?.name === "CapabilityContainmentError") {
-        if (!existing) release(d.ledger, key);
+        if (buying) release(d.ledger, key);
         trace("call_released", { reason: "containment", detail: message.slice(0, 160) });
         return { status: "refused", reason: message.slice(0, 160) };
       }
       if (!runId && REFUSAL_RE.test(message)) {
-        if (!existing) release(d.ledger, key);
+        if (buying) release(d.ledger, key);
         trace("call_released", { reason: "provider_refused", detail: message.slice(0, 160) });
         d.onRefused?.(c.actor_key, message.slice(0, 160));
         return { status: "refused", reason: message.slice(0, 160) };
       }
       // A run that started is paid for, whatever it returned.
-      if (runId) { if (!existing) markExecuted(d.ledger, key, estimate); }
-      else if (!existing) release(d.ledger, key);
+      if (runId) { if (buying) markExecuted(d.ledger, key, estimate); }
+      else if (buying) release(d.ledger, key);
       trace("call_failed", { run_id: runId, paid: !!runId, detail: message.slice(0, 160) });
       return { status: "failed", reason: message.slice(0, 160) };
     }

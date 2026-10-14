@@ -35,6 +35,7 @@ import { readinessPolicyFor } from "../../../supabase/functions/_shared/routeRea
 import type { SpendLedger } from "../../../supabase/functions/_shared/budgetPolicy.ts";
 import { verifierSpecCompiler } from "../../../supabase/functions/_shared/verifierCallSpec.ts";
 import type { ReplayFixture } from "./fixture.ts";
+import type { PriorPurchases } from "../../../supabase/functions/_shared/verifierPurchaseRecovery.ts";
 import { FixtureProvider, noNetwork } from "./provider.ts";
 import { companiesAt, ledgerAt } from "./state.ts";
 
@@ -71,6 +72,13 @@ export async function replayVerificationAt(
     resume?: { companies: EngineCompany[]; ledger: SpendLedger; pending: PendingVerifierRun[] };
     /** Replace the fixture's provider responses (a `pending_once` variant). */
     responses?: ReplayFixture["provider_responses"];
+    /**
+     * What the durable execution ledger knows earlier slices bought (D2), as
+     * run-agent's `verifierPriorPurchases` reads it. Absent: nothing known.
+     */
+    prior?: PriorPurchases;
+    /** Wall clock for the uncertain-purchase window. Absent: `Date.now`. */
+    now?: () => number;
   } = {},
 ): Promise<VerificationReplay> {
   noNetwork();
@@ -102,6 +110,8 @@ export async function replayVerificationAt(
     invoke: guardedInvoker(null, (call) => provider.invoke(call), undefined, readiness),
     hash: (input, actorKey) => hashInput(input, actorKey),
     trace: (type, detail) => { trace.push({ type, ...detail }); },
+    ...(opts.prior ? { prior: opts.prior } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
   };
   const preflights: VerificationReplay["preflights"] = [];
   const byKey = (k: string) => companies.find((c) => c.key === k);
