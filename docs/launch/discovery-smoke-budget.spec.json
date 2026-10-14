@@ -1,0 +1,98 @@
+{
+  "schema": "discovery-smoke-budget-spec-v1",
+  "status": "BLOCKED",
+  "authorizes_execution": false,
+  "source_refs": {
+    "worker_proposal_pr": 87,
+    "worker_proposal_head": "2a60a41a",
+    "acceptance_pr": 89,
+    "acceptance_head": "16fa9e7a",
+    "runtime_guards_branch": "codex/smoke-execution-guards",
+    "runtime_guards_head": "9cdb1372"
+  },
+  "mission": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+  "eligibility": {
+    "industry": "Verified product, business customers and business activity; broad provider industry categories alone never prove software.",
+    "size": "Declared band from a current company record; associated-member counts are not staff counts. Exact counts and partially overlapping bands stay UNKNOWN.",
+    "geography": "Verified US company headquarters, not just a US job location.",
+    "hiring": "Dated, currently open Account Executive posting for this same employer, not recruitment on behalf of a client.",
+    "unknown": "Never MATCH; missing evidence alone never proves NON_MATCH.",
+    "funding": "No funding requirement or purchases. No broadening or skipped mandatory verification."
+  },
+  "limits": {
+    "total_authorized_usd": 0.25,
+    "provider_committed_max_usd": 0.20,
+    "model_committed_max_usd": 0.05,
+    "provider_purchases": 5,
+    "model_attempts": 4,
+    "customer_credits": 5,
+    "runtime_ms": 300000,
+    "workspaces": 1,
+    "workers": 1,
+    "requested_companies": 1,
+    "discovered_companies": 3,
+    "discovery_rows": 3,
+    "company_detail_urls": 3,
+    "discovery_pages": 1,
+    "provider_polls": 5,
+    "slices": 2,
+    "provider_actor_purchases": {
+      "apify_linkedin_job_search": 2,
+      "apify_linkedin_company_details": 1,
+      "firecrawl_map": 1,
+      "firecrawl_scrape": 1
+    },
+    "other_actors": 0
+  },
+  "candidate_environment_spec_not_applied": {
+    "LEAD_V2_MISSION_PROVIDER_USD_CAP": "0.20",
+    "LEAD_V2_MISSION_CREDIT_CAP": "5",
+    "LEAD_V2_MISSION_CAP_WORKSPACES": "<one-test-workspace-uuid>",
+    "LEAD_V2_WORKER_WORKSPACES": "<one-test-workspace-uuid>",
+    "LEAD_CREDIT_ENFORCEMENT": "enforce",
+    "LINEAGE_LEASE_ENFORCED": "true",
+    "LEAD_V2_SPECS": "enforce",
+    "MODEL_SPEND_ENFORCEMENT": "enforce",
+    "MODEL_SPEND_CEILING_USD": "0.05",
+    "MODEL_SPEND_PERIOD_DAYS": "1",
+    "MODEL_RUN_MAX_ALL_CALLS": "4",
+    "MODEL_RUN_MAX_CALLS": "4",
+    "MODEL_RUN_REQUIRE_PRICED": "true",
+    "LEAD_V2_SMOKE_WALL_CLOCK": "enforce",
+    "LEAD_WORKER_MAX_RUNTIME_MS": "300000",
+    "LEAD_MAX_AUTO_CONTINUATIONS": "1"
+  },
+  "candidate_request_spec_not_enqueued": {
+    "run_budget": { "provider_usd": 0.20, "max_candidates": 3 },
+    "requested_lead_count": 1
+  },
+  "enforcement": {
+    "local_all_model_attempts": "IMPLEMENTED_REQUEST_ONLY",
+    "model_unknown_rate_and_uncertain_usage": "IMPLEMENTED_STRICT_OPT_IN",
+    "model_usage_retained_after_drain": "IMPLEMENTED_REQUEST_ONLY",
+    "provider_invalid_quotes": "IMPLEMENTED",
+    "fixed_queue_deadline_after_restart": "IMPLEMENTED_OPT_IN",
+    "durable_mission_model_reservations": "BLOCKED_REQUIRES_APPROVED_DURABLE_ADMISSION",
+    "atomic_shared_usd_and_purchase_limits": "BLOCKED_REQUIRES_APPROVED_DURABLE_ADMISSION",
+    "mission_actor_page_and_poll_limits": "BLOCKED_REQUIRES_APPROVED_DURABLE_ADMISSION",
+    "mission_deadline_across_reenqueue": "BLOCKED_REQUIRES_IMMUTABLE_MISSION_AUTHORIZATION",
+    "actual_vendor_charge_maximum": "BLOCKED_REQUIRES_VERIFIED_UPPER_QUOTES_AND_EXTERNAL_CONTROLS",
+    "test_target_billing_and_schema": "BLOCKED_REQUIRES_CLAUDE_VALIDATION_AND_SEPARATE_AUTHORIZATION"
+  },
+  "accounting": {
+    "committed_estimates": "Prospective conservative upper bounds including pending and uncertain operations; never free after checkpoint loss.",
+    "actual_costs": "Separate, nullable until an auditable provider receipt. Token-table estimates are not invoices.",
+    "adoption": "No new purchase; every status/dataset/receipt transport read still counts against its authorized poll bound.",
+    "refusal": "No transport, no automatic re-buy, no fallback that bypasses the refused authorization.",
+    "counts": "Failed/uncertain starts retain their slots. A telemetry drain, new worker, new slice or new queue row must not reset the authorization."
+  },
+  "activation_gate": {
+    "ready": false,
+    "separate_execution_approval_required": true,
+    "durable_failure_injection_required": true,
+    "all_required_prices_verified": false,
+    "live_receipts_and_credits_reconciled": false,
+    "nonproduction_target_verified": false,
+    "worker_proposal_remains_inactive": true
+  }
+}
