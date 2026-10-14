@@ -59,6 +59,7 @@ import { terminalStatusOf } from "../../../supabase/functions/_shared/leadMissio
 import type { CheckpointSnapshot } from "../../../supabase/functions/_shared/leadCapabilityEngine.ts";
 import { createLeadMissionRunner } from "../../../worker/leadMissionRunner.ts";
 import type { RunAgentRunOptions } from "../../../supabase/functions/run-agent/index.ts";
+import type { FixtureProviderResponse } from "./fixture.ts";
 import { FixtureProvider } from "./provider.ts";
 import { replayEngineSlice } from "./engine.ts";
 import {
@@ -143,6 +144,8 @@ export class ChaosLab {
   }> = [];
   /** What the worker's terminal reconciliation found and wrote. */
   readonly reconciled: Array<{ violations: string[]; written: string[]; remaining: string[] }> = [];
+  /** A run's "still executing" answers, counted across the lineage's slices (`still_running_polls`). */
+  private readonly providerPolls = new Map<FixtureProviderResponse, number>();
   /** Every handler invocation, answered or not: the slice attempt number. */
   invocations = 0;
   private killed = false;
@@ -217,13 +220,17 @@ export class ChaosLab {
   // ── THE TRANSPORT'S LEDGER ─────────────────────────────────────────────────
 
   private providerFor(attempt: number): FixtureProvider {
-    const p = new FixtureProvider(this.fx.provider_responses, { runIdPrefix: `a${attempt}-` });
+    const p = new FixtureProvider(this.fx.provider_responses, { runIdPrefix: `a${attempt}-`, polls: this.providerPolls });
     const invoke = p.invoke;
     p.invoke = async (call) => {
       const spec = call.providerCallSpec;
       const row: LedgerRow = {
         task_id: this.taskId, capability: call.actorKey, provider_id: call.actorKey, provider_run_id: null, dataset_id: null,
-        status: "started", request_input: { input: call.input ?? {}, provider_call_spec: spec ?? null },
+        status: "started", request_input: {
+          input: call.input ?? {}, provider_call_spec: spec ?? null,
+          // As the transport records an adoption (`auditInput.resume_run_id`).
+          ...(call.resumeRunId ? { resume_run_id: call.resumeRunId } : {}),
+        },
         idempotency_key: spec?.idempotency_key ?? null, estimate_usd: spec?.cost.estimate_usd ?? null,
         started_at: new Date(Date.UTC(2026, 9, 12, 0, 0, this.ledger.length)).toISOString(), created_at: null,
         attempt, reused: !!call.resumeRunId,
