@@ -21,8 +21,10 @@ sed 's/\x1b\[[0-9;]*m//g' "$out" | grep -E '\.\.\. (ok|FAILED)|passed \|' || tru
 if [ $status -eq 0 ]; then
   echo "MUTANT SURVIVED: the contract tests pass with the D1 fix reverted" >&2; exit 1
 fi
-# It must fail on the behaviour, not on a build or type error.
-if ! sed 's/\x1b\[[0-9;]*m//g' "$out" | grep -q 'own generation, open row: the write lands and is reported written \.\.\. FAILED'; then
+# It must fail on the behaviour, not on a build or type error. No `grep -q`
+# here: under pipefail it exits on the first match, sed takes SIGPIPE on a
+# large log, and the pipeline reports a miss for a line that is present.
+if ! sed 's/\x1b\[[0-9;]*m//g' "$out" | grep 'own generation, open row: the write lands and is reported written \.\.\. FAILED' >/dev/null; then
   echo "the mutant run failed, but not on the fenced write itself:" >&2; tail -30 "$out" >&2; exit 1
 fi
 echo "mutant killed: reverting the D1 fix fails the fenced-write contract"
