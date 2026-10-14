@@ -136,6 +136,9 @@ Deno.test("[budget] G5 provider wait cannot fabricate funding or settle the esti
     fx.provider_responses.find((r) => r.actor === "apify_funding_atomus")!
       .pending_once = true;
     const r = await replayScreen(fx);
+    // #77: a read still running is not an answer — the screen holds, no
+    // verdict is invented, and the run is carried to be adopted.
+    assert(r.state.funding_screen?.screened !== true);
     assert(
       Object.values(r.state.funding_screen?.verdicts ?? {}).every((v) =>
         v === "pending"
@@ -154,11 +157,11 @@ Deno.test("[budget] G5 provider wait cannot fabricate funding or settle the esti
     );
     assertLedger(r.state.spend_ledger!);
     const resumed = await replayScreen(fx, r);
-    assertEquals(
-      resumed.provider.calls.filter((c) => c.actor === "apify_funding_atomus")
-        .length,
-      0,
-    );
+    // The resume ADOPTS the paid run (a re-read by run id), never buys again.
+    const atomusAgain = resumed.provider.calls.filter((c) => c.actor === "apify_funding_atomus");
+    assertEquals(atomusAgain.length, 1);
+    assert(atomusAgain.every((c) => c.adopted), "an adoption, not a purchase");
+    assertLedger(resumed.state.spend_ledger!);
   }));
 Deno.test("[provider-spec] G5 deterministic repeat: frozen dates, same calls, keys and committed spend", () =>
   atFixtureTime(async () => {

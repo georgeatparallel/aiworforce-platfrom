@@ -15,55 +15,42 @@ Deno.test("[failure] quality funding screen control: delivered answer passes and
       0,
     );
   }));
-Deno.test("[failure] quality funding screen defect characterization: pending read is consumed and its ready answer is never adopted", () =>
+// FIXED by #77. This was the defect characterization: the pending read was
+// consumed as "unavailable", the screen marked complete, and its paid answer
+// never adopted. It now pins the fix, and the former known-gap spec below is
+// an ordinary test.
+Deno.test("[failure] quality funding screen interrupted: the pending read is carried, the screen holds, and the next slice adopts it", () =>
   fixedClock(async () => {
     const { first, second, availableOnAdoption, durableAdoption } =
       await interruptedScreen();
     const call = first.provider.calls.find((c) => c.actor === atomus)!;
     assert(call.pending, "a paid provider run really started");
-    assertEquals(
-      availableOnAdoption.length,
-      1,
-      "the fixture can deliver the purchased funding answer on adoption",
-    );
-    assertEquals(
-      durableAdoption?.kind,
-      "adopt",
-      "D2 has the paid run id, but the screen never invokes recovery",
-    );
+    assertEquals(availableOnAdoption.length, 1);
+    assertEquals(durableAdoption?.kind, "adopt");
     assertEquals(first.outcomes, ["running"]);
-    assertEquals(first.result.state.funding_screen?.screened, true);
-    assertEquals(first.result.state.funding_screen?.verdicts[acme], "pending");
-    assertEquals(first.result.state.verifier_pending_runs?.length ?? 0, 0);
-    assertEquals(second.screenCalls, 0);
+    assert(first.result.state.funding_screen?.screened !== true, "an unanswered screen is not complete");
+    assertEquals(first.result.state.funding_screen?.verdicts[acme], undefined, "no verdict before the paid read answers");
+    assertEquals(first.result.state.funding_screen?.pending?.map((p) => p.stage), ["atomus"], "the run is carried");
+    assertEquals(second.screenCalls, 1, "the next slice resumes the screen");
+    assertEquals(second.provider.calls.filter((c) => c.actor === atomus && c.adopted).length, 1, "by adoption");
+    assertEquals(second.result.state.funding_screen?.screened, true);
+  }));
+Deno.test("[failure] funding screen adopts its interrupted Atomus run and processes the delivered funding answer", () =>
+  fixedClock(async () => {
+    const { first, second, availableOnAdoption, durableAdoption } =
+      await interruptedScreen();
+    assert(first.provider.calls.some((c) => c.actor === atomus && c.pending));
+    assertEquals(availableOnAdoption.length, 1);
+    assertEquals(durableAdoption?.kind, "adopt");
     assertEquals(
-      second.provider.calls.filter((c) => c.actor === atomus && c.adopted)
+      second.result.state.funding_screen?.verdicts[acme],
+      "pass",
+      "the recorded run has a decisive answer on adoption, and the screen consumes it",
+    );
+    assertEquals(
+      second.provider.calls.filter((c) => c.actor === atomus && !c.adopted)
         .length,
       0,
+      "recovery must not buy another run",
     );
-    assertEquals(second.result.state.funding_screen?.verdicts[acme], "pending");
   }));
-Deno.test({
-  name:
-    "[known-gap] funding screen must adopt its interrupted Atomus run and process the delivered funding answer",
-  ignore: Deno.env.get("RUN_FUNDING_SCREEN_RECOVERY_SPEC") !== "1",
-  fn: () =>
-    fixedClock(async () => {
-      const { first, second, availableOnAdoption, durableAdoption } =
-        await interruptedScreen();
-      assert(first.provider.calls.some((c) => c.actor === atomus && c.pending));
-      assertEquals(availableOnAdoption.length, 1);
-      assertEquals(durableAdoption?.kind, "adopt");
-      assertEquals(
-        second.result.state.funding_screen?.verdicts[acme],
-        "pass",
-        "the recorded run has a decisive answer on adoption, but the screen never consumes it",
-      );
-      assertEquals(
-        second.provider.calls.filter((c) => c.actor === atomus && !c.adopted)
-          .length,
-        0,
-        "recovery must not buy another run",
-      );
-    }),
-});
