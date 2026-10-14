@@ -126,7 +126,7 @@ export async function interruptedScreen(pending = true) {
         plan: priced.plan!,
         recentlyChecked: new Set<string>(),
         priorSearches: [],
-        screen: async (targets, state) => {
+        screen: async (targets, state, pending) => {
           screenCalls++;
           const ledger = state.spend_ledger!,
             call = ledgerBoundCall({
@@ -149,7 +149,7 @@ export async function interruptedScreen(pending = true) {
               ),
               hash: (input, k) => hashInput(input, k),
             });
-          // Same findings-only callback contract as current run-agent.
+          // The same contract as run-agent: owed reads in, owed reads out (#77).
           const report = await fundingStageVerifier({ fallback: false }).verify(
             targets,
             {
@@ -163,9 +163,9 @@ export async function interruptedScreen(pending = true) {
               ready: (actor) =>
                 routeActorReady(actor, "funding_verification", readiness).ready,
             },
-            { mission_id: scope.lineage_id, pending: [] },
+            { mission_id: scope.lineage_id, pending },
           );
-          return report.findings;
+          return { findings: report.findings, pending: report.pending };
         },
       },
     });
