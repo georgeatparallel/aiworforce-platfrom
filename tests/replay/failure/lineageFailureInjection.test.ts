@@ -251,31 +251,43 @@ Deno.test("[failure] 3 a STALLED worker loses its lease mid-slice: another worke
   assertEquals(stalled.find((e) => e.at === "lineage_release")?.detail?.reason, "not_lease_holder");
 });
 
-// D1. The stale write is unfenced: it lands over the finished mission's
-// result. Since D4 the stale worker's own (refused) queue release reads the
-// terminal lineage and its terminal reconciliation puts the STATUS back — but
-// the result it wrote is slice 2's, not the finished slice's.
-Deno.test("[failure] 3 D1 DEFECT REPRODUCED — the stalled worker wakes after the mission finished and its end-of-slice write OVERWRITES the finished result with its stale slice", async () => {
+// D1 (fixed). The stale worker's end-of-slice write used to land over the
+// finished mission's result: status reopened to `ready / continuation_required`
+// and the finished execution state replaced by its own stale slice. Every
+// result write is now ONE conditional UPDATE fenced on the generation its claim
+// set (`checkpoint_version`) and, before the slice's verdict, on an open row
+// (`fencedTaskUpdate`): the stale write changes zero rows.
+Deno.test("[failure] 3 D1 the stalled worker wakes after the mission finished: its end-of-slice write is REFUSED in the write itself — the finished result stands, unchanged", async () => {
   const s = await stalledTakeover();
-  assertEquals([s.queue.status, s.lineage?.status], ["complete", "terminal"]);
-  // The status is repaired (D4: the lineage decides, the reconciliation writes) …
-  assertEquals(s.terminal, "search_exhausted");
-  // … but the finished slice's execution state was replaced by the stale slice's.
-  const attempts = (r: Record<string, unknown> | null | undefined) =>
-    ((r?.capability_execution_state ?? {}) as { provider_attempts?: unknown[] }).provider_attempts?.length ?? 0;
-  assert(attempts(s.task?.result) < attempts(finishedResult),
-    `today: the stale write lands (${attempts(s.task?.result)} < ${attempts(finishedResult)} provider attempts) — ` +
-    "if this fails, D1 is fixed: enable the [known-gap] test below and delete this one");
+  assertSettledConsistently(s, "stalled takeover");
+  assertEquals([s.task?.status, s.terminal], ["complete", "search_exhausted"]);
+  assertEquals(s.task?.result, finishedResult, "byte for byte the result the mission finished with");
+  assert(s.lab.events.some((e) => e.attempt === 2 && e.at === "end_write_fenced"), "refused, and said so");
 });
 
-Deno.test({
-  name: "[known-gap] D1 a stale generation's end-of-slice write never lands over a finished mission's result",
-  ignore: true,
-  fn: async () => {
-    const s = await stalledTakeover();
-    assertSettledConsistently(s, "stalled takeover");
-    assertEquals(s.task?.result?.capability_execution_state, finishedResult?.capability_execution_state);
-  },
+Deno.test("[failure] 3 D1 a stale FIRST slice wakes after a newer slice wrote a newer checkpoint: its write is refused — the newer checkpoint and progress stand, and the mission completes", async () => {
+  const lab = await ChaosLab.open(D22());
+  const a = await lab.stalledWorker();      // worker A: slice 1, stage writes landed, end write pending
+  await lab.advance(400);                    // A's queue lease expires
+  for (let i = 0; i < 6 && lab.runs.length === 0; i++) {  // worker B resumes: one slice, not terminal
+    const t = await lab.tick();
+    if (!t.claimed) await lab.advance(60);
+  }
+  assertEquals(lab.runs.map((r) => r.decision), ["replenishment_required"], "B ran one newer slice");
+  const newer = (await lab.taskRow())?.result;
+  await a.resume();                          // A wakes and writes slice 1's result
+  const after = (await lab.taskRow())?.result;
+  assertEquals(after, newer, "A's stale slice changed nothing");
+  assert(lab.events.some((e) => e.attempt === 1 && e.at === "end_write_fenced"));
+  // And the lineage carries on from B's state to the same ending, nothing bought twice.
+  await lab.runToSettle();
+  const task = await lab.taskRow();
+  const s: Settled = {
+    lab, queue: await lab.lab.row(lab.queueId), task, lineage: await lab.lineageRow(), claimHeld: await lab.claimHeld(),
+    lastQualified: [...lab.runs].reverse().find((r) => r.qualified)?.qualified ?? [], terminal: task?.result?.terminal_status,
+  };
+  assertSettledConsistently(s, "stale first slice");
+  assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
 });
 
 let stalled: Promise<Settled> | null = null;

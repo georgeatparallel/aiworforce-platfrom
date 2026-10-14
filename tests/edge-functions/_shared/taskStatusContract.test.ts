@@ -352,7 +352,7 @@ Deno.test("6.E WIRING: run-agent releases the RPC lease on the finishing write",
   assertStringIncludes(src, "releaseContinuationViaRpc({");
   // Released only on the path that actually took a column lease.
   assertStringIncludes(src, "if (heldClaim?.viaRpc)");
-  assertStringIncludes(src, "heldClaim = { claimId, viaRpc: rpc.available };");
+  assert(/heldClaim = \{\s*claimId, viaRpc: rpc\.available,/.test(src), "the claim records its path");
   // The release carries the same row status the projection just wrote.
   assertStringIncludes(src, "rowStatus: statuses.rowStatus,");
 });

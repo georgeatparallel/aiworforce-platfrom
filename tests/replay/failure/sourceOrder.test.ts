@@ -26,8 +26,10 @@ Deno.test("[failure] source order: run-agent's V2 slice runs claim → lease →
   assertInOrder(read(file), file, [
     // 1. a resumed slice takes the continuation claim; refused → 409
     "await claimContinuationViaRpc(",
-    // 2. the lineage lease
+    // 2. the lineage lease, then this slice's generation — the token every
+    // result write is fenced on in SQL (D1, `fencedTaskUpdate`)
     "await acquireLineageLease(",
+    "const sliceFence: SliceFence = {",
     // 3. the ledger recovers what a lost checkpoint forgot
     "recoverCompletedRuns(completedRunRows)",
     "recoverPendingRuns(startedRunRows",
