@@ -49,7 +49,11 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
     async run(mission, ctl) {
       const body = withResume(prepareV2LeadCount(mission.request), mission.taskId);
       const deadline = revocableDeadline(d.createDeadline(ctl.executionBudgetMs));
-      const onAbort = () => deadline.revoke("worker_lost_ownership_or_cancelled");
+      // `worker:<heartbeat reason>` — what `verificationStop.classifyRevocation`
+      // reads to tell a cancellation from a lost lease.
+      const onAbort = () => deadline.revoke(
+        `worker:${typeof ctl.signal.reason === "string" ? ctl.signal.reason : "aborted"}`,
+      );
       if (ctl.signal.aborted) onAbort();
       else ctl.signal.addEventListener("abort", onAbort, { once: true });
 

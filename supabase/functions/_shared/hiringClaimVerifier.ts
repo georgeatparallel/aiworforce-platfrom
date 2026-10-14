@@ -26,9 +26,19 @@
 // posting on LinkedIn is NOT a disproof — a company may hire elsewhere — so the
 // claim stays PENDING, answered, and is not bought again this mission.
 //
+// A RUN STILL EXECUTING IS ADOPTED, NEVER RE-BOUGHT. A job search that outlives
+// the provider poll (or whose wait the slice's stop cut short) comes back
+// `running`. It used to be dropped: the next slice compiled the same spec, found
+// it already executed, and was refused — the paid answer was never read and the
+// claim never answered. Its run id now travels as a pending run, and the next
+// slice adopts it with the same input (same spec, same idempotency key) and a
+// free status read. A deferred adoption carries the run unchanged.
+//
 // Pure apart from `deps.call`.
 
-import type { ClaimVerifier, VerificationTarget, VerifierCall, VerifierDeps, VerifierFinding } from "./claimVerifier.ts";
+import type {
+  ClaimVerifier, PendingVerifierRun, VerificationTarget, VerifierCall, VerifierDeps, VerifierFinding,
+} from "./claimVerifier.ts";
 import type { EvidenceItem } from "./candidateObservation.ts";
 import { EVIDENCE_VALIDITY_DAYS } from "./candidateObservation.ts";
 import { authorityForEvidence, authorityRecord } from "./evidenceAuthority.ts";
@@ -107,7 +117,7 @@ function withinWindow(job: NormalizedHiringJob, days: number | null, now: Date):
   return Number.isFinite(t) && now.getTime() - t <= days * 86_400_000;
 }
 
-function openRoleItem(t: VerificationTarget, jobs: NormalizedHiringJob[], io: HiringVerifierIO,
+function openRoleItem(t: Pick<VerificationTarget, "company_key">, jobs: NormalizedHiringJob[], io: HiringVerifierIO,
   providerCallId: string, observedAt: string, missionId: string | null): EvidenceItem {
   const a = authorityForEvidence({
     claim: "open_role", source: HIRING_ROUTE_ACTOR, field: "job_posting", observed_at: observedAt,
@@ -174,45 +184,106 @@ export function hiringClaimVerifier(io: HiringVerifierIO): ClaimVerifier & { est
     call_for: (targets) => hiringCall(io, askable(targets)),
     async verify(targets, deps: VerifierDeps, ctx) {
       const findings: VerifierFinding[] = [];
+      const pending: PendingVerifierRun[] = [];
+      const at = deps.now();
+      // One finding per asked company, from the rows of the call that answered it.
+      const settle = (asked: ReadonlyArray<{ t: Pick<VerificationTarget, "company_key">; url: string }>,
+        rows: Record<string, unknown>[], providerCallId: string) => {
+        const now = io.now?.() ?? new Date();
+        const jobs = rows.filter((r) => !jobEmployerIdentityConflict(r)).map((r) => normalizeLinkedInJob(r));
+        for (const { t, url } of asked) {
+          const mine = jobs.filter((j) => normalizeCompanyLinkedInUrl(j.company_linkedin_url) === url);
+          const matching = mine.filter((j) => !!j.title && io.matchesRole(j.title) && withinWindow(j, io.window_days, now));
+          findings.push({
+            company_key: t.company_key,
+            item: matching.length > 0 ? openRoleItem(t, matching, io, providerCallId, at, ctx.mission_id) : null,
+            answered: true,
+            detail: {
+              postings_returned: mine.length,
+              postings_matching_role: matching.length,
+              // Postings with no readable date: never proof inside a window (T02).
+              postings_undated: io.window_days == null ? 0
+                : mine.filter((j) => !(j.posted_date && Number.isFinite(Date.parse(j.posted_date)))).length,
+              rejected_titles: mine.filter((j) => !matching.includes(j)).map((j) => j.title).slice(0, 5),
+              verdict: matching.length > 0 ? "open_role_proven" : "no_matching_posting_on_linkedin_pending",
+            },
+          });
+        }
+      };
+
+      // ── 1. ADOPT WHAT EARLIER SLICES STARTED ─────────────────────────────
+      // Before the readiness and target checks: a run already paid for is read
+      // (or carried) whatever this slice would buy.
+      for (const p of ctx.pending.filter((x) => x.verifier === HIRING_CLAIM_VERIFIER_KEY)) {
+        const asked = hiringCarryOf(p);
+        if (!asked) {
+          deps.log("hiring_verifier_pending_unreadable", { run_id: p.run_id });
+          continue;
+        }
+        const out = await deps.call({
+          actor_key: HIRING_ROUTE_ACTOR, capability: "hiring_verification", input: p.input,
+          candidate_keys: p.candidate_keys, purpose: "hiring_evidence", resume_run_id: p.run_id,
+        });
+        if (out.status === "ok") {
+          settle(asked.map((a) => ({ t: { company_key: a.company_key }, url: a.url })), out.rows, out.provider_call_id);
+          continue;
+        }
+        // Still executing, or not even asked (the slice is stopping): the SAME
+        // run, carried unchanged, so the next slice adopts it.
+        if (out.status === "running" || out.status === "deferred") {
+          pending.push(p);
+          deps.log("hiring_verifier_run_carried", { run_id: p.run_id, status: out.status });
+          continue;
+        }
+        deps.log("hiring_verifier_adoption", { run_id: p.run_id, status: out.status, reason: out.reason });
+      }
+
       if (targets.length === 0 || io.titles.length === 0 || !deps.ready(HIRING_ROUTE_ACTOR)) {
-        return { findings, pending: [] };
+        return { findings, pending };
       }
       const asked = askable(targets);
-      if (asked.length === 0) return { findings, pending: [] };
+      if (asked.length === 0) return { findings, pending };
       const call = hiringCall(io, asked);
       if (!call) {
         deps.log("hiring_verifier_input_refused", { companies: asked.length });
-        return { findings, pending: [] };
+        return { findings, pending };
       }
       const out = await deps.call(call);
-      if (out.status !== "ok") {
-        // Refused (budget, readiness), failed, or still running: nothing is
-        // marked answered, so the gap stays open for a later slice.
-        deps.log("hiring_verifier_call", { status: out.status, reason: "reason" in out ? out.reason : null });
-        return { findings, pending: [] };
-      }
-      const now = io.now?.() ?? new Date();
-      const at = deps.now();
-      const jobs = out.rows.filter((r) => !jobEmployerIdentityConflict(r)).map((r) => normalizeLinkedInJob(r));
-      for (const { t, url } of asked) {
-        const mine = jobs.filter((j) => normalizeCompanyLinkedInUrl(j.company_linkedin_url) === url);
-        const matching = mine.filter((j) => !!j.title && io.matchesRole(j.title) && withinWindow(j, io.window_days, now));
-        findings.push({
-          company_key: t.company_key,
-          item: matching.length > 0 ? openRoleItem(t, matching, io, out.provider_call_id, at, ctx.mission_id) : null,
-          answered: true,
-          detail: {
-            postings_returned: mine.length,
-            postings_matching_role: matching.length,
-            // Postings with no readable date: never proof inside a window (T02).
-            postings_undated: io.window_days == null ? 0
-              : mine.filter((j) => !(j.posted_date && Number.isFinite(Date.parse(j.posted_date)))).length,
-            rejected_titles: mine.filter((j) => !matching.includes(j)).map((j) => j.title).slice(0, 5),
-            verdict: matching.length > 0 ? "open_role_proven" : "no_matching_posting_on_linkedin_pending",
-          },
+      if (out.status === "running") {
+        // PAID AND STILL EXECUTING: carried by run id, adopted next slice.
+        pending.push({
+          verifier: HIRING_CLAIM_VERIFIER_KEY, stage: HIRING_PENDING_STAGE, actor_key: HIRING_ROUTE_ACTOR,
+          run_id: out.run_id, input: call.input, candidate_keys: call.candidate_keys, started_at: at,
+          carry: { asked: asked.map(({ t, url }) => ({ company_key: t.company_key, url })) },
         });
+        deps.log("hiring_verifier_run_pending", { run_id: out.run_id, companies: asked.length });
+        return { findings, pending };
       }
-      return { findings, pending: [] };
+      if (out.status !== "ok") {
+        // Refused (budget, readiness), failed, or deferred by the slice's stop:
+        // nothing is marked answered, so the gap stays open for a later slice.
+        deps.log("hiring_verifier_call", { status: out.status, reason: "reason" in out ? out.reason : null });
+        return { findings, pending };
+      }
+      settle(asked, out.rows, out.provider_call_id);
+      return { findings, pending };
     },
   };
+}
+
+/** The stage name a carried hiring run is recorded under. */
+export const HIRING_PENDING_STAGE = "job_search" as const;
+
+/** The companies a carried run asked about, or null when the carry is unreadable. */
+function hiringCarryOf(p: PendingVerifierRun): Array<{ company_key: string; url: string }> | null {
+  const asked = (p.carry as { asked?: unknown } | undefined)?.asked;
+  if (!Array.isArray(asked) || asked.length === 0) return null;
+  const out: Array<{ company_key: string; url: string }> = [];
+  for (const a of asked) {
+    const k = (a as { company_key?: unknown })?.company_key;
+    const u = (a as { url?: unknown })?.url;
+    if (typeof k !== "string" || typeof u !== "string" || !k || !u) return null;
+    out.push({ company_key: k, url: u });
+  }
+  return out;
 }

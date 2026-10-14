@@ -19,6 +19,17 @@
 // run — because a single cap fails differently at each scale. A company with
 // six plausible intents must not consume the run's whole allowance, and a pool
 // of forty blocked candidates must not multiply into a hundred fetches.
+//
+// ── NOR IS IT A REASON TO OUTLIVE THE SLICE ────────────────────────────────
+//
+// `deps.stop` (`verificationStop.ts`) is asked before the planner, every
+// `/map`, every page fetch and the extraction call. Once it answers, nothing
+// new starts: the company being collected and every company after it are
+// reported `stopped` — not an answer, so the caller leaves their claims open.
+// Pages already fetched were written the moment they arrived, so the next
+// slice reads them free. A fetch already in flight is NOT aborted: whether the
+// provider bills an abandoned request is not something this code can know, and
+// its page is worth more written than discarded.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import type { EvidenceRequestV1, PageIntent, WebEvidencePage } from "./evidenceRequest.ts";
@@ -38,6 +49,7 @@ import {
   type ResolvedPage,
 } from "./pageIntentResolver.ts";
 import { canonicalPageUrl, toStoredRows, writeWebEvidence } from "./webEvidenceStore.ts";
+import { VERIFICATION_OPS } from "./verificationStop.ts";
 
 /** Mapped URLs a `map` log line may carry, at most. */
 export const MAP_LOG_SAMPLE = 12;
@@ -131,6 +143,56 @@ export interface EvidenceRunnerDeps {
   db?: SupabaseClient | null;
   now?: () => string;
   log?: (event: string, meta: Record<string, unknown>) => void;
+  /**
+   * Optional. Non-null once no new external operation may start — the slice's
+   * deadline, a cancellation, a lost lease (`verificationStopGate.check`).
+   * Omitted, the runner never stops early: the previous behaviour.
+   */
+  stop?: ((op?: string | null) => { reason: string; detail: string } | null) | null;
+  /**
+   * Optional. The pages a `/map` this mission ALREADY BOUGHT selected for a
+   * domain and intent set. A later collection for the same company — a slice
+   * that stopped between the map and its pages, a re-grounding that failed —
+   * recalls them instead of asking `/map` again: the ledger skips a repeated
+   * map as already executed and returns nothing, which read as
+   * `site_unavailable` and lost an answer this mission had paid for.
+   * Omitted: every collection asks the map, as before.
+   */
+  mapMemory?: MapSelectionMemory | null;
+}
+
+/** What one bought map selected, kept for the mission (`EvidenceRunnerDeps.mapMemory`). */
+export interface MapSelection {
+  targets: ResolvedPage[];
+  /** How many URLs the map returned — `site_unavailable` vs `no_useful_pages`. */
+  mapped: number;
+}
+
+export interface MapSelectionMemory {
+  recall(domain: string, intents: readonly string[]): MapSelection | null;
+  remember(domain: string, intents: readonly string[], selection: MapSelection): void;
+}
+
+/**
+ * A map memory over a plain record — the engine state's
+ * `web_evidence_map_selections`, which the checkpoint carries between slices.
+ * Keyed by domain and the sorted intent set: the selection is a function of
+ * both. Holds only the selected pages (a handful per site), never the map.
+ */
+export function recordMapMemory(store: Record<string, MapSelection>): MapSelectionMemory {
+  const key = (domain: string, intents: readonly string[]) =>
+    `${domain.trim().toLowerCase()}|${[...intents].sort().join(",")}`;
+  return {
+    recall: (domain, intents) => {
+      const s = store[key(domain, intents)];
+      return s && Array.isArray(s.targets) && Number.isFinite(s.mapped) ? s : null;
+    },
+    remember: (domain, intents, selection) => {
+      store[key(domain, intents)] = {
+        targets: selection.targets.map((t) => ({ intent: t.intent, url: t.url })), mapped: selection.mapped,
+      };
+    },
+  };
 }
 
 export interface CompanyEvidenceOutcome {
@@ -152,7 +214,9 @@ export interface CompanyEvidenceOutcome {
     | "no_pages_planned"
     | "site_unavailable"
     | "no_useful_pages"
-    | "budget_exhausted";
+    | "budget_exhausted"
+    /** Cut short by `deps.stop`: NOT an answer — the claim stays open. */
+    | "stopped";
 }
 
 export interface EvidenceRunReport {
@@ -169,6 +233,8 @@ export interface EvidenceRunReport {
   plan_rejections: Record<string, number>;
   /** Extraction claims that were refused, by reason. */
   claim_rejections: Record<string, number>;
+  /** What stopped the run early (`deps.stop`), or null. */
+  stopped: { reason: string; detail: string } | null;
 }
 
 const EMPTY_REPORT: EvidenceRunReport = {
@@ -183,6 +249,7 @@ const EMPTY_REPORT: EvidenceRunReport = {
   store_error: null,
   plan_rejections: {},
   claim_rejections: {},
+  stopped: null,
 };
 
 /**
@@ -246,6 +313,25 @@ export async function runEvidenceCollection(i: {
     plan_rejections: {},
     claim_rejections: {},
   };
+  // ── MAY ANOTHER EXTERNAL OPERATION START? ─────────────────────────────────
+  // Sticky once it says no; recorded on the report the first time.
+  const halted = (op: string | null): boolean => {
+    if (report.stopped) return true;
+    const s = i.deps.stop?.(op) ?? null;
+    if (!s) return false;
+    report.stopped = s;
+    log("evidence-stopped", { reason: s.reason, detail: s.detail });
+    return true;
+  };
+  const stoppedOutcome = (d: EvidenceDebt, domain: string, requirementId: string): CompanyEvidenceOutcome => ({
+    company_key: d.company_key, company_name: d.company_name, domain, requirement_id: requirementId,
+    pages_fetched: 0, pages_reused: 0, pages_known_missing: 0, pages_ok: 0,
+    claims_kept: 0, claims_rejected: 0, outcome: "stopped",
+  });
+  if (halted(VERIFICATION_OPS.model)) {
+    for (const d of debts) report.companies.push(stoppedOutcome(d, d.domain, d.requirement_id));
+    return report;
+  }
 
   // ── ONE PLANNER CALL FOR THE WHOLE SLICE ──────────────────────────────────
   //
@@ -310,6 +396,11 @@ export async function runEvidenceCollection(i: {
       report.companies.push(outcome);
       continue;
     }
+    if (halted(null)) {
+      outcome.outcome = "stopped";
+      report.companies.push(outcome);
+      continue;
+    }
 
     const allowance = Math.min(
       req.max_pages,
@@ -328,7 +419,18 @@ export async function runEvidenceCollection(i: {
     // claim stays PENDING. That is the honest answer, and it is NOT a FAIL.
     let targets: ResolvedPage[] = [];
     let mappedCount = 0;
-    if (i.deps.mapSite) {
+    const recalled = i.deps.mapSite ? i.deps.mapMemory?.recall(req.domain, req.page_intents) ?? null : null;
+    if (recalled) {
+      // ALREADY MAPPED THIS MISSION: no purchase, the same selection.
+      targets = recalled.targets.slice(0, allowance);
+      mappedCount = recalled.mapped;
+      log("map-recalled", { company: debt.company_name, domain: req.domain, mapped: mappedCount, selected: targets.map((t) => t.url) });
+    } else if (i.deps.mapSite) {
+      if (halted(VERIFICATION_OPS.map)) {
+        outcome.outcome = "stopped";
+        report.companies.push(outcome);
+        continue;
+      }
       const mapped = await i.deps.mapSite({ domain: req.domain, company_key: req.company_key })
         .catch(() => [] as string[]);
       mappedCount = Array.isArray(mapped) ? mapped.length : 0;
@@ -353,6 +455,9 @@ export async function runEvidenceCollection(i: {
         // A bounded sample for diagnosis — never the whole map.
         mapped_sample: mappedSample(mapped ?? [], MAP_LOG_SAMPLE),
       });
+      // Only a map that ANSWERED is remembered: an empty reply may be the
+      // ledger's idempotent skip, which is not what the site serves.
+      if (mappedCount > 0) i.deps.mapMemory?.remember(req.domain, req.page_intents, { targets, mapped: mappedCount });
     } else {
       // V1 / Company Brain callers: unchanged.
       targets = resolvePages(req.domain, req.page_intents, allowance);
@@ -468,6 +573,11 @@ export async function runEvidenceCollection(i: {
         continue;
       }
 
+      // ── A PURCHASE: ASK FIRST ──────────────────────────────────────────
+      if (halted(VERIFICATION_OPS.page)) {
+        outcome.outcome = "stopped";
+        break;
+      }
       let res;
       try {
         res = await i.deps.fetchPage({
@@ -558,10 +668,14 @@ export async function runEvidenceCollection(i: {
       if (pagesSpent >= budget.max_pages_total) break;
     }
 
+    // CUT SHORT: whatever was collected is cached; the company is not answered,
+    // and no extraction call starts.
+    if (outcome.outcome === "stopped" || (outcome.pages_ok > 0 && i.deps.extract && halted(VERIFICATION_OPS.model))) {
+      outcome.outcome = "stopped";
+    } else if (outcome.pages_ok === 0) {
     // Nothing readable came back. `site_unavailable` and `no_useful_pages` are
     // both ANSWERS — they resolve to insufficient_evidence downstream, never to
     // a failed requirement.
-    if (outcome.pages_ok === 0) {
       outcome.outcome = pages.every((p) =>
           p.status === "timeout" || p.status === "not_found" || p.status === "blocked"
         )

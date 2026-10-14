@@ -734,6 +734,15 @@ export function foldSlice(
     brainDecidedInPool?: number;
     /** `claimProgressCount` over the pool as this slice left it. Optional, cumulative. */
     claimProgressInPool?: number;
+    /**
+     * The slice's verification was cut short by its deadline, a cancellation
+     * or a lost lease (`verificationStop.ts`): work it would have done is
+     * deferred, not shown to be pointless. Such a slice, if otherwise barren,
+     * leaves `barren_slices` where it was — neither one closer to `no_progress`
+     * nor a reset. A productive slice still resets it. Optional: absent keeps
+     * the previous behaviour exactly.
+     */
+    deferredByStop?: boolean;
   },
 ): LineageProgress {
   // DELTAS ARE DERIVED HERE, from cumulative in and cumulative held. They are
@@ -760,6 +769,7 @@ export function foldSlice(
   const barren = sliceWasBarren({
     qualifiedDelta, investigatedDelta, brainDecidedDelta, claimProgressDelta,
   });
+  const barrenSlices = !barren ? 0 : slice.deferredByStop ? prior.barren_slices : prior.barren_slices + 1;
   const keepHigher = (was: number, now: number) => Math.max(was, Math.max(0, now));
   return {
     ...prior,
@@ -769,7 +779,7 @@ export function foldSlice(
     brain_decided: keepHigher(
       prior.brain_decided ?? 0, slice.brainDecidedInPool ?? 0),
     claim_progress: keepHigher(prior.claim_progress ?? 0, slice.claimProgressInPool ?? 0),
-    barren_slices: barren ? prior.barren_slices + 1 : 0,
+    barren_slices: barrenSlices,
     qualified_high_water: keepHigher(prior.qualified_high_water, slice.qualifiedInPool),
     unique_companies_investigated: keepHigher(
       prior.unique_companies_investigated, slice.uniqueCompaniesInvestigatedInPool),

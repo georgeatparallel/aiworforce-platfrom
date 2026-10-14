@@ -24,6 +24,7 @@ import type { ClaimVerifier, VerificationTarget, VerifierFinding } from "./claim
 import { requirementId, type PageIntent } from "./evidenceRequest.ts";
 import type { EvidenceDebt } from "./webEvidenceDebt.ts";
 import type { EvidenceRunBudget } from "./webEvidenceRunner.ts";
+import { VERIFICATION_OPS } from "./verificationStop.ts";
 
 export const BUSINESS_MODEL_VERIFIER_KEY = "business_model_first_party_pages" as const;
 export const BUSINESS_MODEL_ROUTE_ACTOR = "firecrawl" as const;
@@ -33,13 +34,19 @@ export const BUSINESS_MODEL_PAGE_INTENTS: readonly PageIntent[] = Object.freeze(
 );
 /** Pages bought per company at most — the route's cost hint is three /scrape pages. */
 export const BUSINESS_MODEL_MAX_PAGES = 3;
+/** The deadline latency key of one re-grounding model call. */
+export const BUSINESS_MODEL_GROUND_OP = VERIFICATION_OPS.model;
+
 /** Companies per slice. One grounding call each. */
 export const BUSINESS_MODEL_MAX_TARGETS = 5;
 
 export interface PageCollection {
   /** Pages usable as evidence (bought or cached). */
   pages_ok: number;
-  /** collected | no_pages_planned | site_unavailable | no_useful_pages | budget_exhausted | no_domain */
+  /**
+   * collected | no_pages_planned | site_unavailable | no_useful_pages | budget_exhausted | no_domain
+   * | stopped (the slice's deadline, a cancellation or a lost lease cut the collection short — not an answer)
+   */
   outcome: string;
 }
 
@@ -84,6 +91,15 @@ export function businessModelVerifier(io: BusinessModelVerifierIO): ClaimVerifie
       // NOT READY IS NO ANSWER. Nothing is bought and nothing is marked, so the
       // gap stays open for the day the route is.
       if (targets.length === 0 || !deps.ready(BUSINESS_MODEL_ROUTE_ACTOR)) return { findings, pending: [] };
+      // ── STOPPED: NOTHING BOUGHT, NOTHING ANSWERED ──────────────────────
+      // The slice's deadline, a cancellation or a lost lease. No map, no page,
+      // no model call starts, and no company is marked: the next slice reads
+      // the pages already cached for free and buys only what is still missing.
+      const before = deps.stop?.(null) ?? null;
+      if (before) {
+        deps.log("business_model_deferred", { companies: targets.length, reason: before.reason });
+        return { findings, pending: [] };
+      }
       const withDomain = targets.filter((t) => !!t.domain);
       let collected: Record<string, PageCollection> = {};
       try {
@@ -97,8 +113,23 @@ export function businessModelVerifier(io: BusinessModelVerifierIO): ClaimVerifie
         return { findings, pending: [] };
       }
       for (const t of targets) {
-        const c = t.domain ? collected[t.company_key] ?? { pages_ok: 0, outcome: "no_pages_planned" }
-          : { pages_ok: 0, outcome: "no_domain" };
+        // A company the collection never reached because the slice stopped is
+        // unanswered, not "no pages planned".
+        const c: PageCollection = !t.domain ? { pages_ok: 0, outcome: "no_domain" }
+          : collected[t.company_key] ??
+            (deps.stop?.(null) ? { pages_ok: 0, outcome: "stopped" } : { pages_ok: 0, outcome: "no_pages_planned" });
+        // CUT SHORT, OR NO ROOM LEFT FOR THE MODEL CALL: deferred, unanswered.
+        // Its pages are already cached (each is written the moment it is
+        // fetched); the next slice reads them free and re-grounds.
+        const halt = c.outcome === "stopped" ? deps.stop?.(null) ?? { reason: "stopped", detail: "collection cut short" }
+          : c.pages_ok > 0 ? deps.stop?.(BUSINESS_MODEL_GROUND_OP) ?? null : null;
+        if (halt) {
+          findings.push({
+            company_key: t.company_key, item: null, answered: false,
+            detail: { pages_ok: c.pages_ok, collection: c.outcome, deferred: true, reason: halt.reason },
+          });
+          continue;
+        }
         let r: RegroundResult = { status: null, decision: null, skipped: "no_pages" };
         if (c.pages_ok > 0) {
           try {

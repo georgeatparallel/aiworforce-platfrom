@@ -43,6 +43,14 @@
 //     never the verifier's raw ordering estimate. Canary 8 (c01d28d8): the raw
 //     $0.121 blocked LlamaIndex ($0.0098 spent) from a $0.049 job search.
 //
+//   * The slice's DEADLINE, a CANCELLATION and a LOST LEASE stop it too
+//     (`verificationStop.ts`). Asked before every verifier and before every
+//     call a verifier makes — nested, fallback or adoption alike — so nothing
+//     new is reserved, sent, fetched or asked of a model once the slice must
+//     stop. What is deferred stays unanswered and resumable: a verifier that
+//     never started carries its in-flight runs to the next slice unchanged, and
+//     a call that never started reserved nothing and marked nothing.
+//
 // Pure orchestration; every effect is an injected function.
 
 import {
@@ -52,6 +60,7 @@ import {
 import { CLAIM_REGISTRY, type ClaimDefinition } from "./evidenceGapRouter.ts";
 import { PRODUCTION_READINESS, type ReadinessPolicy, routeActorReady } from "./routeReadiness.ts";
 import { relevantVerifierActors, type ClaimPlan } from "./claimPlan.ts";
+import { NEVER_STOP, type VerificationStop, type VerificationStopGate } from "./verificationStop.ts";
 
 export const CLAIM_VERIFICATION_PHASE_VERSION = "claim-verification-phase-v1" as const;
 /** Companies verified per missing lead, at most, per verifier per slice. */
@@ -87,6 +96,12 @@ export interface VerificationPhaseInput {
   affordability?: (call: VerifierCall) => AffordabilityDecision | null;
   /** Record on the company that this verifier's route is unaffordable for it (`unaffordableOpKey`). */
   markUnaffordable?: (companyKey: string, verifier: ClaimVerifier) => void;
+  /**
+   * May the slice still start an external operation? The run's deadline, the
+   * worker's revocation (lost lease, cancellation) — `verificationStopGate`.
+   * Absent: never stops, exactly the previous behaviour.
+   */
+  stop?: VerificationStopGate;
   registry?: readonly ClaimDefinition[];
   /**
    * The mission's claim plan. A verifier whose route answers no HARD claim of
@@ -105,6 +120,21 @@ export interface VerificationPhaseReport {
   ran: Array<{ verifier: string; targets: string[]; findings: number; recorded: number; pending: number }>;
   /** Why the phase stopped buying early, when it did. */
   stopped: "quota_met" | null;
+  /**
+   * The deadline, cancellation or lost lease that stopped the phase, when one
+   * did. Set only when it actually withheld work: a verifier not started, or a
+   * call not sent.
+   */
+  stopped_by?: VerificationStop | null;
+  /** Verifiers the stop withheld work from — not run at all, or cut short. Their gaps stay open. */
+  deferred?: string[];
+  /**
+   * Verification steps the stop cut short AFTER part of them was bought
+   * (`PendingVerifierRun.deferred`) — no provider run behind them. Kept apart
+   * from `pending`, which stays the list of provider runs in flight that
+   * continuation waits on; the caller hands both back to the next slice.
+   */
+  deferred_steps?: PendingVerifierRun[];
   /** Companies held from a verifier's new purchases because ANOTHER verifier's paid run for them was still in flight. */
   held: string[];
   /** Verifiers the claim plan made irrelevant: no hard claim they answer. */
@@ -143,9 +173,11 @@ export async function runClaimVerificationPhase(i: VerificationPhaseInput): Prom
   const report: VerificationPhaseReport = {
     version: CLAIM_VERIFICATION_PHASE_VERSION, order: ordered.map((v) => v.key),
     order_estimates: Object.fromEntries(ordered.map((v) => [v.key, Number.isFinite(costOf(v)) ? costOf(v) : null])),
-    ran: [], stopped: null, held: [],
+    ran: [], stopped: null, stopped_by: null, deferred: [], held: [],
     irrelevant: [], unaffordable, pending: [], changed: 0,
   };
+  const gate = i.stop ?? NEVER_STOP;
+  const deferred = report.deferred!;
   // CAN THIS COMPANY'S EVIDENCE BUDGET STILL PAY FOR ASKING ABOUT IT ALONE?
   // Only asked of an all-or-nothing verifier, of the call it would send for
   // this one company, compiled and checked exactly as `reserve` will. A batch
@@ -178,8 +210,35 @@ export async function runClaimVerificationPhase(i: VerificationPhaseInput): Prom
     }
     const route = routeOf(verifier, registry);
     const mine = i.pending.filter((r) => r.verifier === verifier.key);
+    // ── STOPPED: NOTHING NEW STARTS, NOTHING IN FLIGHT IS LOST ─────────────
+    //
+    // Not even an adoption: polling a run can wait a minute and a half. Its run
+    // id is carried to the next slice exactly as it arrived, which adopts it
+    // with a free status read. Asked BEFORE the quota, so a verifier with runs
+    // in flight carries them whatever the count says.
+    const halt = gate.check();
+    if (halt) {
+      report.pending.push(...mine);
+      // Recorded only when the stop WITHHELD something — a run to adopt, or a
+      // target this verifier would have bought for — so a slice with nothing
+      // left to verify is not reported as cut short. Asked without the
+      // affordability check, which marks companies: a stopped phase changes none.
+      const quotaOpen = Math.max(1, i.requested_count) - i.qualified() > 0;
+      const hadWork = mine.length > 0 || (quotaOpen && verificationTargets(
+        verifier, i.candidates(), i.criteriaValue, registry, policy, i.criteriaWindow,
+      ).length > 0);
+      if (hadWork) {
+        report.stopped_by = halt;
+        deferred.push(verifier.key);
+      }
+      continue;
+    }
     const need = Math.max(1, i.requested_count) - i.qualified();
     if (need <= 0) report.stopped = "quota_met";
+    // A DEFERRED STEP IS A PURCHASE NOT YET MADE, not a run to adopt: once the
+    // request is met it is carried, never resumed.
+    const resumable = need <= 0 ? mine.filter((r) => !r.deferred) : mine;
+    if (resumable.length < mine.length) report.pending.push(...mine.filter((r) => !resumable.includes(r)));
     // A RUN ALREADY PAID FOR IS STILL ADOPTED; NOTHING NEW IS BOUGHT.
     // A verifier's OWN in-flight companies are excluded too (it adopts them via
     // `mine`), but only another verifier's run counts as a hold in the report.
@@ -198,9 +257,22 @@ export async function runClaimVerificationPhase(i: VerificationPhaseInput): Prom
         return false;
       })
       .slice(0, need * SHORTFALL_MARGIN);
-    if (targets.length === 0 && mine.length === 0) continue;
+    if (targets.length === 0 && resumable.length === 0) continue;
+    let callsDeferred = 0;
     const deps: VerifierDeps = {
       ...i.deps,
+      // EVERY CALL ASKS FIRST — the first, a fallback, a retry, an adoption.
+      // A durable start (the run id is recorded before any wait), so the
+      // reserve and revocation decide, not a synchronous-call estimate.
+      call: (c) => {
+        const s = gate.check();
+        if (s) {
+          callsDeferred++;
+          return Promise.resolve({ status: "deferred" as const, reason: `${s.reason}: ${s.detail}` });
+        }
+        return i.deps.call(c);
+      },
+      stop: (op) => gate.check(op ?? null),
       // THE ONE READINESS AUTHORITY, for this verifier's capability.
       // THE SAME QUESTION EVERY OTHER LAYER ASKS. This used to call
       // `policy.decide` directly, which skips the provider-class contract that
@@ -214,8 +286,15 @@ export async function runClaimVerificationPhase(i: VerificationPhaseInput): Prom
         !!route && routeActorReady(actor, route.capability, policy).ready &&
         !(i.unavailable?.(actor) ?? false),
     };
-    const result = await verifier.verify(targets, deps, { mission_id: i.mission_id, pending: mine });
+    const result = await verifier.verify(targets, deps, { mission_id: i.mission_id, pending: resumable });
     adoptedBy.add(verifier.key);
+    // The gate only turns once something asked it and was refused, so a stop
+    // observed here withheld part of this verifier's work.
+    if (gate.stopped) {
+      report.stopped_by = gate.stopped;
+      if (!deferred.includes(verifier.key)) deferred.push(verifier.key);
+      log("verifier_cut_short", { verifier: verifier.key, reason: gate.stopped.reason, calls_deferred: callsDeferred });
+    }
     let recorded = 0;
     for (const f of result.findings) {
       if (i.apply(f, verifier)) recorded++;
@@ -234,5 +313,15 @@ export async function runClaimVerificationPhase(i: VerificationPhaseInput): Prom
   if (report.held.length > 0) log("verification_held_in_flight", { companies: report.held, pending_runs: report.pending.length });
   if (unaffordable.length > 0) log("verification_unaffordable", { companies: unaffordable });
   if (report.stopped) log("verification_stopped", { reason: report.stopped, qualified: i.qualified(), requested: i.requested_count });
+  // Provider runs in flight and deferred steps travel apart (see the report).
+  const carried = report.pending;
+  report.pending = carried.filter((r) => !r.deferred);
+  report.deferred_steps = carried.filter((r) => r.deferred);
+  if (report.stopped_by) {
+    log("verification_deferred", {
+      reason: report.stopped_by.reason, detail: report.stopped_by.detail, verifiers: deferred,
+      carried_pending_runs: report.pending.length, carried_deferred_steps: report.deferred_steps.length,
+    });
+  }
   return report;
 }
