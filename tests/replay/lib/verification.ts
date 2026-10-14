@@ -11,7 +11,10 @@
 // tests/replay/invariants/providerSpec.test.ts fails until this follows.
 
 import { buildClaimPlan } from "../../../supabase/functions/_shared/claimPlan.ts";
-import { ledgerBoundCall, type LedgerCallDeps, type VerifierCall } from "../../../supabase/functions/_shared/claimVerifier.ts";
+import {
+  ledgerBoundCall, type LedgerCallDeps, type PendingVerifierRun, type VerifierCall,
+} from "../../../supabase/functions/_shared/claimVerifier.ts";
+import type { VerificationStopGate } from "../../../supabase/functions/_shared/verificationStop.ts";
 import { type Gate, missionHiringVerifier, phaseGate, verifiableCandidatesFrom } from "./prod.ts";
 import {
   runClaimVerificationPhase, type VerificationPhaseReport,
@@ -57,7 +60,18 @@ export const replayReadiness = () => readinessPolicyFor("<workspace>", () => und
 
 export async function replayVerificationAt(
   fx: ReplayFixture, checkpoint: string,
-  opts: { verifiers?: "hiring" } = {},
+  opts: {
+    verifiers?: "hiring";
+    /** The slice's stop (`verificationStopGate`), as run-agent passes it. Absent: never stops. */
+    stop?: VerificationStopGate;
+    /**
+     * Resume from what an earlier replay left — its companies, ledger and the
+     * pending runs it carried — instead of the checkpoint's: the next slice.
+     */
+    resume?: { companies: EngineCompany[]; ledger: SpendLedger; pending: PendingVerifierRun[] };
+    /** Replace the fixture's provider responses (a `pending_once` variant). */
+    responses?: ReplayFixture["provider_responses"];
+  } = {},
 ): Promise<VerificationReplay> {
   noNetwork();
   const cp = fx.checkpoints[checkpoint];
@@ -65,11 +79,11 @@ export async function replayVerificationAt(
   const readiness = replayReadiness();
   const mission = fx.mission as unknown as LeadMissionV1;
   const criteria = deriveMissionCriteria(mission, readiness);
-  const companies = companiesAt(fx, checkpoint);
+  const companies = opts.resume ? structuredClone(opts.resume.companies) : companiesAt(fx, checkpoint);
   const run = { companies };
-  const ledger = ledgerAt(fx, cp.at);
+  const ledger = opts.resume ? structuredClone(opts.resume.ledger) : ledgerAt(fx, cp.at);
   const ledgerBefore = structuredClone(ledger);
-  const provider = new FixtureProvider(fx.provider_responses);
+  const provider = new FixtureProvider(opts.responses ?? fx.provider_responses);
   const trace: TraceEvent[] = [];
   const missionId = fx.provenance.task_id;
 
@@ -107,11 +121,12 @@ export async function replayVerificationAt(
     criteriaWindow: (id) => criteria.find((c) => c.id === id)?.time_window?.days ?? null,
     verifiers: [hiring],
     readiness,
-    pending: structuredClone(cp.verifier_pending_runs),
+    pending: structuredClone(opts.resume ? opts.resume.pending : cp.verifier_pending_runs),
     deps: { call: ledgerBoundCall(deps), now: () => cp.at, log: (event, meta) => trace.push({ type: `log:${event}`, ...(meta ?? {}) }) },
     apply: (f, v) => { const c = byKey(f.company_key); return c ? applyVerifierFinding(c, f, v) : false; },
     ...phaseGate(deps, (call, result) => { preflights.push({ call, result }); }),
     markUnaffordable: (key, v) => { const c = byKey(key); if (c) markRouteUnaffordable(c, v); },
+    ...(opts.stop ? { stop: opts.stop } : {}),
     log: (event, meta) => trace.push({ type: `phase:${event}`, ...(meta ?? {}) }),
   });
   return { phase, ledger, ledgerBefore, companies, criteria, provider, trace, preflights, deps, mission };

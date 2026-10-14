@@ -22,7 +22,7 @@ import type {
 import type { ExecutionDeadline } from "../supabase/functions/_shared/leadExecutionFinalizer.ts";
 import { revocableDeadline } from "../supabase/functions/_shared/revocableDeadline.ts";
 import {
-  prepareV2LeadCount, mapRefusal, mapTaskOutcome, withResume, type TaskOutcomeRow,
+  type LineageOutcomeRow, prepareV2LeadCount, mapRefusal, mapTaskOutcome, withResume, type TaskOutcomeRow,
 } from "../supabase/functions/_shared/leadMissionV2Request.ts";
 
 export interface LeadMissionRunner {
@@ -40,6 +40,12 @@ export interface LeadMissionRunnerDeps {
   createDeadline: (budgetMs: number) => ExecutionDeadline;
   bind: (queueId: string, taskId: string, lineageId: string) => Promise<boolean>;
   readTaskOutcome: (taskId: string) => Promise<TaskOutcomeRow | null>;
+  /**
+   * The lineage row, read only when the task row says the run did NOT end:
+   * a terminal or cancelled lineage then ends the mission (`mapTaskOutcome`).
+   * Absent, or null on a read error: the task row alone decides, as before.
+   */
+  readLineageOutcome?: (lineageId: string) => Promise<LineageOutcomeRow | null>;
   log?: (msg: string, meta?: unknown) => void;
 }
 
@@ -49,11 +55,16 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
     async run(mission, ctl) {
       const body = withResume(prepareV2LeadCount(mission.request), mission.taskId);
       const deadline = revocableDeadline(d.createDeadline(ctl.executionBudgetMs));
-      const onAbort = () => deadline.revoke("worker_lost_ownership_or_cancelled");
+      // `worker:<heartbeat reason>` — what `verificationStop.classifyRevocation`
+      // reads to tell a cancellation from a lost lease.
+      const onAbort = () => deadline.revoke(
+        `worker:${typeof ctl.signal.reason === "string" ? ctl.signal.reason : "aborted"}`,
+      );
       if (ctl.signal.aborted) onAbort();
       else ctl.signal.addEventListener("abort", onAbort, { once: true });
 
       let taskId: string | null = mission.taskId;
+      let lineageId: string | null = mission.lineageId;
       let res: Response;
       try {
         res = await d.handler(
@@ -72,9 +83,10 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
             continuationOwner: "v2_queue",
             // The floor for the lineage counter (`resolveLineageProgress`).
             queueContinuations: mission.continuations ?? null,
-            onExecutionBound: async ({ taskId: t, lineageId }) => {
+            onExecutionBound: async ({ taskId: t, lineageId: l }) => {
               taskId = t;
-              const bound = await d.bind(mission.queueId, t, lineageId);
+              lineageId = l;
+              const bound = await d.bind(mission.queueId, t, l);
               // A refused bind means another task already belongs to this
               // mission, or this worker no longer owns it. Start nothing paid.
               if (!bound) deadline.revoke("bind_refused");
@@ -95,7 +107,18 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
       if (!taskId) return { ...mapRefusal(res.status), error: `handler_status_${res.status}`, taskId: null };
 
       const row = await d.readTaskOutcome(taskId);
-      const outcome = mapTaskOutcome(row);
+      const fromTask = mapTaskOutcome(row);
+      // THE LINEAGE ROW IS THE AUTHORITY on whether the mission ended (D4):
+      // asked only when the task row says it did not.
+      const lineage = !fromTask.terminal && d.readLineageOutcome
+        ? await d.readLineageOutcome(lineageId ?? taskId) : null;
+      const outcome = mapTaskOutcome(row, lineage);
+      if (outcome.terminal && !fromTask.terminal) {
+        d.log?.("[worker][runner] the lineage ended the mission; the task row had not caught up", {
+          queue: mission.queueId, task: taskId, task_outcome: fromTask.status,
+          lineage_status: lineage?.status ?? null, outcome: outcome.status,
+        });
+      }
       // The lineage's own slice counter, so the release can tell a slice that
       // ran from a run that only re-read a checkpoint (a 409, a refusal).
       const lineageSlices = typeof row?.lineage_slices === "number" ? row.lineage_slices : null;

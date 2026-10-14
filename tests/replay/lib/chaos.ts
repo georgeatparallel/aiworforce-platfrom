@@ -440,7 +440,10 @@ export class ChaosLab {
       () => releaseLineageLease({
         db: this.rpcFailing(() => failingLease), lineageId: this.taskId, workspaceId: REPLAY_WORKSPACE,
         holderTaskId: this.taskId, expectedVersion: lease.stateVersion,
-        nextState: { [LINEAGE_PROGRESS_KEY]: f.progress }, madeProgress: !f.progress.barren_slices,
+        // run-agent's `mergeLineageState(…)`: the slice's verdict rides in the
+        // same call that marks the row terminal.
+        nextState: { terminal_status: terminal ?? "continuation_required", [LINEAGE_PROGRESS_KEY]: f.progress },
+        madeProgress: !f.progress.barren_slices,
         ...(lineageIsFinished(f.decision as never) ? { terminalReason: String(f.decision.reason) } : {}),
       }),
       (r) => !r.released && "reason" in r && r.reason === "release_unavailable",
@@ -494,6 +497,13 @@ export class ChaosLab {
           lineage_slices: typeof progress?.continuations_used === "number" ? progress.continuations_used : null,
           continuation_decision: (result.auto_continuation as { decision?: string } | undefined)?.decision ?? null,
         };
+      },
+      // worker/main.ts `readLineageOutcome`.
+      readLineageOutcome: async (lineageId) => {
+        const r = (await this.lab.db.query<{ status: string | null; terminal_reason: string | null; ts: string | null }>(
+          `select status, terminal_reason, current_state->>'terminal_status' as ts from public.lead_lineages where lineage_id = $1`,
+          [lineageId])).rows[0];
+        return r ? { status: r.status, terminal_reason: r.terminal_reason, terminal_status: r.ts } : null;
       },
     });
     return {

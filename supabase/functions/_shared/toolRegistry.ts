@@ -56,6 +56,15 @@ export interface ToolContext {
    * adopt it (run 78cff5e5).
    */
   onRunStarted?: (info: { run_id: string; dataset_id: string | null }) => Promise<void> | void;
+  /**
+   * Stop WAITING on a started Apify run — never stop the run. Asked between
+   * polls; when true the call returns exactly what the poll window's end
+   * returns: the run is RUNNING, `pending`, its id already recorded by
+   * `onRunStarted`, adopted later with a free status read. Set only by the
+   * Lead V2 verification phase once its slice must stop (deadline, lost lease,
+   * cancellation). Absent: the full poll window, as before.
+   */
+  stopWaiting?: () => boolean;
   workspace_id: string;
   agent_slug: string;
   agent_id: string | null;
@@ -1206,6 +1215,10 @@ async function execSourceWithApify(
   let finalRun: any = run;
   while (Date.now() < deadline) {
     if (status === "SUCCEEDED" || status === "FAILED" || status === "TIMED-OUT" || status === "ABORTED") break;
+    if (ctx?.stopWaiting?.()) {
+      console.log("[toolRegistry] stopped waiting on a running Apify run; it stays pending", { run_id, status });
+      break;
+    }
     await new Promise((r) => setTimeout(r, 3000));
     const poll = await apifyFetch(`/actor-runs/${run_id}?token=${APIFY_API_TOKEN}`, {
       method: "GET",

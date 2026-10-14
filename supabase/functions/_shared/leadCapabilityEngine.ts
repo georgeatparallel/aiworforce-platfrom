@@ -253,6 +253,7 @@ import {
   attemptedRoutes, unaffordableOpKey, unaffordableRoutes, verifyOpKey, type ClaimVerifier, type PendingVerifierRun, type VerificationTarget,
   type VerifierFinding,
 } from "./claimVerifier.ts";
+import type { MapSelection } from "./webEvidenceRunner.ts";
 import { atomusInput, FUNDING_STAGE_VERIFIER_KEY } from "./fundingStageVerifier.ts";
 import { bucketOf, candidateDecision, decisionCounts, decisionSummary, type CandidateDecision, type MissionCandidate } from "./workbenchMissionView.ts";
 import { evaluateEligibility } from "./candidateEligibility.ts";
@@ -635,6 +636,18 @@ export interface CapabilityExecutionState {
    * by run id on the next slice, never bought twice (`claimVerifier`).
    */
   verifier_pending_runs?: PendingVerifierRun[];
+  /**
+   * Verification steps a stopped slice cut short after part of them was bought
+   * (`PendingVerifierRun.deferred`, `claimVerificationPhase`): resumed by the
+   * next slice. Never provider runs, so never read as work in flight.
+   */
+  verifier_deferred_steps?: PendingVerifierRun[];
+  /**
+   * The pages each bought site map selected, by domain and intent set
+   * (`webEvidenceRunner.recordMapMemory`), so a later collection for the same
+   * company recalls them instead of asking the map again.
+   */
+  web_evidence_map_selections?: Record<string, MapSelection>;
   /** Every route-control proposal and what code decided about it. */
   route_controls?: RouteControlRecord[];
   /** Binds this state to the mission it was produced for. */

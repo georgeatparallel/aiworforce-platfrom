@@ -51,7 +51,10 @@ Deno.test("[failure] source order: run-agent's V2 slice runs claim → lease →
     // 7. the claim release, retried, the row status from the slice's own verdict
     "releaseContinuationViaRpc({",
     "rowStatus: statuses.rowStatus",
-    // 8. the lineage release, terminal only when nothing is left to resume
+    // 8. the lineage release, terminal only when nothing is left to resume,
+    // carrying the slice's verdict in the same call (D4: the worker reads it)
+    "mergeLineageState(leaseState, {",
+    "terminal_status: statuses.terminalStatus,",
     "releaseLineageLease({",
     "lineageIsFinished(autoDecision)",
     'r.reason === "release_unavailable"',
@@ -69,11 +72,17 @@ Deno.test("[failure] source order: the worker reads the queue's continuations at
   const src = read(main);
   assert(src.includes('select("continuations")'), `${main}: the continuations read at claim is gone`);
   assertInOrder(src, main, ["readTaskOutcome: async (taskId) =>", 'from("tasks").select(TASK_OUTCOME_COLUMNS)']);
+  // D4: the lineage's status and verdict, as the lab's `readLineageOutcome` reads them.
+  assertInOrder(src, main, ["readLineageOutcome: async (lineageId) =>", 'from("lead_lineages")',
+    "status, terminal_reason, r_terminal_status:current_state->>terminal_status"]);
   assertInOrder(src, main, ["if (isTerminalQueueStatus(finalStatus)) {", "await reconcileTerminal(finalStatus, reason, {"]);
-  // The runner the lab runs is the production one, and it takes the outcome
-  // from the row, not from the HTTP response (why D4 exists).
+  // The runner the lab runs is the production one: the outcome comes from the
+  // task row, and from the lineage row when the task row says it did not end (D4).
   const runner = "worker/leadMissionRunner.ts";
-  assertInOrder(read(runner), runner, ["res = await d.handler(", "const row = await d.readTaskOutcome(taskId);", "mapTaskOutcome(row)"]);
+  assertInOrder(read(runner), runner, [
+    "res = await d.handler(", "const row = await d.readTaskOutcome(taskId);", "d.readLineageOutcome(lineageId ?? taskId)",
+    "mapTaskOutcome(row, lineage)",
+  ]);
 });
 
 Deno.test("[failure] source order: a terminal lineage is never claimed again (the queue SQL the lab runs)", () => {

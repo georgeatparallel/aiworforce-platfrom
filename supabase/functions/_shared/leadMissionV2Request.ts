@@ -128,8 +128,43 @@ export interface TaskOutcomeRow {
 }
 export interface MappedOutcome { status: string; terminal: boolean }
 
-/** How the run the handler executed actually ended, read from its task row. */
-export function mapTaskOutcome(row: TaskOutcomeRow | null): MappedOutcome {
+/**
+ * The lineage row, as `claim_next_lead_mission` reads it: the authority on
+ * whether the mission has ended. `terminal_status` is the slice's own
+ * verdict, which run-agent's lineage release stores in `current_state` in the
+ * same call that marks the row terminal.
+ */
+export interface LineageOutcomeRow {
+  status: string | null;
+  terminal_reason: string | null;
+  terminal_status: string | null;
+}
+
+/**
+ * How the run the handler executed actually ended, read from its task row —
+ * unless the LINEAGE has already ended.
+ *
+ * Query B D4 (chaos lab): the last slice's result write is lost, the slice
+ * releases its lineage `terminal` from what it knew, and the task row still
+ * reads the previous slice's `continuation_required`. Releasing the queue
+ * `resumable` from that row strands it: `claim_next_lead_mission` never claims
+ * a row whose lineage is terminal or cancelled, so nothing would ever settle
+ * the queue, the task or the plan. The lineage row decides, as it does for the
+ * claim. A task row that already says how the run ended is never overridden.
+ */
+export function mapTaskOutcome(row: TaskOutcomeRow | null, lineage?: LineageOutcomeRow | null): MappedOutcome {
+  const own = taskRowOutcome(row);
+  if (own.terminal || !lineage) return own;
+  if (lineage.status === "cancelled") return { status: "cancelled", terminal: true };
+  if (lineage.status === "terminal") {
+    const ts = lineage.terminal_status && lineage.terminal_status !== "continuation_required"
+      ? lineage.terminal_status : null;
+    return { status: ts ?? lineage.terminal_reason ?? "lineage_terminal", terminal: true };
+  }
+  return own;
+}
+
+function taskRowOutcome(row: TaskOutcomeRow | null): MappedOutcome {
   if (!row) return { status: "task_missing", terminal: false };
   const ts = row.terminal_status;
   if (ts === "continuation_required") return { status: ts, terminal: false };
