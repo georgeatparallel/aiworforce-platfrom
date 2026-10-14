@@ -82,3 +82,45 @@ Deno.test("test worker: the hosting doc names the detach step for schedules that
   const shipped = [...Deno.readDirSync(new URL("supabase/migrations/", ROOT))].map((e) => e.name).filter((n) => n.endsWith(".sql"));
   for (const n of shipped) assert(doc.includes(`\`${n}\``), `the hosting doc's migration list is missing ${n}`);
 });
+
+// ── the guarded test-project schema build ───────────────────────────────────
+const BUILD = "scripts/test-project/build-test-schema.sh";
+const FAKE_PSQL_DIR = new URL("tests/infra/fixtures/fake-psql/", ROOT).pathname;
+
+async function build(env: Record<string, string>, args: string[]) {
+  const out = await new Deno.Command("bash", {
+    args: [new URL(BUILD, ROOT).pathname, ...args],
+    env: { PATH: `${FAKE_PSQL_DIR}:${Deno.env.get("PATH") ?? ""}`, ...env },
+    clearEnv: true, stdout: "piped", stderr: "piped",
+  }).output();
+  const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+  return { code: out.code, text };
+}
+
+Deno.test("test schema build: refuses production, the abandoned project and mismatches BEFORE any connection", async () => {
+  const cases: Array<[Record<string, string>, string[], string]> = [
+    [{ TEST_PROJECT_REF: "ohsdatpvfdjdemstoiuj", TEST_DB_URL: "postgresql://x@db.ohsdatpvfdjdemstoiuj.supabase.co/postgres" }, ["--confirm", "ohsdatpvfdjdemstoiuj"], "live or the abandoned"],
+    [{ TEST_PROJECT_REF: "wqnigjhcwjxtmordrwno", TEST_DB_URL: "postgresql://x@db.wqnigjhcwjxtmordrwno.supabase.co/postgres" }, ["--confirm", "wqnigjhcwjxtmordrwno"], "live or the abandoned"],
+    [{ TEST_PROJECT_REF: "testref", TEST_DB_URL: "postgresql://x@db.ohsdatpvfdjdemstoiuj.supabase.co/testref" }, ["--confirm", "testref"], "names ohsdatpvfdjdemstoiuj"],
+    [{ TEST_PROJECT_REF: "testref", TEST_DB_URL: "postgresql://x@db.otherref.supabase.co/postgres" }, ["--confirm", "testref"], "must be a postgres URL that names testref"],
+    [{ TEST_PROJECT_REF: "testref", TEST_DB_URL: "postgresql://x@db.testref.supabase.co/postgres" }, ["--confirm", "testre"], "--confirm must repeat"],
+    [{ TEST_PROJECT_REF: "", TEST_DB_URL: "postgresql://x@db.testref.supabase.co/postgres" }, ["--confirm", ""], "TEST_PROJECT_REF is empty"],
+  ];
+  for (const [env, args, why] of cases) {
+    const r = await build(env, args);
+    assertEquals(r.code, 1, `${why}: refused`);
+    assert(r.text.includes(why), `${why}: says why (${r.text.trim()})`);
+    assert(!r.text.includes("PSQL_CALLED"), `${why}: refused before any connection`);
+  }
+});
+
+Deno.test("test schema build: cron-scheduling migrations commit only together with the detach", () => {
+  const sh = read(BUILD);
+  assert(sh.includes('--single-transaction -f "$f" -f "$detach"'), "schedule and detach in ONE transaction");
+  assert(sh.includes('grep -q "cron.schedule" "$f"'));
+  assert(sh.includes("command ilike '%net.http_post%' or command ilike '%supabase.co%'"), "ends by proving no hosted-calling job exists");
+  assert(sh.includes("table_schema = 'public'") && sh.includes("builds a NEW project only"), "never runs against a populated database");
+  // Every cron migration that calls production is caught by the detach's own filter.
+  const detach = read("scripts/local-supabase/01-local-cron-detach.sql");
+  assert(detach.includes("command ilike '%net.http_post%' or command ilike '%supabase.co%'"));
+});
