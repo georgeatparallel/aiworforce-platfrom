@@ -107,6 +107,18 @@ const discoveredOf = (t: VerificationTarget): FundingRecordFact[] => (t.graph ? 
 const heldAtomusOf = (t: VerificationTarget): FundingRecordFact | null =>
   discoveredOf(t).find((r) => r.actor === ATOMUS_FUNDING_ACTOR_KEY) ?? null;
 
+/**
+ * An ATOMUS read still executing when its slice ended. Carried with its run id
+ * and the exact input it was bought with, and ADOPTED by id on a later slice —
+ * never bought again, and never read as an answer before it has one.
+ */
+export const ATOMUS_PENDING_STAGE = "atomus" as const;
+
+/** What a pending Atomus read carries: the companies it is the answer for. */
+interface AtomusCarry {
+  targets: VerificationTarget[];
+}
+
 /** Pending stages for Pvalyou steps a stopped slice deferred (`PendingVerifierRun.deferred`). */
 export const DEFERRED_PVALYOU_STAGE = "pvalyou_deferred" as const;
 export const DEFERRED_PVALYOU_RECENCY_STAGE = "pvalyou_recency_deferred" as const;
@@ -206,6 +218,7 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
             verifier: FUNDING_STAGE_VERIFIER_KEY, stage: "pvalyou", actor_key: PVALYOU_FUNDING_ACTOR_KEY,
             run_id: out.run_id, input, candidate_keys: carry.targets.map((t) => t.company_key),
             started_at: resume?.started_at ?? at, carry: carry as unknown as Record<string, unknown>,
+            polls: resume ? (resume.polls ?? 0) + 1 : 0,
           });
           deps.log("funding_verifier_run_pending", { run_id: out.run_id, companies: carry.targets.length });
           return;
@@ -275,6 +288,7 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
             verifier: FUNDING_STAGE_VERIFIER_KEY, stage: "pvalyou_recency", actor_key: PVALYOU_FUNDING_ACTOR_KEY,
             run_id: out.run_id, input, candidate_keys: carry.targets.map((t) => t.company_key),
             started_at: resume?.started_at ?? at, carry: carry as unknown as Record<string, unknown>,
+            polls: resume ? (resume.polls ?? 0) + 1 : 0,
           });
           deps.log("funding_recency_fallback_pending", { run_id: out.run_id, companies: carry.targets.length });
           return;
@@ -319,13 +333,33 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
         if (p.stage === DEFERRED_PVALYOU_STAGE) await runPvalyou(carry);
         else if (p.stage === DEFERRED_PVALYOU_RECENCY_STAGE) await runRecencyFallback(carry);
       }
-      const inFlight = new Set(ctx.pending.flatMap((p) => p.candidate_keys));
+      // ── ATOMUS READS AN EARLIER SLICE LEFT EXECUTING ─────────────────────
+      //
+      // Their companies are answered by ADOPTING that run below — not by a new
+      // read — so they are not "in flight" for this pass. A company such a run
+      // was bought for is verified here even when this call did not target it:
+      // the run is paid for, and its answer is owed to that company.
+      const atomusRuns = ctx.pending.filter((x) =>
+        x.verifier === FUNDING_STAGE_VERIFIER_KEY && x.stage === ATOMUS_PENDING_STAGE && !x.deferred && !!x.run_id);
+      const inFlight = new Set(ctx.pending.filter((p) => !atomusRuns.includes(p)).flatMap((p) => p.candidate_keys));
       const fresh = targets.filter((t) => !inFlight.has(t.company_key));
+      for (const p of atomusRuns) {
+        for (const t of (p.carry as unknown as AtomusCarry | undefined)?.targets ?? []) {
+          if (!inFlight.has(t.company_key) && !fresh.some((f) => f.company_key === t.company_key)) fresh.push(t);
+        }
+      }
       if (fresh.length === 0) return { findings, pending };
 
       // ── 2. atomus, one batch, for every target with a LinkedIn page ──────
       const atomusRecords: Record<string, FundingRecordFact | null> = {};
-      let atomusCallId: string | null = null;
+      /** The Atomus call that answered each company (several when a carried run is adopted beside a new read). */
+      const atomusCallOf: Record<string, string | null> = {};
+      /**
+       * Companies whose Atomus answer is still OWED by a read that has not
+       * finished, or that a stop deferred: no finding this pass, so the claim is
+       * never read as answered before the paid read has said anything.
+       */
+      const owed = new Set<string>();
       /**
        * Companies Atomus has answered for — this call, or an earlier read the
        * graph holds. A refused or failed call is not an answer to fall back from.
@@ -346,30 +380,86 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
       const byPage = fresh.filter((t) => !atomusAnswered.has(t.company_key))
         .map((t) => ({ t, page: atomusInput(t.linkedin_url) }));
       const withPage = byPage.filter((x) => x.page);
-      if (withPage.length > 0 && deps.ready(ATOMUS_FUNDING_ACTOR_KEY)) {
+      /**
+       * One Atomus outcome, for the companies it was asked about: a new read, or
+       * the adoption of one an earlier slice left running (`resume`). The paid
+       * read is never re-bought and never mistaken for an answer:
+       *   ok        → each company's record (or none), answered;
+       *   running   → carried with its run id and input, adopted next slice;
+       *   deferred  → nothing was asked: an adoption is carried unchanged, a new
+       *               read leaves its companies open for the next slice;
+       *   refused / failed → unavailable, exactly as before: the claim stays
+       *               PENDING and is answered (asking again returns the same).
+       */
+      const takeAtomus = async (
+        group: Array<{ t: VerificationTarget; page: string | null }>, input: Record<string, unknown>,
+        resume?: PendingVerifierRun,
+      ): Promise<"answered" | "running" | "deferred" | "unavailable"> => {
+        const keys = group.map((x) => x.t.company_key);
         const out = await deps.call({
           actor_key: ATOMUS_FUNDING_ACTOR_KEY, capability: FUNDING_VERIFICATION_CAPABILITY, purpose: "funding_evidence",
-          input: { companies: withPage.map((x) => x.page!) },
-          candidate_keys: withPage.map((x) => x.t.company_key),
+          input, candidate_keys: resume?.candidate_keys ?? keys, resume_run_id: resume?.run_id ?? null,
         });
         if (out.status === "ok") {
-          atomusCallId = out.provider_call_id;
-          for (const { t } of withPage) atomusAnswered.add(t.company_key);
+          for (const k of keys) { atomusAnswered.add(k); atomusCallOf[k] = out.provider_call_id; }
           const reads = out.rows.map(normalizeAtomusFunding);
-          for (const { t, page } of withPage) {
+          for (const { t, page } of group) {
             const want = slugOf(page);
             const r = reads.find((x) => slugOf(x.input) === want || slugOf(x.linkedin_url) === want) ?? null;
             // The call is written on the record, so it survives the merge.
-            atomusRecords[t.company_key] = r?.record ? stampFundingCall(r.record, atomusCallId) : null;
+            atomusRecords[t.company_key] = r?.record ? stampFundingCall(r.record, out.provider_call_id) : null;
           }
-        } else if (out.status === "deferred") {
-          // Nothing bought, nothing answered: every fresh company stays open.
-          deps.log("funding_verifier_deferred", { stage: "atomus", companies: withPage.length, reason: out.reason });
-          return { findings, pending };
-        } else {
-          deps.log("funding_verifier_atomus_unavailable", { status: out.status, reason: (out as { reason?: string }).reason });
+          if (resume) deps.log("funding_verifier_atomus_adopted", { run_id: resume.run_id, companies: keys.length });
+          return "answered";
+        }
+        if (out.status === "running") {
+          const polls = resume ? (resume.polls ?? 0) + 1 : 0;
+          pending.push({
+            verifier: FUNDING_STAGE_VERIFIER_KEY, stage: ATOMUS_PENDING_STAGE, actor_key: ATOMUS_FUNDING_ACTOR_KEY,
+            run_id: out.run_id, input, candidate_keys: resume?.candidate_keys ?? keys,
+            started_at: resume?.started_at ?? at, polls,
+            carry: { targets: group.map((x) => x.t) } satisfies AtomusCarry as unknown as Record<string, unknown>,
+          });
+          for (const k of keys) owed.add(k);
+          deps.log("funding_verifier_atomus_pending", { run_id: out.run_id, companies: keys.length, polls });
+          return "running";
+        }
+        if (out.status === "deferred") {
+          if (resume) {
+            pending.push(resume);
+            deps.log("funding_verifier_run_carried", { run_id: resume.run_id, stage: ATOMUS_PENDING_STAGE });
+          } else {
+            deps.log("funding_verifier_deferred", { stage: "atomus", companies: keys.length, reason: out.reason });
+          }
+          for (const k of keys) owed.add(k);
+          return "deferred";
+        }
+        deps.log("funding_verifier_atomus_unavailable", {
+          status: out.status, reason: (out as { reason?: string }).reason, ...(resume ? { run_id: resume.run_id } : {}),
+        });
+        return "unavailable";
+      };
+      // 2a. ADOPT what earlier slices started. A free re-read by run id with
+      // the exact input it was bought with (the same idempotency key).
+      const adoptedKeys = new Set<string>();
+      for (const p of atomusRuns) {
+        const carried = new Set(p.candidate_keys);
+        const group = withPage.filter((x) => carried.has(x.t.company_key));
+        for (const x of group) adoptedKeys.add(x.t.company_key);
+        if (group.length === 0) continue;
+        await takeAtomus(group, p.input, p);
+      }
+      // 2b. A NEW read for every other company with a page.
+      const newRead = withPage.filter((x) => !adoptedKeys.has(x.t.company_key));
+      if (newRead.length > 0 && deps.ready(ATOMUS_FUNDING_ACTOR_KEY)) {
+        const outcome = await takeAtomus(newRead, { companies: newRead.map((x) => x.page!) });
+        // A DEFERRED new read bought nothing and answered nothing: every company
+        // an adopted read did not answer stays open, as before this change.
+        if (outcome === "deferred") {
+          for (const t of fresh) if (!(t.company_key in atomusCallOf)) owed.add(t.company_key);
         }
       }
+      const atomusCallIdAny: string | null = Object.values(atomusCallOf).find((v) => !!v) ?? null;
 
       // ── 3. what atomus settles alone, or with what discovery carried ─────
       const needCitation: VerificationTarget[] = [];
@@ -377,7 +467,10 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
       const recencyFallback: VerificationTarget[] = [];
       const recencyInputs: Record<string, string> = {};
       for (const t of fresh) {
+        // OWED: its read is still executing, or was deferred — no answer yet.
+        if (owed.has(t.company_key)) continue;
         const atomus = atomusRecords[t.company_key] ?? null;
+        const atomusCallId = atomusCallOf[t.company_key] ?? atomusCallIdAny;
         // ── A RECENCY GAP NEEDS THE DATED HISTORY, NOT A STAGE VERDICT ──────
         //
         // "Raised funding in the last N years" is `recently_funded`, decided by
@@ -450,7 +543,7 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
 
       // ── 3b. the recency fallback, batched like the stage citation ──────────
       for (const group of batches(recencyFallback, PVALYOU_BATCH)) {
-        await runRecencyFallback({ targets: group, atomus: atomusRecords, inputs: recencyInputs, atomus_call_id: atomusCallId });
+        await runRecencyFallback({ targets: group, atomus: atomusRecords, inputs: recencyInputs, atomus_call_id: atomusCallIdAny });
       }
 
       // ── 4. pvalyou cites, for Seed / pre-seed / unclear ──────────────────
@@ -465,12 +558,12 @@ export function fundingStageVerifier(opts: FundingStageVerifierOptions = {}): Cl
         // Nothing can cite these this mission: decide on atomus alone (PENDING at best).
         settleWithPvalyou({
           targets: deps.ready(PVALYOU_FUNDING_ACTOR_KEY) ? uncitable : needCitation,
-          atomus: atomusRecords, inputs, atomus_call_id: atomusCallId, discovered,
+          atomus: atomusRecords, inputs, atomus_call_id: atomusCallIdAny, discovered,
         }, null, null);
       }
       if (deps.ready(PVALYOU_FUNDING_ACTOR_KEY)) {
         for (const group of batches(citable, PVALYOU_BATCH)) {
-          await runPvalyou({ targets: group, atomus: atomusRecords, inputs, atomus_call_id: atomusCallId, discovered });
+          await runPvalyou({ targets: group, atomus: atomusRecords, inputs, atomus_call_id: atomusCallIdAny, discovered });
         }
       }
       return { findings, pending };

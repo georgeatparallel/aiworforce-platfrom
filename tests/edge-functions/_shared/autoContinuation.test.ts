@@ -930,9 +930,11 @@ Deno.test("run-agent feeds the engine's own pending_runs into the decision", () 
     new URL("../../../supabase/functions/run-agent/index.ts", import.meta.url),
   );
   // The engine's own list, counted by `awaitedPendingRuns` — which only drops a
-  // run that has outlived its wait bound (D3, pendingRunWaitBound.test.ts).
+  // run that has outlived its wait bound (D3, pendingRunWaitBound.test.ts) —
+  // and the verifiers' runs, bounded the same way (fundingScreenWiring.test.ts).
   assert(
-    /pendingRuns:\s*awaitedPendingRuns\(capabilityRun\?\.state\.pending_runs, Date\.now\(\)\)\.awaited \+\s*\(capabilityRun\?\.state\.verifier_pending_runs\?\.length \?\? 0\)/.test(RUN),
+    /pendingRuns:\s*awaitedPendingRuns\(capabilityRun\?\.state\.pending_runs, Date\.now\(\)\)\.awaited \+\s*\/\/[^\n]*\n(\s*\/\/[^\n]*\n)*\s*awaitedPendingRuns\(capabilityRun\?\.state\.verifier_pending_runs\?\.filter\(\(p\) => !p\.deferred\), Date\.now\(\)\)\.awaited \+/.test(RUN) ||
+    /pendingRuns:\s*awaitedPendingRuns\(capabilityRun\?\.state\.pending_runs, Date\.now\(\)\)\.awaited \+\s*awaitedPendingRuns\(capabilityRun\?\.state\.verifier_pending_runs\?\.filter\(\(p\) => !p\.deferred\), Date\.now\(\)\)\.awaited \+/.test(RUN),
     "re-deriving the list is how the two components disagreed in the first place",
   );
 });
