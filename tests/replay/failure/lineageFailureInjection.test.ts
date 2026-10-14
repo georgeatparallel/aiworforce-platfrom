@@ -31,6 +31,7 @@ import { queryBFixture, recordedRouteControl } from "../lib/queryB.ts";
 import { inputFingerprint } from "../../../supabase/functions/_shared/leadResumeState.ts";
 import { spendFloorFromRows } from "../../../supabase/functions/_shared/missionSpendCap.ts";
 import { V2_MAX_ATTEMPTS } from "../../../supabase/functions/_shared/leadMissionTerminal.ts";
+import { PENDING_RUN_MAX_POLLS } from "../../../supabase/functions/_shared/leadAutoContinuation.ts";
 
 const D22 = () => loadFixture("queryBd22d9ee6.loop") as LineageFixture;
 const CONTINUUM = "Continuum AI";
@@ -61,12 +62,17 @@ function scenario(name: string, open: () => Promise<ChaosLab>): Promise<Settled>
   if (!cache.has(name)) cache.set(name, open().then(settle));
   return cache.get(name)!;
 }
-/** `pending`: the provenance prefix of a recorded provider answer still RUNNING when first asked. */
-const d22 = (faults: Fault[] = [], pending?: string) =>
-  scenario(`d22:${JSON.stringify(faults)}:${pending ?? ""}`, () => {
+/**
+ * `pending`: the provenance prefix of a recorded provider answer still RUNNING
+ * when first asked; `stillRunning`: how many adoptions it is still running for.
+ */
+const d22 = (faults: Fault[] = [], pending?: string, stillRunning?: number) =>
+  scenario(`d22:${JSON.stringify(faults)}:${pending ?? ""}:${stillRunning ?? ""}`, () => {
     const fx = D22();
     if (pending) {
-      (fx.provider_responses.find((r) => r.provenance.startsWith(pending))! as { pending_once?: boolean }).pending_once = true;
+      const r = fx.provider_responses.find((x) => x.provenance.startsWith(pending))!;
+      r.pending_once = true;
+      if (stillRunning !== undefined) r.still_running_polls = stillRunning;
     }
     return ChaosLab.open(fx, faults);
   });
@@ -97,6 +103,7 @@ function assertSettledConsistently(s: Settled, label: string) {
     status: r.status ?? null,
     provider_call_id: ((r.request_input as { provider_call_spec?: { provider_call_id?: string } } | null)?.provider_call_spec?.provider_call_id) ?? null,
     settled_usd: null, actual_cost_usd: null, estimate_usd: r.estimate_usd,
+    resumed_from: ((r.request_input as { resume_run_id?: string } | null)?.resume_run_id) ?? null,
   })));
   const bought = lab.ledger.filter((r) => !r.reused);
   assertEquals(floor.paid_calls, bought.length, `${label}: the floor counts ${floor.paid_calls} paid calls, ${bought.length} were bought`);
@@ -348,6 +355,14 @@ Deno.test("[failure] 6 the FIRST PAGE is still running when slice 1 ends: the ne
   assertEquals(p1.filter((r) => r.reused).length, 1, "adopted once");
   assertEquals(s.lab.ledger.filter((r) => r.status === "started").length, 0, "no run left unread");
   assertEquals(s.terminal, "search_exhausted");
+  // D3: a run pending ONCE no longer stops every later discovery pass after
+  // its first selection (`pendingFor` read the attempt history): the slice
+  // after the adoption re-plans, and buys its re-planned query.
+  assert(s.lab.purchases().some((p) => p.attempt >= 3 && REPLAN.test(JSON.stringify(
+    s.lab.ledger.find((r) => r.idempotency_key === p.idempotency_key)?.request_input))),
+  "a re-planned query was bought after the adoption");
+  // (The lead itself is not asserted: one slice later, the lineage asks
+  // questions production never asked, and the fixture holds no answers for them.)
 });
 
 Deno.test("[failure] 6 a COMPANY-DETAILS read still running at slice end is adopted next slice — never bought twice", async () => {
@@ -358,29 +373,60 @@ Deno.test("[failure] 6 a COMPANY-DETAILS read still running at slice end is adop
   assertEquals(s.lastQualified, [CONTINUUM]);
 });
 
-Deno.test("[failure] 6 D3 DEFECT REPRODUCED — a REPLENISHMENT PAGE still running at slice end is never adopted: the lineage waits on it until the continuation ceiling and ends without its lead", async () => {
+// D3 (fixed). A replenishment page or a re-planned query still running at
+// slice end used to be NEVER asked again: discovery re-asks only its own
+// strategy, and once the replenishment slice ended discovery was marked done.
+// The lineage waited on the paid run as `awaiting_provider_run` until the
+// continuation ceiling and ended `budget_exhausted` without its lead. The
+// engine now records the selection that started a pending discovery run,
+// reopens discovery DRAIN-ONLY to ask it again, and adopts — never buys.
+/** Adoptions that READ a finished run (a re-read that found it still executing is not one). */
+const adoptedRuns = (s: Settled) => s.lab.ledger.filter((r) => r.reused && r.status === "reused").length;
+/** Purchases whose run was never read: still `started`, and not a re-read of one. */
+const startedLeft = (s: Settled) => s.lab.ledger.filter((r) => !r.reused && r.status === "started").length;
+
+Deno.test("[failure] 6 D3 a REPLENISHMENT PAGE still running at slice end is asked again and ADOPTED — paid once, read, and the lineage ends exactly as its clean run", async () => {
   const s = await d22([], "page 2");
-  const runs = runsOf(s);
-  assertEquals(runs.slice(0, 2), ["replenishment_required", "awaiting_provider_run"]);
-  assertEquals(runs.at(-1), "continuation_ceiling");
-  assert(runs.slice(1, -1).every((r) => r === "awaiting_provider_run"), runs.join(","));
-  // The paid page is never read: its ledger row is still `started` at the end.
-  assertEquals(s.lab.ledger.filter((r) => r.status === "started").length, 1);
-  assertEquals([s.queue.status, s.terminal, s.lastQualified], ["complete", "budget_exhausted", []],
-    "today — if this fails, D3 is fixed: enable the [known-gap] test below and delete this one");
-  // Nothing is bought twice even so.
+  assertSettledConsistently(s, "page 2 pending");
+  assertEquals(runsOf(s).slice(0, 3), ["replenishment_required", "awaiting_provider_run", "replenishment_required"]);
+  assertEquals(adoptedRuns(s), 1, "the pending page, re-read by its run id");
+  assertEquals(startedLeft(s), 0, "no paid run left unread");
+  assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
+  assertEquals(questionsOf(s), await lReplayQuestions(), "the same questions as the clean run, each bought once");
+});
+
+for (const pending of ["page 3", "re-plan query 1", "re-plan query 3"]) {
+  Deno.test(`[failure] 6 D3 a pending ${pending.toUpperCase()} is asked again and adopted — never bought twice, never left unread, the lead found`, async () => {
+    const s = await d22([], pending);
+    assertSettledConsistently(s, `${pending} pending`);
+    assertEquals(runsOf(s).filter((r) => r === "awaiting_provider_run").length, 1, "one slice of waiting, not the ceiling");
+    assert(adoptedRuns(s) >= 1);
+    assertEquals(startedLeft(s), 0);
+    assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
+  });
+}
+
+Deno.test("[failure] 6 D3 a run STILL executing when asked again stays awaited — then adopted when it finishes", async () => {
+  const s = await d22([], "page 2", 2);
+  assertSettledConsistently(s, "page 2 still running x2");
+  assertEquals(runsOf(s).filter((r) => r === "awaiting_provider_run").length, 3);
+  assertEquals(adoptedRuns(s), 1);
+  assertEquals(startedLeft(s), 0);
+  assertEquals(s.lastQualified, [CONTINUUM]);
   assertEquals(s.lab.duplicatePurchases(), []);
 });
 
-Deno.test({
-  name: "[known-gap] D3 a replenishment page still running at slice end is adopted by the next slice and the lineage finds its lead",
-  ignore: true,
-  fn: async () => {
-    const s = await d22([], "page 2");
-    assertSettledConsistently(s, "page 2 pending");
-    assertEquals(s.lab.ledger.filter((r) => r.status === "started").length, 0);
-    assertEquals(s.lastQualified, [CONTINUUM]);
-  },
+Deno.test("[failure] 6 D3 BOUNDED: a run that never finishes stops holding the lineage after PENDING_RUN_MAX_POLLS asks — the lineage ends, nothing is bought twice, the run stays on record", async () => {
+  const s = await d22([], "page 2", 50);
+  assertSettledConsistently(s, "page 2 never finishes");
+  const waits = runsOf(s).filter((r) => r === "awaiting_provider_run").length;
+  assertEquals(waits, PENDING_RUN_MAX_POLLS, "waited exactly the bound — not to the continuation ceiling");
+  assertNotEquals(runsOf(s).at(-1), "continuation_ceiling");
+  assertEquals(s.queue.status, "complete");
+  // Still listed — a later ask would adopt it — and still on the ledger as started: never re-bought.
+  const pendingLeft = (s.task?.result?.capability_execution_state as { pending_runs: Array<{ polls?: number }> }).pending_runs;
+  assertEquals(pendingLeft.map((p) => p.polls), [PENDING_RUN_MAX_POLLS]);
+  assertEquals(startedLeft(s), 1);
 });
 
 // ═══════════════════════════════ 7–8. seeded fault schedules: the invariants hold ══

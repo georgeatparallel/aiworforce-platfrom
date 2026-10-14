@@ -42,8 +42,10 @@ Deno.test("[failure] source order: run-agent's V2 slice runs claim → lease →
     'guardResult("stage_boundary"',
     // … resumed from the checkpoint merged with the ledger's pending runs
     "mergePendingRuns(",
-    // 5. the fold and the decision
+    // 5. the fold and the decision — a pending run holds the lineage only
+    // within its bound (D3), exactly as the lab's `foldAndDecide` counts it
     "const progress = foldSlice(priorProgress",
+    "pendingRuns: awaitedPendingRuns(capabilityRun?.state.pending_runs, Date.now()).awaited +",
     // 6. the end-of-slice write
     'guardResult("slice_result"',
     // 7. the claim release, retried, the row status from the slice's own verdict

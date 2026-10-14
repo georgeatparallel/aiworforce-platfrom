@@ -428,7 +428,7 @@ import {
   releaseLineageLease, type RpcDb as LeaseRpcDb,
 } from "../_shared/lineageLease.ts";
 import {
-  decideAutoContinuation, settleV2Outcome, foldSlice, readLineageProgress, lineageIsFinished,
+  awaitedPendingRuns, decideAutoContinuation, settleV2Outcome, foldSlice, readLineageProgress, lineageIsFinished,
   claimProgressCount, resolveMaxContinuations, resolveMaxLineageCostUnits,
   AUTO_CONTINUATION_VERSION, LINEAGE_PROGRESS_KEY, type LineageProgress,
 } from "../_shared/leadAutoContinuation.ts";
@@ -6753,7 +6753,10 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           // was still executing, and then abandon its 1,394 rows.
           // …and a claim verifier's provider run still executing (a pvalyou cold
           // read outlives a slice): adopted next slice, never re-bought.
-          pendingRuns: (capabilityRun?.state.pending_runs?.length ?? 0) +
+          // D3: a run asked again PENDING_RUN_MAX_POLLS times, or past
+          // PENDING_RUN_MAX_WAIT_MS, stops holding the lineage
+          // (`awaitedPendingRuns`); it stays listed, so it is still adopted.
+          pendingRuns: awaitedPendingRuns(capabilityRun?.state.pending_runs, Date.now()).awaited +
             (capabilityRun?.state.verifier_pending_runs?.length ?? 0),
           // ── CAN ANYTHING STILL WIDEN THE POOL? ──────────────────────────
           //

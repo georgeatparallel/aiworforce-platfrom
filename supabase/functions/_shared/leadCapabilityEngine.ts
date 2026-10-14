@@ -935,6 +935,27 @@ export interface CapabilityExecutionState {
      * not re-formed, which is the behaviour that already exists.
      */
     company_keys?: string[];
+    /**
+     * D3 — THE DISCOVERY QUESTION THAT STARTED THIS RUN, so a later slice can
+     * ask it again and ADOPT the run.
+     *
+     * Discovery runs are adopted only when a later slice asks the same
+     * question, and a later slice re-asks only its own strategy: the first page
+     * of the original queries. A replenishment page (page 2 of a re-plan query)
+     * or a re-planned query still running at slice end was therefore never
+     * asked again, never adopted — paid for, never read — and the lineage
+     * waited on it as `awaiting_provider_run` until the continuation ceiling
+     * (chaos lab, Query B d22d9ee6). Recorded for discovery selections only;
+     * re-issued ADOPTION-ONLY (`adoptOnlyRun`), so it can never buy.
+     */
+    selection?: DiscoveryActorSelection;
+    /**
+     * Slices that asked this run again and found it still executing. Bounds the
+     * wait (`awaitedPendingRuns`): a run that never finishes stops holding the
+     * lineage, but stays listed, so it is still adopted — never bought — if a
+     * later slice asks its question.
+     */
+    polls?: number;
   }>;
   /**
    * The FREE decision about who was worth paying to identify.
@@ -3771,6 +3792,15 @@ export async function runCapabilityPlan(
    * Reset at the start of every call, read immediately after.
    */
   let lastCallBlock: "deferred" | "provider_error" | null = null;
+  /**
+   * D3: set while a pending discovery run's own question is being asked again.
+   * Such a call may ADOPT that run and nothing else: if the question no longer
+   * compiles to the run's input (a size bound or row budget moved), it is not
+   * bought — the run stays pending and is waited on, boundedly.
+   */
+  let adoptOnlyRun: { run_id: string } | null = null;
+  /** D3: discovery capabilities reopened ONLY to adopt their own pending runs this slice. */
+  const discoveryDrainOnly = new Set<string>();
   /** P4 — the plan route and provider call behind the rows `callProvider` just returned. */
   let lastCallRef: { route_id: string | null; plan_version: number | null; provider_call_id: string | null } = {
     route_id: null, plan_version: null, provider_call_id: null,
@@ -4102,6 +4132,13 @@ export async function runCapabilityPlan(
     // uncharged, rather than only the one that happens to succeed.
     if (inFlight) adoptedRunId = inFlight.run_id;
     else if (completedMatch) adoptedRunId = completedMatch.run_id;
+    // D3: A RE-ASKED PENDING QUESTION MAY ONLY ADOPT ITS OWN RUN.
+    if (adoptOnlyRun && !(inFlight && inFlight.run_id === adoptOnlyRun.run_id)) {
+      record("skipped_idempotent", 0,
+        `adoption only: run ${adoptOnlyRun.run_id}'s question no longer compiles to this input; not bought`);
+      log("pending_run_adoption_drift", { capability, provider, run_id: adoptOnlyRun.run_id });
+      return [];
+    }
     // ── P2: IDEMPOTENCY, THEN RESERVE — BEFORE ANY NETWORK CALL ─────────────
     if (callSpec) {
       const ledger = state.spend_ledger!;
@@ -4295,7 +4332,10 @@ export async function runCapabilityPlan(
           reason: `run ${pending.run_id} still running; dataset ${pending.dataset_id ?? "pending"}`,
         });
         state.accumulated_cost_units += pending.cost_units ?? spec.cost_units;
-        if (!state.pending_runs.some((r) => r.run_id === pending.run_id)) {
+        const stillPending = state.pending_runs.find((r) => r.run_id === pending.run_id);
+        // ASKED AGAIN AND STILL EXECUTING: counted, so the wait is bounded.
+        if (stillPending) stillPending.polls = (stillPending.polls ?? 0) + 1;
+        if (!stillPending) {
           state.pending_runs.push({
             capability, provider, run_id: pending.run_id,
             dataset_id: pending.dataset_id ?? null,
@@ -4980,6 +5020,34 @@ export async function runCapabilityPlan(
       }
     }
 
+    // ── D3: A DISCOVERY RUN STILL EXECUTING REOPENS DISCOVERY — TO READ IT ──
+    //
+    // A replenishment page that went pending left discovery marked complete,
+    // and without a fresh `replenishment_required` nothing reopened it: the
+    // paid run was never asked again, never adopted, and the lineage waited on
+    // it until the continuation ceiling (Query B d22d9ee6, chaos lab). The
+    // reopen is DRAIN-ONLY: no fresh strategy, no page, no re-plan — only the
+    // pending runs' own questions, adoption-only, so it can never buy.
+    const owedDiscoveryRuns = DISCOVERY_REPLENISHABLE.has(cap) && !replenishmentDebt &&
+        state.completed_capabilities.includes(cap)
+      ? state.pending_runs.filter((r) => r.selection && (r.capability === cap || r.capability === null))
+      : [];
+    if (owedDiscoveryRuns.length > 0) {
+      log("discovery_reopened_to_adopt_pending_runs", {
+        capability: cap, runs: owedDiscoveryRuns.map((r) => r.run_id),
+      });
+      if (companies.length === 0 && resumeScope) {
+        const restored = restoreWorkingSet(resumeScope.records);
+        for (const c of restored) companies.push(c);
+        log("working_set_restored_for_pending_adoption", { capability: cap, restored: restored.length });
+      }
+      state.completed_capabilities = state.completed_capabilities.filter((c) => c !== cap);
+      if (!state.pending_capabilities.includes(cap)) {
+        state.pending_capabilities = [cap, ...state.pending_capabilities];
+      }
+      discoveryDrainOnly.add(cap);
+    }
+
     // RESUME. A capability already completed is not re-paid for.
     if (state.completed_capabilities.includes(cap) && !owedByCompanies) {
       outcomes.push({
@@ -5070,9 +5138,16 @@ export async function runCapabilityPlan(
       let schemaFailure = false;
       /** Set when a provider started a real run that has not finished. */
       let runPending = false;
+      /** D3: selections re-asked only to adopt the pending run that started them. */
+      const owedSelections = new Map<DiscoveryActorSelection, { run_id: string }>();
+      // A RUN PENDING NOW, not one that was pending once. This read the attempt
+      // HISTORY, which the checkpoint carries across slices: one run that went
+      // pending in slice 1 — and was adopted in slice 2 — made every later
+      // discovery pass stop after its first selection and never re-plan (Query
+      // B d22d9ee6 with page 1 pending: 2 purchases instead of 7, no lead).
       const pendingFor = (provider: string) =>
-        state.provider_attempts.some(
-          (a) => a.capability === cap && a.provider === provider && a.outcome === "pending");
+        state.pending_runs.some(
+          (r) => r.provider === provider && (r.capability === cap || r.capability === null));
       const boundedJobDiscoveryInput = (input: Record<string, unknown> | undefined): Record<string, unknown> =>
         boundJobDiscoveryProposal({ ...(input ?? {}) });
       // ── A COMPILE FAILURE BELONGS TO THE PROPOSAL THAT FAILED ──────────────
@@ -5397,8 +5472,11 @@ export async function runCapabilityPlan(
       // re-bought, so no money is lost, but the slice would spend its whole
       // budget re-reading rows the pool already holds and end no wider than it
       // started. That is the failure this restore exists to prevent.
+      /** D3: this pass only adopts pending runs (`discoveryDrainOnly`). */
+      const drainOnly = discoveryDrainOnly.has(cap);
+      const inheritedSourceState = drainOnly ? structuredClone(state.discovery_source_state ?? null) : null;
       const pagesTaken: Record<string, number> = {
-        ...(opts.discoveryReplenishment?.pages_taken ?? {}),
+        ...(opts.discoveryReplenishment?.pages_taken ?? inheritedSourceState?.pages_taken ?? {}),
       };
       // ── A PAGE THAT REPEATS THE ONE BEFORE IT ENDS ITS ROUTE ─────────────
       //
@@ -5614,6 +5692,9 @@ export async function runCapabilityPlan(
         for (const sel of sels) {
           const provider = sel.actor_key;
           const attemptsBeforeSelection = state.provider_attempts.length;
+          const pendingRunsBeforeSelection = state.pending_runs.length;
+          const owedRun = owedSelections.get(sel) ?? null;
+          adoptOnlyRun = owedRun ? { run_id: owedRun.run_id } : null;
           if (schemaFailure) break;
           if (discoveryStoppedByControl) break;
           // ── CONTAINMENT IS CHECKED BEFORE THE CALL, NOT BY THROWING ──────
@@ -6083,9 +6164,18 @@ export async function runCapabilityPlan(
           // catching this locally is that nothing downstream gets to reinterpret
           // it as "the source came back empty".
           if (compileFailedFor(provider, attemptsBeforeSelection)) { schemaFailure = true; break; }
+          // D3: THE QUESTION THAT STARTED A RUN STILL EXECUTING, so a later
+          // slice can ask it again — and adopt, never buy.
+          for (const r of state.pending_runs.slice(pendingRunsBeforeSelection)) {
+            if (r.provider === provider && !r.selection) {
+              r.selection = structuredClone(sel);
+            }
+          }
+          if (owedRun) continue;
           if (pendingFor(provider)) { runPending = true; break; }
         }
-        if (sels.length > 0 && !runPending && !schemaFailure) await researchWave();
+        adoptOnlyRun = null;
+        if (sels.length > 0 && !runPending && !schemaFailure && !drainOnly) await researchWave();
       };
 
       // ── A REOPENED DISCOVERY RESUMES; IT DOES NOT RESTART ────────────────
@@ -6152,7 +6242,47 @@ export async function runCapabilityPlan(
         state.discovery_strategy = discoveryStrategyDiagnostics(strategy);
       }
 
+      // ── D3: A DISCOVERY RUN STILL EXECUTING IS ASKED AGAIN FIRST ──────────
+      //
+      // This slice's strategy re-asks its own questions; a run started by a
+      // replenishment page or a re-planned query is not among them, so it was
+      // never adopted. Its own selection goes first, adoption-only: rows the
+      // lineage already paid for are read, and nothing is bought by it.
+      {
+        // Drain-only: the pending runs' own questions and nothing else.
+        if (drainOnly) strategy.selections.length = 0;
+        const asked = new Set(strategy.selections.map((s) => `${s.actor_key}|${inputFingerprint(s.input ?? {})}`));
+        const owed: DiscoveryActorSelection[] = [];
+        for (const r of state.pending_runs) {
+          if (!r.selection || (r.capability !== cap && r.capability !== null)) continue;
+          const q = `${r.selection.actor_key}|${inputFingerprint(r.selection.input ?? {})}`;
+          if (asked.has(q)) continue;
+          asked.add(q);
+          const sel = structuredClone(r.selection);
+          owedSelections.set(sel, { run_id: r.run_id });
+          owed.push(sel);
+        }
+        if (owed.length > 0) {
+          log("discovery_pending_runs_reasked", {
+            capability: cap, runs: owed.map((sel) => owedSelections.get(sel)!.run_id),
+          });
+          strategy.selections.unshift(...owed);
+        }
+      }
+
       await executeSelections(strategy.selections);
+
+      // D3: AN ADOPTED PAGE IS A PAGE READ. Committed so no later replenishment
+      // proposes it again (it would only be adopted a second time).
+      for (const [sel, owed] of owedSelections) {
+        if (state.pending_runs.some((r) => r.run_id === owed.run_id)) continue;
+        const page = Number((sel.input as Record<string, unknown> | undefined)?.page ??
+          (sel.input as Record<string, unknown> | undefined)?.startPage);
+        if (Number.isInteger(page) && page > (pagesTaken[sel.actor_key] ?? 0)) {
+          pagesTaken[sel.actor_key] = page;
+          log("discovery_pending_page_committed", { actor: sel.actor_key, page, run_id: owed.run_id });
+        }
+      }
 
       // COMMIT, now that the provider layer has answered. A page the run only
       // considered leaves no attempt behind and moves nothing.
@@ -6237,7 +6367,8 @@ export async function runCapabilityPlan(
       // authority. Overwriting it with 1 is exactly how a resumed replenishment
       // would re-ask for page two.
       for (const k of actorsRun) pagesTaken[k] = pagesTaken[k] ?? 1;
-      for (let pass = 2; pass <= passLimit; pass++) {
+      // D3: a drain-only pass re-plans nothing — it only reads what was paid for.
+      for (let pass = 2; !drainOnly && pass <= passLimit; pass++) {
         if (candidateBudgetSpent()) {
           discoveryStop = "candidate_budget_spent";
           break;
@@ -6486,6 +6617,12 @@ export async function runCapabilityPlan(
             discoveryStop === "replan_unproductive",
           stop_reason: discoveryStop,
         };
+        // D3: A DRAIN-ONLY PASS SAYS NOTHING NEW ABOUT THE ROUTES. Only the
+        // pages it adopted move; whether discovery can still widen stays what
+        // the slice that asked those questions measured.
+        if (drainOnly && inheritedSourceState) {
+          state.discovery_source_state = { ...inheritedSourceState, pages_taken: { ...pagesTaken } };
+        }
         log("discovery_source_state", state.discovery_source_state);
       }
       // `state.company_keys` is DERIVED once, at the return. See the note there.

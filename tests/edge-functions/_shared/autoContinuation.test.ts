@@ -929,8 +929,10 @@ Deno.test("run-agent feeds the engine's own pending_runs into the decision", () 
   const RUN = Deno.readTextFileSync(
     new URL("../../../supabase/functions/run-agent/index.ts", import.meta.url),
   );
+  // The engine's own list, counted by `awaitedPendingRuns` — which only drops a
+  // run that has outlived its wait bound (D3, pendingRunWaitBound.test.ts).
   assert(
-    /pendingRuns:\s*\(capabilityRun\?\.state\.pending_runs\?\.length \?\? 0\) \+\s*\(capabilityRun\?\.state\.verifier_pending_runs\?\.length \?\? 0\)/.test(RUN),
+    /pendingRuns:\s*awaitedPendingRuns\(capabilityRun\?\.state\.pending_runs, Date\.now\(\)\)\.awaited \+\s*\(capabilityRun\?\.state\.verifier_pending_runs\?\.length \?\? 0\)/.test(RUN),
     "re-deriving the list is how the two components disagreed in the first place",
   );
 });

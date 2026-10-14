@@ -306,6 +306,37 @@ function searchExhausted(i: AutoContinuationInput, reason: "no_progress" | "fron
  * already charged for and cannot buy the same call twice. So waiting spends a
  * continuation, never a credit.
  */
+// ── D3: HOW LONG A PENDING RUN MAY HOLD THE LINEAGE ─────────────────────────
+//
+// `awaiting_provider_run` was bounded only by `continuationsUsed`: a run that
+// never finished — or one no slice ever asked again (Query B d22d9ee6, chaos
+// lab) — spent every continuation to the ceiling and ended the lineage
+// `budget_exhausted`. A run stops HOLDING the lineage once it has been asked
+// again and found still executing `PENDING_RUN_MAX_POLLS` times, or is older
+// than `PENDING_RUN_MAX_WAIT_MS`. It stays in `pending_runs`: a later slice
+// that asks its question still ADOPTS it — it is never bought again — but the
+// lineage's findings (an exhausted frontier, a barren streak) may be stated.
+
+/** Slices that asked a pending run again and found it still executing. */
+export const PENDING_RUN_MAX_POLLS = 5;
+/** Older than this, a pending run no longer holds the lineage whatever its polls. */
+export const PENDING_RUN_MAX_WAIT_MS = 60 * 60_000;
+
+export function awaitedPendingRuns(
+  runs: ReadonlyArray<{ polls?: number | null; started_at?: string | null }> | null | undefined,
+  nowMs: number,
+): { awaited: number; overdue: number } {
+  let awaited = 0;
+  let overdue = 0;
+  for (const r of runs ?? []) {
+    const started = r.started_at ? Date.parse(r.started_at) : NaN;
+    const tooOld = Number.isFinite(started) && nowMs - started > PENDING_RUN_MAX_WAIT_MS;
+    if ((r.polls ?? 0) >= PENDING_RUN_MAX_POLLS || tooOld) overdue++;
+    else awaited++;
+  }
+  return { awaited, overdue };
+}
+
 export function decideAutoContinuation(
   i: AutoContinuationInput,
 ): AutoContinuationDecision {
