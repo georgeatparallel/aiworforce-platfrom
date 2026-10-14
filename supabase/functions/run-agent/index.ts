@@ -955,8 +955,25 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // so the guard is given a writer that resolves it at announcement time.
   let guardPlanId: string | null = null;
   const guardDb = supabaseTerminalGuardDb(supabase as never);
+  // THE GUARD'S OWN WRITE IS FENCED TOO, once the slice knows its generation
+  // (`sliceFence`, set below). A stale worker that throws after another
+  // generation took the row over must not stamp its failure over the live
+  // generation's `running` row — the guard read "running", and wrote.
+  let guardFence: SliceFence | null = null;
   const terminalGuard = createRunTerminalGuard({
     ...guardDb,
+    writeTask: async (id, patch) => {
+      if (!guardFence) return guardDb.writeTask(id, patch);
+      const w = await fencedTaskUpdate(supabase as unknown as FencedTaskDb, id, guardFence, { requireOpen: false }, {
+        status: patch.status, error_message: patch.error_message, result: patch.result,
+      });
+      if (w.fenced) {
+        console.error("[run-agent][terminal-guard] refused: a newer generation owns the row", {
+          task_id: id, generation: guardFence.generation,
+        });
+      }
+      if (w.error) throw new Error(`terminal guard write failed: ${String((w.error as { message?: unknown }).message ?? "")}`);
+    },
     announceBlocked: async (message, record) => {
       if (!guardPlanId) return;
       const { data: planMsg } = await supabase.from("messages")
@@ -1536,6 +1553,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   const sliceFence: SliceFence = {
     generation: await resolveSliceGeneration(supabase as never, task.id, heldClaim?.checkpointVersion ?? null),
   };
+  guardFence = sliceFence;
 
   // THE ROW SAYS WHICH LINEAGE IT BELONGS TO. `tasks_one_live_generation_per_lineage`
   // is a unique index over exactly this column, so it is also the database's own
@@ -7230,10 +7248,24 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           }),
         });
         const sliceResultError = sliceResultWrite.error;
+        // ── SUPERSEDED: ANOTHER GENERATION OWNS THIS MISSION NOW ─────────────
+        //
+        // The fence refused this slice's verdict: a newer claim took the row (a
+        // stalled worker woke late) or something finalized it. Its result is
+        // not the mission's, so neither is anything that follows from it. The
+        // lineage lease is NOT released — the holder is the task id, which the
+        // live generation shares, so this release would clear ITS lease and
+        // write this slice's stale state (or a terminal verdict) over the
+        // lineage — no continuation is dispatched, the plan is not finalized,
+        // no panel is written, and the terminal guard stands down. What this
+        // slice actually bought stays on the execution ledger (below): that
+        // spend happened.
+        const sliceSuperseded = sliceResultWrite.fenced;
         if (sliceResultWrite.fenced) {
           console.error("[run-agent][slice-result] refused: a newer generation owns the row", {
             task_id: task.id, generation: sliceFence.generation,
           });
+          terminalGuard.disarm("fenced_stale_generation");
         }
         if (sliceResultError) {
           console.error("[run-agent][slice-result] persist failed", {
@@ -7289,7 +7321,12 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // job; writing it now costs nothing, exercises the compare-and-swap
         // against real traffic, and accumulates the state that migration will be
         // validated against.
-        if (holdsLease && leaseVersion !== null) {
+        if (sliceSuperseded && holdsLease) {
+          console.error("[run-agent][lineage] release skipped: this slice was superseded", {
+            task_id: task.id, lineage_id: lineageRootId, generation: sliceFence.generation,
+          });
+        }
+        if (holdsLease && leaseVersion !== null && !sliceSuperseded) {
           // PROGRESS IS WHAT THIS GENERATION ADDED, not what the lineage holds.
           // A slice that investigated nobody and verified nobody has not
           // advanced anything, and Phase 8 will use exactly this to stop a
@@ -7565,7 +7602,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             task_id: task.id, reason: autoDecision.reason, detail: autoDecision.detail,
           });
         }
-        if (autoDecision.continue && !deferToSweeper && !singleGeneration && !queueOwnsContinuation) {
+        if (autoDecision.continue && !deferToSweeper && !singleGeneration && !queueOwnsContinuation && !sliceSuperseded) {
           dispatchOutcome = await dispatchContinuation({
             resumeTaskId: task.id,
             workspaceId: workspace_id,
@@ -7807,7 +7844,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           console.log("[run-agent][ledger][stage-result-error]", String(e));
         }
 
-        await finalizeCompanyFirstPlan(supabase, plan_id, task.id, agent.id, workspace_id, statuses, cf.terminal_reason);
+        // A superseded slice's verdict is not the mission's: the live
+        // generation finalizes the plan and writes the panel.
+        if (!sliceSuperseded) {
+          await finalizeCompanyFirstPlan(supabase, plan_id, task.id, agent.id, workspace_id, statuses, cf.terminal_reason);
+        }
 
         // THE PANEL HAS TO BE PERSISTED, NOT JUST RETURNED.
         //
@@ -7863,7 +7904,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // than deriving a second answer. `panelResult` is re-read from the row
         // below, so it carries it.
 
-        await persistLeadResultsPanel(supabase, plan_id, uiPanel, {
+        if (!sliceSuperseded) await persistLeadResultsPanel(supabase, plan_id, uiPanel, {
           eligible: v2Outcome ? v2Outcome.delivered : cf.quota.eligible_leads,
           requested: v2Outcome ? v2Outcome.requested : cf.quota.requested_leads,
           deliverable: v2Outcome?.deliverable ?? "contact",
