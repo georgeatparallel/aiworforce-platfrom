@@ -56,6 +56,8 @@ permission error, not a silent purchase. CI runs the same command
 - `mission.ts` — whole golden missions: engine → verifiers → checkpoint → view → continuation → real queue SQL
 - `continuation.ts` — a canary's logged slice counters through `foldSlice` + `decideAutoContinuation`
 - `queue.ts` — PGlite running the production queue migrations, the production worker core and release
+- `lineage.ts` — a whole lineage slice by slice (`replayLineage`); its fold/decide/replenishment steps are exported for `chaos.ts`
+- `chaos.ts` — `ChaosLab`: a lineage through the production queue, worker runner, continuation claim, lineage lease, checkpoint writes and execution ledger, with faults injected (see **Failure injection**)
 
 ## Checkpoint replay
 
@@ -96,6 +98,42 @@ research fabric, Workbench view, task result and lineage state in bytes, with
 the number of whole-result rewrites. Byte counts only: database latency is not
 measurable offline.
 
+## Failure injection
+
+`failure/` (`[failure]`, counted by readiness as *Failure-injection lineages*)
+replays Query B d22d9ee6 and a9a6791a through `ChaosLab` — PGlite running the
+production queue, continuation-claim and lineage-lease SQL; the production
+worker runner, tick and release; checkpoint writes through the production
+progress guard; and a durable `lead_execution_calls` ledger that the
+production resume recovery (`recoverCompletedRuns`, `recoverPendingRuns`,
+`mergePendingRuns`) reads. `ChaosLab.handle` is the one written-out mirror of
+run-agent's slice sequence; `failure/sourceOrder.test.ts` pins its order and
+guards to run-agent's and the worker's source.
+
+Faults, each keyed by slice attempt: `stage_writes_lost`, `end_write_lost`,
+`worker_dies_after_engine`, `claim_release_fails` (57014 on every retry),
+`lineage_release_fails`; plus a stalled worker (`stalledWorker()`, lease lost
+mid-slice), a provider run still running at slice end (`pending_once`), and
+seeded fault schedules. Every scenario asserts: nothing bought twice; the queue
+settles; no claim or lease left held; task and lineage agree with the queue;
+attempts within `V2_MAX_ATTEMPTS`; the durable spend floor equals what was bought.
+
+Defects found here are pinned twice — a `[failure] … DEFECT REPRODUCED` test
+for today's behaviour and an ignored `[known-gap]` test for the fix:
+
+| | Defect | Where |
+|---|---|---|
+| D1 | A worker that stalls past its lease wakes after another worker finished the mission; its end-of-slice write (no prior-terminal check, unlike the stage writer) reopens the task to `ready / continuation_required` | `lineageFailureInjection` §3 |
+| D2 | A verifier purchase is deduped only by the checkpointed `spend_ledger`; a lost end-of-slice write (or a worker dying after verification) makes the next slice buy the same verification again, same idempotency key | `verificationLostWrite` |
+| D3 | A replenishment page still running at slice end is never adopted: the next decision is `awaiting_provider_run`, so no replenishment debt is passed and the page is never re-asked; the lineage waits to the continuation ceiling | `lineageFailureInjection` §6 |
+| D4 | The LAST slice's result write is lost: the lineage is released `terminal` from memory, the worker reads the stale row (`continuation_required`) and releases the queue `resumable`, and `claim_next_lead_mission` never claims a row whose lineage is terminal — the queue row is stranded and never reconciled | `lineageFailureInjection` §1, seeded schedules |
+
+Lab fidelity notes: `replayEngineSlice` passes the production `readPendingRun`
+(run-agent always does), so a pending provider run is adopted by run id; the
+recorded re-planner answers a re-run slice with the NEXT recorded query, as a
+live model would answer again, so faulted runs compare re-planned questions by
+count (`questionsOf`).
+
 ## Adding a fixture after a production bug
 
 1. Extract read-only (see `fixtures/queries/canary8.sql`): mission, ledger
@@ -125,3 +163,9 @@ measurable offline.
 - **Fixtures A and B** use the logged counters/shape: their task rows are no
   longer in production.
 - Known gap test: the funding evidence headline names the NEA event (display only).
+- **Failure injection:** the first slice losing EVERY write cannot resume
+  (409 `no_checkpoint`; the mission fails honestly with its paid calls
+  stranded); lost end-of-slice writes make the queue count real slices as
+  retries; a lost slice's model re-plan is asked again. a9a6791a is covered for
+  invariance only (its fixture has no grounding or verification answers), and
+  the funding screen is not replayed.

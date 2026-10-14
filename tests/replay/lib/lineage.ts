@@ -102,12 +102,79 @@ export function recordedGrounder(proven: Record<string, string>) {
 }
 
 /** The re-planner, recorded: the next query it has not yet been asked. */
-function recordedReplanner(queries: Array<Record<string, unknown>>) {
+export function recordedReplanner(queries: Array<Record<string, unknown>>) {
   let next = 0;
   return () => {
     const q = queries[next++];
     return Promise.resolve(q ? [{ actor_key: "apify_linkedin_job_search", role: "primary", input: structuredClone(q), rationale: `replay re-plan ${next}` }] : []);
   };
+}
+
+/**
+ * RUN-AGENT'S RULE: the next slice reopens discovery only when the last
+ * decision asked for it AND discovery said it could still widen — read from
+ * the previous slice's (checkpointed) engine state.
+ */
+export function replenishmentFrom(prevState: Record<string, unknown> | null | undefined, lastDecision: string | null): {
+  replenish?: Record<string, number>; replenishExtra?: Record<string, unknown>;
+} {
+  const dss = prevState?.discovery_source_state as
+    | { exhausted?: boolean; pages_taken?: Record<string, number>; page_fingerprints?: Record<string, string> }
+    | undefined;
+  const replenish = lastDecision === "replenishment_required" && dss && !dss.exhausted ? dss.pages_taken ?? {} : undefined;
+  return replenish ? { replenish, ...(dss?.page_fingerprints ? { replenishExtra: { page_fingerprints: dss.page_fingerprints } } : {}) } : {};
+}
+
+/** PHASE C, RECORDED: the website re-read answered these companies' route. */
+export function applyRecordedWebsiteReread(fx: LineageFixture, s: EngineSlice): void {
+  for (const key of fx.engine.model_responses.website_reread_no_proof ?? []) {
+    for (const holder of [...s.companies, ...(s.resume_records as Array<{ company_key?: string; key?: string; completed_operations?: string[] }>)]) {
+      const k = (holder as { key?: string }).key ?? (holder as { company_key?: string }).company_key;
+      if (k !== key) continue;
+      const ops = (holder as { completed_operations?: string[] }).completed_operations ??= [];
+      if (!ops.includes(verifyOpKey("firecrawl"))) ops.push(verifyOpKey("firecrawl"));
+    }
+  }
+}
+
+/** The end of one slice, as run-agent folds it: canonical view → `foldSlice` → `decideAutoContinuation`. */
+export function foldAndDecide(fx: LineageFixture, s: EngineSlice, progressBefore: LineageProgress, taskId: string) {
+  const mission = missionOf(fx);
+  const requested = effectiveRequestedCount(mission);
+  const view = canonicalView({ companies: s.companies }, mission, taskId, "job_discovery");
+  const p5 = decisionSummary(view.counts);
+  const progress = foldSlice(progressBefore, {
+    qualifiedInPool: p5.qualified,
+    uniqueCompaniesInvestigatedInPool: s.companies.filter((c: EngineCompany) => wasInvestigated(c.investigation_state)).length,
+    authorisationsInPool: Number(s.state.investigation_selected ?? 0),
+    costUnitsInLineage: Number(s.state.accumulated_cost_units ?? 0),
+    brainDecidedInPool: p5.qualified + p5.pending + p5.ineligible,
+    claimProgressInPool: claimProgressCount({
+      leads: view.leads, attemptedRoutesPerCompany: s.companies.map((c: EngineCompany) => attemptedRoutes(c.completed_operations).length),
+    }),
+  });
+  const ds = s.state.discovery_source_state as LineageSlice["discovery"];
+  const decision = decideAutoContinuation({
+    qualified: p5.qualified, verificationRoutesRemain: view.evidence_gaps.with_executable_route,
+    candidateBudgetBlocked: view.evidence_gaps.budget_blocked ?? 0, requestedCount: requested,
+    frontierRemaining: unfinishedFrontierCount(s.companies),
+    continuationsUsed: progress.continuations_used, maxContinuations: resolveMaxContinuations(),
+    costUnitsUsed: progress.cost_units_used, maxCostUnits: resolveMaxLineageCostUnits(),
+    barrenSlices: progress.barren_slices, providerFailed: false,
+    pendingRuns: ((s.state.pending_runs as unknown[] | undefined) ?? []).length,
+    discoveryRoutesRemain: ds ? !ds.exhausted : false,
+  } as never);
+  const terminal = d_terminal(decision, p5.qualified, requested, mission);
+  return { view, p5, progress, decision, ds, terminal };
+}
+
+function d_terminal(d: { continue: boolean; reason: unknown }, qualified: number, requested: number, mission: ReturnType<typeof missionOf>): string | null {
+  if (d.continue) return null;
+  return settleV2Outcome({
+    continuing: false, stopReason: String(d.reason), legacyStatus: "partial",
+    legacyQuota: { eligible_leads: qualified, requested_leads: requested },
+    canonicalQualified: qualified, requestedCount: requested, companyIsDeliverable: companyIsTheDeliverable(mission),
+  } as never).terminal;
 }
 
 export async function replayLineage(fx: LineageFixture, o: {
@@ -120,9 +187,7 @@ export async function replayLineage(fx: LineageFixture, o: {
   /** Extra engine dependencies (e.g. `onProgress` / `onCheckpoint` observers). */
   deps?: Record<string, unknown>;
 }): Promise<LineageRun> {
-  const mission = missionOf(fx);
   const taskId = o.taskId ?? fx.provenance.task_id;
-  const requested = effectiveRequestedCount(mission);
   const m = fx.engine.model_responses;
   const deps = {
     planDiscovery: recordedReplanner(m.replan_queries),
@@ -137,49 +202,17 @@ export async function replayLineage(fx: LineageFixture, o: {
   let view: WorkbenchMissionView | null = null;
 
   for (let i = 0; i < o.maxSlices; i++) {
-    const dss = prev?.state.discovery_source_state as
-      | { exhausted?: boolean; pages_taken?: Record<string, number>; page_fingerprints?: Record<string, string> }
-      | undefined;
-    // RUN-AGENT'S RULE: the next slice reopens discovery only when the last
-    // decision asked for it AND discovery said it could still widen.
-    const replenish = lastDecision === "replenishment_required" && dss && !dss.exhausted ? dss.pages_taken ?? {} : undefined;
     const callsBefore = 0; // each slice has its own fixture provider
     const s: EngineSlice = await replayEngineSlice(fx, {
       deps,
       ...(prev ? { resume: o.carry ? o.carry(prev) : { state: prev.state, records: prev.resume_records } } : {}),
-      ...(replenish ? { replenish, ...(dss?.page_fingerprints ? { replenishExtra: { page_fingerprints: dss.page_fingerprints } } : {}) } : {}),
+      ...replenishmentFrom(prev?.state, lastDecision),
     });
-    // PHASE C, RECORDED: the website re-read answered these companies' route.
-    for (const key of m.website_reread_no_proof ?? []) {
-      for (const holder of [...s.companies, ...(s.resume_records as Array<{ company_key?: string; key?: string; completed_operations?: string[] }>)]) {
-        const k = (holder as { key?: string }).key ?? (holder as { company_key?: string }).company_key;
-        if (k !== key) continue;
-        const ops = (holder as { completed_operations?: string[] }).completed_operations ??= [];
-        if (!ops.includes(verifyOpKey("firecrawl"))) ops.push(verifyOpKey("firecrawl"));
-      }
-    }
-    view = canonicalView({ companies: s.companies }, mission, taskId, "job_discovery");
-    const p5 = decisionSummary(view.counts);
-    progress = foldSlice(progress, {
-      qualifiedInPool: p5.qualified,
-      uniqueCompaniesInvestigatedInPool: s.companies.filter((c: EngineCompany) => wasInvestigated(c.investigation_state)).length,
-      authorisationsInPool: Number(s.state.investigation_selected ?? 0),
-      costUnitsInLineage: Number(s.state.accumulated_cost_units ?? 0),
-      brainDecidedInPool: p5.qualified + p5.pending + p5.ineligible,
-      claimProgressInPool: claimProgressCount({
-        leads: view.leads, attemptedRoutesPerCompany: s.companies.map((c: EngineCompany) => attemptedRoutes(c.completed_operations).length),
-      }),
-    });
-    const ds = s.state.discovery_source_state as LineageSlice["discovery"];
-    const d = decideAutoContinuation({
-      qualified: p5.qualified, verificationRoutesRemain: view.evidence_gaps.with_executable_route,
-      candidateBudgetBlocked: view.evidence_gaps.budget_blocked ?? 0, requestedCount: requested,
-      frontierRemaining: unfinishedFrontierCount(s.companies),
-      continuationsUsed: progress.continuations_used, maxContinuations: resolveMaxContinuations(),
-      costUnitsUsed: progress.cost_units_used, maxCostUnits: resolveMaxLineageCostUnits(),
-      barrenSlices: progress.barren_slices, providerFailed: false, pendingRuns: 0,
-      discoveryRoutesRemain: ds ? !ds.exhausted : false,
-    } as never);
+    applyRecordedWebsiteReread(fx, s);
+    const f = foldAndDecide(fx, s, progress, taskId);
+    view = f.view;
+    progress = f.progress;
+    const { p5, ds, decision: d } = f;
     lastDecision = String(d.reason);
     const qualifiedNames = view.leads.filter((l) => l.label !== null).map((l) => String(l.company.name)).sort();
     slices.push({
@@ -194,11 +227,7 @@ export async function replayLineage(fx: LineageFixture, o: {
     o.onSlice?.(i + 1, s, slices[slices.length - 1]);
     prev = s;
     if (!d.continue) {
-      terminal = settleV2Outcome({
-        continuing: false, stopReason: lastDecision, legacyStatus: "partial",
-        legacyQuota: { eligible_leads: p5.qualified, requested_leads: requested },
-        canonicalQualified: p5.qualified, requestedCount: requested, companyIsDeliverable: companyIsTheDeliverable(mission),
-      } as never).terminal;
+      terminal = f.terminal;
       break;
     }
   }

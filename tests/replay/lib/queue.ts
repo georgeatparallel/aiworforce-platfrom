@@ -45,10 +45,13 @@ export interface QueueRow { id: string; status: string; attempts: number; contin
 export class QueueLab {
   private constructor(readonly db: PGlite) {}
 
-  static async open(o: { migrations?: readonly string[] } = {}): Promise<QueueLab> {
+  static async open(o: { migrations?: readonly string[]; extraSql?: readonly string[] } = {}): Promise<QueueLab> {
     const db = new PGlite();
     await db.exec(PRELUDE);
     for (const m of o.migrations ?? QUEUE_MIGRATIONS) await db.exec(read(m));
+    // More production SQL over the same database (the continuation claim, the
+    // lineage lease), with whatever columns those functions read.
+    for (const sql of o.extraSql ?? []) await db.exec(sql);
     await db.query(`insert into public.workspaces (id) values ($1)`, [REPLAY_WORKSPACE]);
     return new QueueLab(db);
   }
