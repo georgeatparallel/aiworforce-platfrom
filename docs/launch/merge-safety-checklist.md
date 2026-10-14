@@ -19,21 +19,29 @@ outside it, so only a person with access can confirm them.
 
 ## Verify in each dashboard (read-only; change nothing)
 
-| Where | Look at | Safe to merge when |
-|---|---|---|
-| **Railway** → the worker service → Settings → Source | Connected repo and **branch**; "Wait for CI"; auto-deploy on/off | The branch is **not** `launch/hardening` (last recorded 2026-09-29: `feat/lead-mission-v2-worker`), or auto-deploy is off |
-| **Railway** → the worker service → Variables (names only) | `LEAD_V2_WORKER_WORKSPACES` | Record whether it is set. If it is set and Railway follows `launch/hardening`, a merge restarts a live, allowlisted worker |
-| **Netlify** → Site configuration → Build & deploy → Branches and deploy contexts | **Production branch**; branch deploys | The production branch is **not** `launch/hardening`. Deploy previews on PRs are fine; they don't touch production |
-| **Supabase** (project `ohsdatpvfdjdemstoiuj`) → Project Settings → Integrations → GitHub | Connected repo; production branch; "deploy to production" / automatic branching | No GitHub integration, or it does not follow `launch/hardening` |
-| **Lovable** (if connected) | Which repo and branch it builds from | It follows `main` of the production-connected repo (per `supabase/migrations-held/README.md`), not `launch/hardening` |
+`launch/hardening` is the repository's **default branch**, so any service
+connected with default settings follows it.
 
-**If every row is safe,** merging into `launch/hardening` runs CI and nothing
-else.
+| Where | Status | Evidence needed | Safe to merge runtime changes when |
+|---|---|---|---|
+| **Supabase** native GitHub integration (project `ohsdatpvfdjdemstoiuj` → Project Settings → Integrations → GitHub) | **VERIFIED DISCONNECTED, 2026-10-14** (checked by the owner: the page shows "Connect GitHub", no repository) | done | — |
+| **Railway** → the worker service → Settings → Source | trial expired; branch **unverified** | screenshot of Source (repo, branch, automatic deployments, "Wait for CI") and of the Deployments list (latest deployment, its commit, status) | auto-deploy is off, or the branch is not `launch/hardening` (last recorded 2026-09-29: `feat/lead-mission-v2-worker`). A reactivated trial would otherwise deploy the branch head |
+| **Railway** → Variables (names only) | unverified | whether `LEAD_V2_WORKER_WORKSPACES` is set (value not needed) | recorded, so a reactivation is not a surprise |
+| **Netlify** → Site configuration → Build & deploy → Continuous deployment | production deploys paused (credits exhausted); production branch **unverified** | screenshot of "Branches and deploy contexts" (production branch, branch deploys, deploy previews) and of "Build settings" (builds active or stopped) | the production branch is not `launch/hardening`, or builds are stopped. When credits return, Netlify builds the production branch's head |
+| **GitHub** → repository Settings → GitHub Apps, and Settings → Webhooks | **unverified** (the catch-all for anything else that deploys on push: Vercel, Render, Railway or Netlify apps, Lovable, custom hooks) | screenshot of both lists | nothing there deploys from `launch/hardening`, or each one has been checked as above |
+| **Lovable** (if listed under GitHub Apps) | unverified | the project's GitHub connection (repo, branch) | it does not build from this repository's `launch/hardening` |
 
-**If any row follows `launch/hardening`, stop:** either repoint it first or
-pause its auto-deploy. Even a test-only merge would rebuild and restart that
-service. The artifact would be identical, since no runtime file changes, but
-a worker restart is still a production event.
+**Not proof that every deployment is disabled.** The Supabase result covers
+the native integration only. Other ways to deploy remain and need no merge:
+- the manual `deploy-held-back-functions.yml` (it asks for the release SHA to
+  be typed);
+- the Supabase CLI or MCP from any machine holding an access token.
+Neither runs on a merge.
+
+**Tier 0 (below) changes no deployable file**, and today neither Railway
+(expired) nor Netlify (paused) can build. So Tier 0 needs only approval.
+**Tier 1 (runtime) waits for the Railway, Netlify and GitHub Apps/Webhooks
+rows.**
 
 ## Merge order (each needs approval, and green CI on its head at merge time)
 
@@ -47,6 +55,7 @@ a worker restart is still a production event.
 | 4 | #87 | this checklist, the test-worker proposal, the guarded test-schema build | |
 | 5 | #74 | Codex G5 funding replay (tests) | |
 | 6 | #75 | Codex quality benchmark (tests) | |
+| 7 | #89 | Codex mission evaluation and smoke acceptance (tests only, `tests/replay/evaluation/`) | independent; imports exist on the base. 36 tests pass on the full integrated tree |
 
 **Tier 1: runtime code.** Edge functions deploy only through the manual
 workflow, so merging changes what a *future* deploy would ship, not what
@@ -54,14 +63,14 @@ runs now.
 
 | Order | PR | What | Note |
 |---|---|---|---|
-| 7 | #79 | stale-generation fencing | |
-| 8 | #81 | ledger recovery gaps, uncertain starts in mission spend | |
-| 9 | #88 | hold the credit of an uncertain Apify start | stacked on #81: retarget after #81 merges |
-| 10 | #78 | Codex: customer context vs vendor offering evidence | independent (`businessModelMatch.ts`) |
-| 11 | #83 | Codex: stop repeating answered-empty enrichment | touches `leadCapabilityEngine.ts`, merges cleanly with #77 |
-| 12 | #77 | funding-screen recovery | **last runtime PR:** merge `launch/hardening` in, cherry-pick `66aed203` (adapts #74/#75's harnesses), green CI, then merge |
-| 13 | #80 | Codex accuracy benchmark | stacked on #78: retarget after #78 merges |
-| 14 | #84 | Codex efficiency benchmark | stacked on #83: retarget after #83 merges |
+| 8 | #79 | stale-generation fencing | |
+| 9 | #81 | ledger recovery gaps, uncertain starts in mission spend | |
+| 10 | #88 | hold the credit of an uncertain Apify start | stacked on #81: retarget after #81 merges |
+| 11 | #78 | Codex: customer context vs vendor offering evidence | independent (`businessModelMatch.ts`) |
+| 12 | #83 | Codex: stop repeating answered-empty enrichment | touches `leadCapabilityEngine.ts`, merges cleanly with #77 |
+| 13 | #77 | funding-screen recovery | **last runtime PR:** merge `launch/hardening` in, cherry-pick `66aed203` (adapts #74/#75's harnesses), green CI, then merge |
+| 14 | #80 | Codex accuracy benchmark | stacked on #78: retarget after #78 merges |
+| 15 | #84 | Codex efficiency benchmark | stacked on #83: retarget after #83 merges |
 
 **Never a merge target:** #85, the draft integration preview, which exists
 only for CI on the combined tree.

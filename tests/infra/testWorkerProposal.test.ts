@@ -55,7 +55,11 @@ Deno.test("test worker: spend controls are set, fail-closed, and never from prod
   assertEquals(env.MODEL_SPEND_ENFORCEMENT, "enforce");
   assert(Number(env.LEAD_V2_MISSION_PROVIDER_USD_CAP) > 0 && Number(env.LEAD_V2_MISSION_PROVIDER_USD_CAP) <= 0.25);
   assert(Number(env.LEAD_V2_MISSION_CREDIT_CAP) > 0 && Number(env.LEAD_V2_MISSION_CREDIT_CAP) <= 10);
-  assertEquals(env.LEAD_WORKER_MAX_RUNTIME_MS, "300000");
+  assert(Number(env.LEAD_WORKER_MAX_RUNTIME_MS) > 0 && Number(env.LEAD_WORKER_MAX_RUNTIME_MS) <= 300000);
+  assert(Number(env.MODEL_SPEND_CEILING_USD) > 0 && Number(env.MODEL_SPEND_CEILING_USD) <= 1);
+  assert(Number(env.MODEL_RUN_MAX_CALLS) > 0, "set, so the per-slice model-call bound is on");
+  // Exactly 1: a value below 1 (including 0) is ignored and falls back to 10 continuations.
+  assertEquals(env.LEAD_MAX_AUTO_CONTINUATIONS, "1", "at most two slices");
   for (const [k, v] of Object.entries(env)) {
     if (!String(v).includes("secrets.")) continue;
     assert(/secrets\.TEST_[A-Z_]+/.test(String(v)), `${k} must come from a TEST_ secret`);
