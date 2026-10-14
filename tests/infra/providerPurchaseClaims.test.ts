@@ -109,3 +109,16 @@ Deno.test("purchase claims: PROPOSED only — not in the synced migrations, and 
     "supabase/functions/run-agent/index.ts", "worker/main.ts"].map(read).join("\n");
   assert(!runtime.includes("claim_provider_purchase"), "wiring it is a separate, approved change");
 });
+
+Deno.test("purchase claims: no tool applies it — the local rebuild and the contract lane list their held files explicitly, and no workflow names it", () => {
+  const exists = (rel: string) => { try { Deno.statSync(new URL(rel, ROOT)); return true; } catch { return false; } };
+  for (const rel of ["scripts/local-supabase/rebuild-local-db.sh", "tests/db-contract/bootstrap.sh"]) {
+    if (!exists(rel)) continue;
+    const src = read(rel);
+    assert(!src.includes("provider_purchase_claims"), `${rel} applies the proposal`);
+    assert(!/migrations-held\/\*|"\$HELD"\/\*\.sql|\$held\/\*\.sql/.test(src), `${rel} globs the held directory`);
+  }
+  for (const e of Deno.readDirSync(new URL(".github/workflows/", ROOT))) {
+    assert(!read(`.github/workflows/${e.name}`).includes("provider_purchase_claims"), e.name);
+  }
+});

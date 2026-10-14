@@ -12,6 +12,7 @@ Each section gives the failure, the proposal, and what proves it.
 | 3 | Mission ceilings undercount after a lost write when no operator cap is set | Overspend past a ceiling | Budget-enforcement decision | Proposal |
 | 4 | An Apify run started but its id was never recorded | Billing loss, held unresolved | Provider-side reconciliation | Proposal |
 | 5 | Credits refunded for a start that may have created a run | Billing loss | Billing-policy decision | Proposal |
+| 6 | A refunded credit key that is later really bought is charged 0 | Billing loss (uncharged purchase) | Migration to `credits_reserve` | Proposal; reproduced on real SQL |
 
 ## 1. One buyer per idempotency key (`provider_purchase_claims`)
 
@@ -113,3 +114,27 @@ It needs provider read access in a scheduled job, which is new infrastructure, a
 Charging it instead (or holding the reservation until reconciliation, §4) is a **billing-policy** decision. Today the user is never charged for something that may not have run; the cost is ours.
 
 **Recommendation.** Hold the reservation as `reserved` (neither charged nor refunded) until reconciliation decides it, with a time limit after which it is refunded.
+
+## 6. A refunded credit key is replayed, and the real purchase goes uncharged
+
+`credits_reserve` returns the EXISTING transaction for a repeated
+`(workspace, idempotency_key)`, whatever its status. A reservation that was
+refunded (`released`: the call did not start, or its start was uncertain) is
+therefore replayed for a later attempt under the same key, and
+`credits_finalize` on that released transaction charges 0. A second attempt
+that really starts a run is never charged.
+
+Reproduced on the real credit SQL through the production module
+(`creditAuthorization.ts`): `tests/db-contract/ledgerSpend.contract.test.ts`,
+`[known-gap]`, runs with `RUN_KNOWN_GAPS=1`. Pre-existing — any refunded
+failure followed by a retry under the same key — and narrowed by #81 for
+verifier purchases (D2 no longer re-buys an uncertain start), not closed for
+discovery retries.
+
+**Proposal (migration):** in `credits_reserve`, when the existing transaction
+is `released`, re-reserve it under the same key — move it back to `reserved`,
+take `p_amount` from the balance, and return `replayed: false` — so the retry
+is reserved and settled like a first attempt. A `committed` (charged) or
+`reserved` transaction keeps replaying as today. Test: the known-gap test
+above flips to passing; a `committed` key still replays without a second
+charge. It changes what a workspace is charged, so it needs billing approval.
