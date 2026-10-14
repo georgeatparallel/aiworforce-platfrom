@@ -34,7 +34,7 @@ import type { CompanyEvidenceGraph } from "./evidenceGraph.ts";
 import { canStillQualify, evidenceGapsFor, type ClaimDefinition, CLAIM_REGISTRY } from "./evidenceGapRouter.ts";
 import { PRODUCTION_READINESS, type ReadinessPolicy } from "./routeReadiness.ts";
 import type { TraceEventType } from "./missionTrace.ts";
-import { type PriorPurchases, uncertainStillSettling } from "./verifierPurchaseRecovery.ts";
+import { APIFY_START_UNCERTAIN, type PriorPurchases, uncertainStillSettling } from "./verifierPurchaseRecovery.ts";
 
 export const CLAIM_VERIFIER_VERSION = "claim-verifier-v1" as const;
 
@@ -511,10 +511,18 @@ export function ledgerBoundCall(d: LedgerCallDeps): (c: VerifierCall) => Promise
         d.onRefused?.(c.actor_key, message.slice(0, 160));
         return { status: "refused", reason: message.slice(0, 160) };
       }
-      // A run that started is paid for, whatever it returned.
-      if (runId) { if (buying) markExecuted(d.ledger, key, estimate); }
+      // A run that started is paid for, whatever it returned. So, possibly,
+      // is a start whose answer was lost (`APIFY_START_UNCERTAIN`: our abort,
+      // a dropped connection, a 5xx after Apify created the run): it keeps its
+      // reservation, so the mission's ceilings count what it may have cost and
+      // this slice cannot buy the same call again. Only the spend ledger —
+      // credit settlement is unchanged (a billing decision, #82 §5).
+      const uncertainStart = !runId && message.includes(APIFY_START_UNCERTAIN);
+      if (runId || uncertainStart) { if (buying) markExecuted(d.ledger, key, estimate); }
       else if (buying) release(d.ledger, key);
-      trace("call_failed", { run_id: runId, paid: !!runId, detail: message.slice(0, 160) });
+      trace("call_failed", {
+        run_id: runId, paid: !!runId, ...(uncertainStart ? { possibly_paid: true } : {}), detail: message.slice(0, 160),
+      });
       return { status: "failed", reason: message.slice(0, 160) };
     }
   };

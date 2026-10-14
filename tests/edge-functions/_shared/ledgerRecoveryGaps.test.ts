@@ -439,3 +439,48 @@ Deno.test("credits still settle on a run id: an uncertain start carries none, so
   const block = reg.slice(i, reg.indexOf("// ── PERSIST BEFORE WAITING", i));
   assertFalse(block.includes("data:"), "the uncertain result adds no data (no run id), so `started` is what it was");
 });
+
+// ── THE SPEND LEDGER COUNTS AN UNCERTAIN START ──────────────────────────────
+// Review follow-up: `ledgerBoundCall` released the reservation of a start whose
+// answer was lost, so the mission's ceilings forgot a run that may have been
+// billed — and the same slice could have bought it again. It now stays executed.
+import { ledgerBoundCall as lbc, type VerifierCall as VC } from "../../../supabase/functions/_shared/claimVerifier.ts";
+import { DEFAULT_CEILINGS as DC, newSpendLedger as nsl } from "../../../supabase/functions/_shared/budgetPolicy.ts";
+import { verifierSpecCompiler as vsc } from "../../../supabase/functions/_shared/verifierCallSpec.ts";
+import { criteriaExecutionPolicy as cep } from "../../../supabase/functions/_shared/criteriaExecutionPolicy.ts";
+import { guardedInvoker as gi } from "../../../supabase/functions/_shared/leadMissionRuntime.ts";
+import { hiringActorCard as hac } from "../../../supabase/functions/_shared/hiringActorCatalog.ts";
+import { parseLeadMissionDeterministic as plm } from "../../../supabase/functions/_shared/leadMission.ts";
+import { readinessPolicy as rp } from "../../../supabase/functions/_shared/routeReadiness.ts";
+
+function spendHarness(error: string) {
+  const readiness = rp({ allow_experimental: ["apify_funding_pvalyou|funding_verification"] });
+  const ledger = nsl({ ...DC });
+  const sent: unknown[] = [];
+  const call = lbc({
+    ledger,
+    spec: vsc({ scope: { workspace_id: "ws", lineage_id: "ln" }, mission_hash: "mh",
+      policy: cep(plm("Find seed-stage B2B SaaS companies")), ceilings: () => ledger.ceilings, readiness }),
+    actorIdFor: (k) => hac(k)?.actor_id ?? null,
+    // The transport's error, as run-agent's invoker throws it.
+    invoke: gi(null, (c: unknown) => { sent.push(c); return Promise.reject(new Error(error)); }, undefined, readiness),
+    hash: () => "h",
+  });
+  const vc: VC = { actor_key: "apify_funding_pvalyou", capability: "funding_verification", input: { tier: "basic", companies: ["a.com"] },
+    candidate_keys: ["a.com"], purpose: "funding_evidence" };
+  return { ledger, sent, call: () => call(vc) };
+}
+
+Deno.test("1 an UNCERTAIN start keeps its reservation: the mission's ceilings count it, and this slice never buys it again", async () => {
+  const h = spendHarness(`${APIFY_START_UNCERTAIN}:0`);
+  assertEquals((await h.call()).status, "failed");
+  assertEquals(h.ledger.reservations.map((r) => r.status), ["executed"], "possibly paid: counted");
+  assertEquals((await h.call()).status, "failed");
+  assertEquals(h.sent.length, 1, "the second ask is an idempotent skip, not a second start");
+});
+
+Deno.test("1 a DEFINITE refusal (4xx) still releases its reservation: nothing was bought", async () => {
+  const h = spendHarness("apify_start_failed:400");
+  assertEquals((await h.call()).status, "failed");
+  assertEquals(h.ledger.reservations.map((r) => r.status), ["released"]);
+});
