@@ -34,14 +34,21 @@ export interface SliceFence {
   generation: number | null;
 }
 
-/** The slice of the PostgREST builder the fenced write uses — a fake in tests. */
-export interface FencedTaskQuery {
+/**
+ * The slice of the PostgREST builder the fenced write uses — a fake in tests.
+ *
+ * COUNTED, NOT SELECTED. PostgREST applies a logical `or` filter to the
+ * RETURNING projection: `?or=(result->>terminal_status…)&select=id` fails with
+ * 42703 "column tasks.result does not exist" (verified against PostgREST
+ * 12.2.3), which would have failed every open-row write. `count: "exact"` with
+ * no representation returns the number of rows updated and no payload.
+ */
+export interface FencedTaskQuery extends PromiseLike<{ error: { message?: unknown; code?: unknown } | null; count: number | null }> {
   eq(column: string, value: unknown): FencedTaskQuery;
   or(filters: string): FencedTaskQuery;
-  select(columns: string): PromiseLike<{ data: unknown[] | null; error: { message?: unknown; code?: unknown } | null }>;
 }
 export interface FencedTaskDb {
-  from(table: string): { update(patch: Record<string, unknown>): FencedTaskQuery };
+  from(table: string): { update(patch: Record<string, unknown>, opts: { count: "exact" }): FencedTaskQuery };
 }
 
 export type FencedWriteOutcome =
@@ -64,14 +71,16 @@ export async function fencedTaskUpdate(
   },
   patch: Record<string, unknown>,
 ): Promise<FencedWriteOutcome> {
-  let q = db.from("tasks").update(patch).eq("id", taskId);
+  let q = db.from("tasks").update(patch, { count: "exact" }).eq("id", taskId);
   if (typeof fence.generation === "number") q = q.eq("checkpoint_version", fence.generation);
   if (opts.requireOpen) q = q.or(OPEN_RESULT_FILTER);
-  const { data, error } = await q.select("id");
+  const { error, count } = await q;
   if (error) return { written: false, fenced: false, error };
-  return (data ?? []).length > 0
-    ? { written: true, fenced: false, error: null }
-    : { written: false, fenced: true, error: null };
+  // An absent count (never with `count: "exact"`) is read as written: the old,
+  // unfenced behaviour, rather than a false refusal of a write that landed.
+  return count === 0
+    ? { written: false, fenced: true, error: null }
+    : { written: true, fenced: false, error: null };
 }
 
 /** The slice's generation: the claim's `checkpoint_version`, else the row's own (a first slice). */

@@ -294,7 +294,7 @@ export class ChaosLab {
     const db = this.lab.db;
     return {
       from: (table: string) => ({
-        update: (patch: Record<string, unknown>) => {
+        update: (patch: Record<string, unknown>, _opts: { count: "exact" }) => {
           const where: string[] = [];
           const params: unknown[] = [];
           const set = Object.keys(patch).map((k) => {
@@ -308,11 +308,10 @@ export class ChaosLab {
               where.push(`(result->>'terminal_status' is null or result->>'terminal_status' = 'continuation_required')`);
               return q;
             },
-            select: async () => {
-              const r = await db.query<{ id: string }>(
-                `update public.${table} set ${set.join(", ")}, updated_at = now() where ${where.join(" and ")} returning id`, params);
-              return { data: r.rows, error: null };
-            },
+            // Counted, as PostgREST answers `count: "exact"`: the rows updated, no payload.
+            then: (resolve, reject) => db.query(
+              `update public.${table} set ${set.join(", ")}, updated_at = now() where ${where.join(" and ")}`, params,
+            ).then((r) => ({ error: null, count: r.affectedRows ?? 0 })).then(resolve, reject),
           };
           return q;
         },
