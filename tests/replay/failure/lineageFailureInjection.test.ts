@@ -147,27 +147,6 @@ function lReplayQuestions(): Promise<string[]> {
   return baselineQuestions;
 }
 
-/**
- * D4 — THE LAST SLICE'S LOST RESULT WRITE STRANDS THE QUEUE ROW. The slice
- * released its lineage `terminal` from what it knew in memory, but the worker
- * reads the outcome from the task row, which still carries the previous
- * slice's `continuation_required`, so it releases the queue `resumable`, and
- * `claim_next_lead_mission` never claims a row whose lineage is terminal.
- */
-function isD4(s: Settled): boolean {
-  const last = s.lab.runs.at(-1);
-  return s.queue.status === "resumable" && s.lineage?.status === "terminal" && !!last &&
-    s.lab.events.some((e) => e.attempt === last.attempt && e.at === "end_write_lost");
-}
-/** What still holds when D4 strikes: nothing bought twice, nothing left held, the floor exact. */
-function assertD4Contained(s: Settled, label: string) {
-  assertEquals(s.lab.duplicatePurchases(), [], `${label}: a question was bought twice`);
-  assertEquals(s.queue.claimed_by, null, `${label}: the queue row is still claimed`);
-  assertFalse(s.claimHeld, `${label}: a continuation claim was left held`);
-  assertEquals(s.lineage?.lease_holder ?? null, null, `${label}: the lineage lease was left held`);
-  assertEquals(s.lab.runs.at(-1)?.terminal, "search_exhausted", `${label}: the last slice did finish the mission`);
-  assertEquals(s.lab.reconciled.length, 0, `${label}: no terminal release, so nothing reconciled`);
-}
 const runsOf = (s: Settled) => s.lab.runs.map((r) => r.http === 200 ? String(r.decision) : `${r.http}:${r.reason}`);
 
 // ══════════════════════════════════════════════════════════════ baseline ══
@@ -218,28 +197,23 @@ Deno.test("[failure] 1 EVERY WRITE of the FIRST slice is lost: nothing can resum
   assertEquals(s.lab.purchases().length, 3);
 });
 
-Deno.test("[failure] 1 D4 DEFECT REPRODUCED — the LAST slice's result write is lost: the lineage ends terminal but the queue row is released resumable and is never claimed or settled again", async () => {
+// D4 (fixed): the last slice released its lineage `terminal`, but its result
+// write was lost, so the task row still read the previous slice's
+// `continuation_required`. The worker used to release the queue `resumable`
+// from that row, and `claim_next_lead_mission` never claims a row whose
+// lineage is terminal: the queue, task and plan were stranded for ever. The
+// worker now asks the lineage row, which decides, as it does for the claim.
+Deno.test("[failure] 1 D4 the LAST slice's result write is lost: the terminal lineage ends the mission — queue, task and lineage settle on the slice's own verdict", async () => {
   const s = await d22([{ kind: "end_write_lost", attempt: 3 }]);
-  assert(isD4(s), `not the D4 signature: queue ${s.queue.status}, lineage ${s.lineage?.status}`);
-  assertD4Contained(s, "end_write_lost@3");
-  // The worker read the previous slice's row …
-  assertEquals((s.queue as unknown as { last_outcome: { status: string } }).last_outcome.status, "continuation_required");
-  // … the claim release had already marked the task `complete` from memory …
-  assertEquals([s.task?.status, s.terminal], ["complete", "continuation_required"],
-    "today — if this fails, D4 is fixed: enable the [known-gap] test below and delete this one");
-  // … and nothing will claim the row again: the lineage row is the authority.
-  const t = await s.lab.tick();
-  assertEquals([t.claimed, t.reason], [false, "no_eligible_mission"]);
-});
-
-Deno.test({
-  name: "[known-gap] D4 a lost last-slice result write still settles the queue, task and lineage on the same ending",
-  ignore: true,
-  fn: async () => {
-    const s = await d22([{ kind: "end_write_lost", attempt: 3 }]);
-    assertSettledConsistently(s, "end_write_lost@3");
-    assertEquals(s.terminal, "search_exhausted");
-  },
+  assertSettledConsistently(s, "end_write_lost@3");
+  assertEquals(s.terminal, "search_exhausted", "the lineage's verdict, not the stale row's");
+  assertEquals(s.lab.runs.length, 3, "no extra slice: nothing re-ran, nothing was re-bought");
+  assertEquals(purchaseKeys(s), await lReplayPurchases());
+  assertEquals([s.queue.status, s.queue.attempts, s.queue.continuations], ["complete", 1, 2]);
+  // The worker's terminal reconciliation repaired the task row from the queue's ending.
+  const fix = s.lab.reconciled.at(-1)!;
+  assert(fix.violations.includes("task.terminal_status=continuation_required"), fix.violations.join(", "));
+  assertEquals(fix.remaining, []);
 });
 
 // ═══════════════════════════════════════ 2–3. worker death, lease expiry, reclaim ══
@@ -270,23 +244,36 @@ Deno.test("[failure] 3 a STALLED worker loses its lease mid-slice: another worke
   assertEquals(stalled.find((e) => e.at === "lineage_release")?.detail?.reason, "not_lease_holder");
 });
 
-Deno.test("[failure] 3 D1 DEFECT REPRODUCED — the stalled worker wakes after the mission finished and its end-of-slice write REOPENS the task (queue complete, lineage terminal, task continuation_required)", async () => {
+// D1. The stale write is unfenced: it lands over the finished mission's
+// result. Since D4 the stale worker's own (refused) queue release reads the
+// terminal lineage and its terminal reconciliation puts the STATUS back — but
+// the result it wrote is slice 2's, not the finished slice's.
+Deno.test("[failure] 3 D1 DEFECT REPRODUCED — the stalled worker wakes after the mission finished and its end-of-slice write OVERWRITES the finished result with its stale slice", async () => {
   const s = await stalledTakeover();
   assertEquals([s.queue.status, s.lineage?.status], ["complete", "terminal"]);
-  assertEquals([s.task?.status, s.terminal], ["ready", "continuation_required"],
-    "today: the stale write lands — if this fails, D1 is fixed: enable the [known-gap] test below and delete this one");
+  // The status is repaired (D4: the lineage decides, the reconciliation writes) …
+  assertEquals(s.terminal, "search_exhausted");
+  // … but the finished slice's execution state was replaced by the stale slice's.
+  const attempts = (r: Record<string, unknown> | null | undefined) =>
+    ((r?.capability_execution_state ?? {}) as { provider_attempts?: unknown[] }).provider_attempts?.length ?? 0;
+  assert(attempts(s.task?.result) < attempts(finishedResult),
+    `today: the stale write lands (${attempts(s.task?.result)} < ${attempts(finishedResult)} provider attempts) — ` +
+    "if this fails, D1 is fixed: enable the [known-gap] test below and delete this one");
 });
 
 Deno.test({
-  name: "[known-gap] D1 a stale generation's end-of-slice write never reopens a finished mission's task",
+  name: "[known-gap] D1 a stale generation's end-of-slice write never lands over a finished mission's result",
   ignore: true,
   fn: async () => {
     const s = await stalledTakeover();
     assertSettledConsistently(s, "stalled takeover");
+    assertEquals(s.task?.result?.capability_execution_state, finishedResult?.capability_execution_state);
   },
 });
 
 let stalled: Promise<Settled> | null = null;
+/** The task result as the mission finished, before the stalled worker woke. */
+let finishedResult: Record<string, unknown> | null | undefined;
 function stalledTakeover(): Promise<Settled> {
   stalled ??= (async () => {
     const lab = await ChaosLab.open(D22());
@@ -295,6 +282,7 @@ function stalledTakeover(): Promise<Settled> {
     const a = await lab.stalledWorker();    // worker A: slice 2 computed, end write pending
     await lab.advance(400);                 // A's queue lease, lineage lease and claim all expire
     await lab.runToSettle();                // worker B reclaims and finishes the mission
+    finishedResult = (await lab.taskRow())?.result;
     await a.resume();                       // A wakes and completes its slice
     const task = await lab.taskRow();
     return {
@@ -412,9 +400,6 @@ for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
   const faults = schedule(seed);
   Deno.test(`[failure] 7–8 seeded schedule ${seed} ${JSON.stringify(faults.map((f) => `${f.kind}@${f.attempt}`))}: nothing bought twice; queue, task, lineage, claim and ledger agree`, async () => {
     const s = await d22(faults);
-    // A schedule that loses the LAST slice's result write hits D4 (below):
-    // asserted as the defect it is, with every invariant that still holds.
-    if (isD4(s)) return assertD4Contained(s, `seed ${seed} (D4)`);
     assertSettledConsistently(s, `seed ${seed}`);
     if (s.queue.status === "complete") {
       assertEquals(s.terminal, "search_exhausted");

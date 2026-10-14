@@ -123,10 +123,10 @@ for today's behaviour and an ignored `[known-gap]` test for the fix:
 
 | | Defect | Where |
 |---|---|---|
-| D1 | A worker that stalls past its lease wakes after another worker finished the mission; its end-of-slice write (no prior-terminal check, unlike the stage writer) reopens the task to `ready / continuation_required` | `lineageFailureInjection` §3 |
+| D1 | A worker that stalls past its lease wakes after another worker finished the mission; its end-of-slice write (no prior-terminal check, unlike the stage writer) lands over the finished result. Since D4 the status is repaired by the stale worker's own terminal reconciliation, but the result content is the stale slice's | `lineageFailureInjection` §3 |
 | D2 | A verifier purchase is deduped only by the checkpointed `spend_ledger`; a lost end-of-slice write (or a worker dying after verification) makes the next slice buy the same verification again, same idempotency key | `verificationLostWrite` |
 | D3 | A replenishment page still running at slice end is never adopted: the next decision is `awaiting_provider_run`, so no replenishment debt is passed and the page is never re-asked; the lineage waits to the continuation ceiling | `lineageFailureInjection` §6 |
-| D4 | The LAST slice's result write is lost: the lineage is released `terminal` from memory, the worker reads the stale row (`continuation_required`) and releases the queue `resumable`, and `claim_next_lead_mission` never claims a row whose lineage is terminal — the queue row is stranded and never reconciled | `lineageFailureInjection` §1, seeded schedules |
+| D4 (fixed) | The LAST slice's result write is lost: the lineage is released `terminal` from memory, the worker read the stale row (`continuation_required`) and released the queue `resumable`, and `claim_next_lead_mission` never claims a row whose lineage is terminal — the queue row was stranded. The worker now asks the lineage row when the task row says the run did not end (`mapTaskOutcome(row, lineage)`); the terminal release reconciles task and plan to the lineage's verdict | `lineageFailureInjection` §1, seeded schedules |
 
 Lab fidelity notes: `replayEngineSlice` passes the production `readPendingRun`
 (run-agent always does), so a pending provider run is adopted by run id; the
