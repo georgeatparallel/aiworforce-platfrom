@@ -1,0 +1,51 @@
+{
+  "schema": "controlled-discovery-smoke-proposal-v1",
+  "status": "PROPOSAL_ONLY_NOT_AUTHORIZED_TO_RUN",
+  "query": "Find 1 US B2B software company with 11–50 employees that is currently hiring an Account Executive.",
+  "eligibility": {
+    "industry": "Actual software product sold to business customers, supported by first-party product/customer/activity evidence and mandatory grounded verification. Broad industry category alone is insufficient.",
+    "geography": "Verified company headquarters in the United States; a US job location alone is insufficient.",
+    "company_size": "Current, provider-declared 11–50 employee band from company record; LinkedIn associated-member count is informational. Missing or contradictory size evidence stays UNKNOWN.",
+    "hiring": "Dated, currently open Account Executive posting for this same employer within 30 days of execution; recruiter-on-behalf, undated, stale or adjacent-role postings do not qualify.",
+    "funding": "Not requested; no funding provider purchases authorized.",
+    "unknown": "Never MATCH and never rejected solely for absent evidence. No criteria widening."
+  },
+  "limits": {
+    "requested_companies": 1,
+    "maximum_discovered_companies": 3,
+    "maximum_company_detail_urls": 3,
+    "maximum_discovery_rows": 3,
+    "maximum_discovery_pages": 1,
+    "maximum_slices": 2,
+    "maximum_duration_seconds": 300,
+    "mission_provider_usd": 0.20,
+    "maximum_model_usd": 0.05,
+    "maximum_total_usd": 0.25,
+    "maximum_customer_credits": 20,
+    "maximum_model_calls": 4,
+    "maximum_provider_purchases": 5,
+    "provider_purchase_caps": {
+      "apify_linkedin_job_search": 2,
+      "apify_linkedin_company_details": 1,
+      "firecrawl_map": 1,
+      "firecrawl_scrape": 1
+    },
+    "all_other_providers": 0,
+    "any_adoption": "Allowed only for an already recorded run ID with no new purchase; count every transport/poll separately. Maximum 5 adoption/poll calls."
+  },
+  "preconditions": [
+    "Separate explicit authorization to run one internal mission in an isolated approved workspace, on an identified integrated commit.",
+    "Claude's billing reservation fix and real database/recovery validations pass on that exact commit; replay alone does not establish this.",
+    "Every limit has an enforceable pre-purchase/pre-model gate. Proposed caps here are not production configuration. If discovery cannot be bounded to three rows/companies without routing changes, do not start.",
+    "All provider/model operations have current price evidence and a conservative maximum including in-flight reservations; unknown price blocks the operation.",
+    "Cancellation, stale-owner rejection, durable purchase deduplication and reconciliation demonstrated; operator can read candidate/check, ledger/receipt and terminal audit records."
+  ],
+  "abort_conditions": [
+    "Any cap would be exceeded, price is unknown, or credits/reservations/receipts disagree.",
+    "Any provider purchase lacks a reservation, repeats a purchased question, or follows cancellation/lost ownership.",
+    "Qualification lacks any hard proof, stale evidence becomes current proof, UNKNOWN becomes MATCH, or the request is broadened.",
+    "Unexpected provider/model, pending run loses its ID, terminal rows disagree, lease/claim remains held, or deadline/continuation ceiling reached."
+  ],
+  "stop": "At one evidence-supported qualified company or the first cap/abort condition. Cancel new work and reconcile in-flight charges; cancellation is not a refund guarantee. No retries or second mission without review.",
+  "readiness": "BLOCKED until preconditions verified and separately authorized; no worker/CI/deployment proposal in this artifact."
+}

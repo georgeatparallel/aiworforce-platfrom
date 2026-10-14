@@ -1,0 +1,131 @@
+{
+  "provenance": "synthetic_control",
+  "annotation": "Test-author expectations from explicit synthetic company/provider evidence; not a real-world accuracy dataset or independent human audit.",
+  "scenarios": {
+    "multi_constraint_match": {
+      "label": "MATCH",
+      "reason": "US HQ, declared 11–50 band, dated equity funding and a dated Account Executive posting.",
+      "counts": [1, 1, 0, 0],
+      "terminal": "completed",
+      "checks": {
+        "geography": "pass",
+        "company_size": "pass",
+        "funding": "pass",
+        "hiring": "pass"
+      },
+      "max_calls": 5
+    },
+    "size_disjoint": {
+      "label": "NON_MATCH",
+      "reason": "Verified declared band 201–500 is disjoint from 11–50.",
+      "counts": [1, 0, 1, 0],
+      "terminal": "search_exhausted",
+      "checks": { "company_size": "fail" },
+      "max_calls": 4
+    },
+    "hiring_unknown": {
+      "label": "UNKNOWN",
+      "reason": "No dated matching employer posting; an empty search does not prove no hiring.",
+      "counts": [1, 0, 0, 1],
+      "terminal": "search_exhausted",
+      "checks": { "hiring": "unknown" },
+      "max_calls": 6
+    },
+    "interrupted_funding_adoption": {
+      "label": "MATCH",
+      "reason": "Same US/band mission without hiring; adopted fallback has dated equity funding.",
+      "counts": [1, 1, 0, 0],
+      "terminal": "completed",
+      "checks": { "funding": "pass" },
+      "max_calls": 6
+    },
+    "spending_cap": {
+      "label": "MATCH",
+      "reason": "Synthetic evidence would satisfy all requirements, but the spending limit prevents obtaining hiring proof. Expected unresolved, not rejection.",
+      "counts": [1, 0, 0, 1],
+      "terminal": "budget_exhausted",
+      "checks": { "hiring": "unknown" },
+      "max_calls": 4
+    },
+    "geography_disjoint": {
+      "label": "NON_MATCH",
+      "reason": "Verified Toronto, Canada HQ fails hard US geography.",
+      "counts": [1, 0, 1, 0],
+      "terminal": "search_exhausted",
+      "checks": { "geography": "fail" },
+      "max_calls": 4
+    },
+    "size_partial_overlap": {
+      "label": "UNKNOWN",
+      "reason": "Declared 51–200 only partly overlaps requested 11–100; no exact staff count is known.",
+      "counts": [1, 0, 0, 1],
+      "terminal": "search_exhausted",
+      "checks": { "company_size": "unknown" },
+      "max_calls": 4
+    },
+    "size_member_count_only": {
+      "label": "UNKNOWN",
+      "reason": "30 associated LinkedIn members is not exact staff headcount; declared band missing.",
+      "counts": [1, 0, 0, 1],
+      "terminal": "search_exhausted",
+      "checks": { "company_size": "unknown" },
+      "max_calls": 4
+    },
+    "size_exact_requirement": {
+      "label": "UNKNOWN",
+      "reason": "No catalogued source proves exactly 30 employees; existing feasibility preflight must refuse before execution.",
+      "counts": [0, 0, 0, 0],
+      "terminal": "preflight_refused",
+      "checks": {},
+      "max_calls": 0
+    },
+    "funding_partial": {
+      "label": "UNKNOWN",
+      "reason": "Round stage without an announcement date cannot prove funding within the requested window.",
+      "counts": [1, 0, 0, 1],
+      "terminal": "search_exhausted",
+      "checks": { "funding": "unknown" },
+      "max_calls": 6
+    },
+    "hiring_stale": {
+      "label": "UNKNOWN",
+      "reason": "Posting dated 2025-01-01 is outside the 30-day window at the frozen observation date.",
+      "counts": [1, 0, 0, 1],
+      "terminal": "search_exhausted",
+      "checks": { "hiring": "unknown" },
+      "max_calls": 6
+    },
+    "zero_results": {
+      "label": null,
+      "reason": "No company discovered; no company truth label exists.",
+      "counts": [0, 0, 0, 0],
+      "terminal": "search_exhausted",
+      "checks": {},
+      "max_calls": 2
+    },
+    "industry_supported": {
+      "label": "MATCH",
+      "reason": "Explicit subscription software product, business customers and sales-pipeline activity support the recorded synthetic grounded classification.",
+      "counts": [1, 1, 0, 0],
+      "terminal": "completed",
+      "checks": { "industry": "pass" },
+      "max_calls": 6
+    },
+    "industry_unknown": {
+      "label": "UNKNOWN",
+      "reason": "Broad Software Development category plus vague description does not establish the business model.",
+      "counts": [1, 0, 0, 1],
+      "terminal": "search_exhausted",
+      "checks": { "industry": "unknown" },
+      "max_calls": 6
+    },
+    "industry_non_match": {
+      "label": "NON_MATCH",
+      "reason": "Explicit staffing agency delivering recruiting services to business clients, despite a broad software category.",
+      "counts": [1, 0, 1, 0],
+      "terminal": "search_exhausted",
+      "checks": { "industry": "fail" },
+      "max_calls": 6
+    }
+  }
+}
