@@ -71,6 +71,7 @@ existing.
 | Postgres | CI `postgres:17.6`; verified locally on 17.11 | **Not recorded in the repository.** The baseline was dumped by `pg_dump` 17 (it sets `transaction_timeout`, a 17-only setting), so a 17 server is the likely match. Confirm in the Supabase dashboard (Settings → Infrastructure). |
 | PostgREST | v12.2.3 (static x64, sha256 pinned) | **Not recorded.** Supabase manages it per project; confirm in the dashboard and update `POSTGREST_VERSION` / `POSTGREST_SHA256`. |
 | supabase-js | `esm.sh/@supabase/supabase-js@2`, the runtime's own (unpinned minor) specifier | Same specifier. |
+| PostgREST settings | `db-max-rows=1000`, `db-extra-search-path=public,extensions` (Supabase's hosted defaults) | Supabase defaults; confirm under API settings if changed. |
 
 ## Limits
 
@@ -78,7 +79,11 @@ existing.
   not with production's actual schema: drift between the two needs a separate
   read-only schema diff.
 - It runs as `service_role` (RLS bypassed), as the runtime does. RLS policies
-  for user-facing reads are not exercised here.
+  for user-facing reads are not exercised here, and neither are the
+  per-role `statement_timeout`s Supabase sets for `anon` / `authenticated`.
+- No Supabase gateway (Kong) or GoTrue sits in front: the client's `/rest/v1`
+  path is rewritten straight to PostgREST, and the key is a locally minted
+  service-role JWT.
 - The worker's queries that live inline in `worker/main.ts` are tested from
   their source text (the sweep, and verbatim string checks), not by importing
   the worker, which starts a process when imported as main.

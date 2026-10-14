@@ -10,7 +10,9 @@
 # 2. builds it (tests/db-contract/bootstrap.sh: shim, baseline, migrations,
 #    held V2 queue migrations — in this throwaway database only);
 # 3. generates a JWT secret and an `authenticator` password for this run only;
-# 4. starts PostgREST on a free localhost port against that database;
+# 4. starts PostgREST on a free localhost port against that database, with
+#    Supabase's hosted defaults: at most 1000 rows per response
+#    (db-max-rows) and `extensions` on the search path;
 # 5. runs tests/db-contract/*.test.ts through `deno test`;
 # 6. stops PostgREST and drops the database, whatever happened.
 #
@@ -47,6 +49,7 @@ psql "$db_url" -X -q -c "alter role authenticator with login password '$auth_pw'
 
 PGRST_DB_URI="postgres://authenticator:$auth_pw@$hostport/$db" \
 PGRST_DB_SCHEMAS=public PGRST_DB_ANON_ROLE=anon PGRST_JWT_SECRET="$jwt_secret" \
+PGRST_DB_MAX_ROWS=1000 PGRST_DB_EXTRA_SEARCH_PATH=public,extensions \
 PGRST_SERVER_HOST=127.0.0.1 PGRST_SERVER_PORT="$port" PGRST_DB_POOL=4 \
   "$bin" >"$log" 2>&1 &
 pgrst_pid=$!
