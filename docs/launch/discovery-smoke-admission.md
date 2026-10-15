@@ -80,6 +80,18 @@ One exception: a *replay* of a purchase that may already exist (`uncertain` or
 `adopt`) answers 503 and is still not sent. That keeps it **uncertain**
 everywhere, so #88's credit hold and #81's uncertain spend still apply.
 
+## Codex review fixes (PR #90, review of `40d7c0aa`)
+
+| ID | Defect | Fix |
+|---|---|---|
+| R1 | A later refusal (outage, stop, revocation) of a provider request refunded an earlier **uncertain** credit hold | Before asking for admission the gate reads whether this exact purchase (actor + payload) was already admitted. A refusal reads as uncertain (503) when it was, or when that cannot be ruled out; a provably-first purchase still refunds (409). |
+| R2 | An uncertain Firecrawl purchase was refunded | **In smoke mode only** (the gate is the process's `fetch`), a Firecrawl 5xx, lost connection or uncertain replay is `firecrawl_uncertain:*`, held like `apify_start_uncertain`. Outside the smoke, Firecrawl errors and customer billing are unchanged. |
+| R3 | Request bytes do not bound input tokens for remote media | Model requests must be the audited text-only shape: an allow-list of fields per vendor, text-only message content, no media/file/audio parts, tools, web search or streaming. Anything else is refused before admission. |
+| R4 | Redirects escaped classification | Every request (own API and admitted) is sent with `redirect: "manual"`; a 3xx is refused and never followed. Non-fetch HTTP clients are out of scope and are guarded by a static check (see R8 batch). |
+| R5 | A malformed `admitted` answer could bypass the deadline | The whole answer is validated (UUID token, the requested operation key, a safe non-negative integer commitment, a parseable deadline); anything else is `admission_unavailable` and nothing is sent. |
+| R6 | A mission call that ended while its admission was in flight still sent | Closure is rechecked after admission, immediately before the send; the reservation stays consumed. |
+| R7 | Charges reported in the Apify **start** response were ignored | Start and status responses are both read with the repository's receipt rule (larger of usage total and priced events, never their sum); the database keeps the largest report, so nothing is counted twice, and an over-quote stops further admissions. |
+
 ## The price is never the worker's
 
 The authorization pins a catalog of reviewed **maximum-price templates**. For

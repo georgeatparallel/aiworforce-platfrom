@@ -44,6 +44,7 @@
 // transaction — which is what makes continuation and retry safe here.
 
 import { APIFY_START_UNCERTAIN } from "./verifierPurchaseRecovery.ts";
+import { FIRECRAWL_UNCERTAIN } from "./smokeAdmissionRefusal.ts";
 
 export const CREDIT_AUTHORIZATION_VERSION = "credit-authorization-v1" as const;
 
@@ -274,6 +275,10 @@ export async function settleProviderCall(i: {
  *
  * A definite refusal (`apify_start_failed` on a 4xx) is not uncertain: no run
  * exists, and it is refunded as before.
+ *
+ * `FIRECRAWL_UNCERTAIN` is held the same way. It is produced ONLY under the
+ * opt-in smoke admission (smokeAdmissionRefusal.ts), so outside the smoke the
+ * Firecrawl settlement, and customer billing, are exactly as before.
  */
 export type CreditSettlement =
   | { action: "settle"; started: boolean }
@@ -285,7 +290,7 @@ export function creditSettlementFor(
   const runId = (result.data as { run_id?: unknown } | null | undefined)?.run_id;
   const started = result.ok || typeof runId === "string";
   const error = typeof result.error === "string" ? result.error : "";
-  if (!started && error.startsWith(APIFY_START_UNCERTAIN)) {
+  if (!started && (error.startsWith(APIFY_START_UNCERTAIN) || error.startsWith(FIRECRAWL_UNCERTAIN))) {
     return { action: "hold", reason: error.slice(0, 80) };
   }
   return { action: "settle", started };

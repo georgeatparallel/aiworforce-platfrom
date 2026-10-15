@@ -49,7 +49,8 @@ Deno.test("admission: the template's maximum is charged, durably, before anythin
   assertEquals(rows[0].discovery_page, true);
   assertEquals(rows[0].generation, m.generation);
   const auth = await loadAuthorization(await db(), m.queueId);
-  assertEquals(auth?.status, "active", "the worker can read its authorization");
+  assert(auth && auth !== "unavailable");
+  assertEquals(auth.status, "active", "the worker can read its authorization");
 });
 
 Deno.test("admission: a template that does not name this kind and actor is an unknown price", opts, async () => {
@@ -139,7 +140,8 @@ Deno.test("polls: five across the whole mission, each tied to a purchase this mi
   // The worker finds a poll's parent by the run id the purchase recorded.
   const tok = (d as { reservation_token: string }).reservation_token;
   assert(await recordReceipt(await db(), { queueId: m.queueId, key: buy.key, token: tok, runId: "run-1", datasetId: "ds-1" }));
-  const auth = (await loadAuthorization(await db(), m.queueId))!;
+  const auth = await loadAuthorization(await db(), m.queueId);
+  assert(auth && auth !== "unavailable");
   assertEquals((await findParent(await db(), auth.id, { runId: "run-1" }))?.operation_key, buy.key);
   assertEquals((await findParent(await db(), auth.id, { datasetId: "ds-1" }))?.operation_key, buy.key);
   assertEquals(await findParent(await db(), auth.id, { runId: "someone-elses-run" }), null);

@@ -209,6 +209,11 @@ async function execScrapeUrl(input: unknown): Promise<ToolResult> {
     const limit = Math.min(500, Math.max(1, Number(i.max_pages) || 120));
     try {
       const r = await firecrawlFetch(FIRECRAWL_API_KEY, "/map", { url, limit });
+      // Smoke admission only: a 5xx (or a refused replay that may already be
+      // bought) is an uncertain purchase and keeps its credit held.
+      if (!r.ok && smokeAdmissionActive() && r.status >= 500) {
+        return { ok: false, error: `${FIRECRAWL_UNCERTAIN}:map_${r.status}` };
+      }
       if (!r.ok) return { ok: false, error: `firecrawl_map_${r.status}` };
       const body = (r.data ?? {}) as Record<string, unknown>;
       const raw = (Array.isArray(body.links) ? body.links : Array.isArray(body.data) ? body.data : []) as unknown[];
@@ -218,6 +223,7 @@ async function execScrapeUrl(input: unknown): Promise<ToolResult> {
         .slice(0, limit);
       return { ok: true, data: { mode: "map", url, links, count: links.length } };
     } catch (e) {
+      if (smokeAdmissionActive()) return { ok: false, error: `${FIRECRAWL_UNCERTAIN}:map_network` };
       return { ok: false, error: `firecrawl_map_failed: ${String(e).slice(0, 120)}` };
     }
   }
@@ -243,10 +249,16 @@ async function execScrapeUrl(input: unknown): Promise<ToolResult> {
           await new Promise((r) => setTimeout(r, 800));
           continue;
         }
+        if (smokeAdmissionActive()) return { ok: false, error: `${FIRECRAWL_UNCERTAIN}:scrape_network` };
         return { ok: false, error: `Firecrawl fetch failed: ${String(e)}` };
       }
     }
     if (!last) return { ok: false, error: "Firecrawl no response" };
+    // Smoke admission only: the scrape may have been charged (a 5xx, or the
+    // gate refusing a replay of a purchase that may exist). Held, not refunded.
+    if (!last.ok && smokeAdmissionActive() && last.status >= 500) {
+      return { ok: false, error: `${FIRECRAWL_UNCERTAIN}:scrape_${last.status}` };
+    }
     if (last.status === 402) {
       return { ok: false, unavailable: true, error: "firecrawl_insufficient_credits" };
     }
@@ -389,7 +401,7 @@ import {
   CREDIT_REFUSED_ERROR, type CreditDb,
 } from "./creditAuthorization.ts";
 import { priceFor } from "./creditPricing.ts";
-import { isAdmissionRefusal } from "./smokeAdmissionRefusal.ts";
+import { FIRECRAWL_UNCERTAIN, isAdmissionRefusal, smokeAdmissionActive } from "./smokeAdmissionRefusal.ts";
 
 const APIFY_BASE = "https://api.apify.com/v2";
 

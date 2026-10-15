@@ -5,7 +5,7 @@
 // tests/db-contract/smokeAdmission*.contract.test.ts.
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  admitOperation, boundRequest, classifyRequest, createAdmissionFetch, missionAdmission, payloadHash, refusal,
+  admitOperation, apifyCharge, boundRequest, classifyRequest, createAdmissionFetch, missionAdmission, payloadHash, refusal,
   smokeAdmissionEnforced, templateFor, type AdmissionDb, type Classified, type PhysicalRequest, type QuoteTemplate,
 } from "../../../supabase/functions/_shared/smokeAdmission.ts";
 import { isAdmissionRefusal } from "../../../supabase/functions/_shared/smokeAdmissionRefusal.ts";
@@ -70,7 +70,7 @@ Deno.test("limits: a model request needs a bounded output, one choice and a boun
   assertEquals(at({ max_tokens: 101 }), { ok: false, reason: "output_tokens_unbounded" });
   assertEquals(at({ max_tokens: 0 }), { ok: false, reason: "output_tokens_unbounded" });
   assertEquals(at({ max_tokens: 50, n: 2 }), { ok: false, reason: "multiple_choices" });
-  assertEquals(at({ max_tokens: 50, pad: "x".repeat(300) }), { ok: false, reason: "request_too_large" });
+  assertEquals(at({ max_tokens: 50, messages: [{ role: "user", content: "x".repeat(300) }] }), { ok: false, reason: "request_too_large" });
   assertEquals(boundRequest(req("POST", "https://api.openai.com/v1/chat/completions", body({ max_tokens: 5 })), model, { max_request_bytes: 999 }),
     { ok: false, reason: "no_output_bound" });
   assertEquals(boundRequest(req("POST", "https://api.openai.com/v1/chat/completions", body({ max_tokens: 5 })), model, { max_output_tokens: 9 }),
@@ -80,7 +80,7 @@ Deno.test("limits: a model request needs a bounded output, one choice and a boun
   assertEquals(boundRequest(req("POST", "https://api.openai.com/v1/chat/completions", body({ max_tokens: 5 })), model, undefined),
     { ok: false, reason: "no_request_limits" });
   // UTF-8 bytes, not string length.
-  assertEquals(at({ max_tokens: 5, t: "é".repeat(80) }), { ok: false, reason: "request_too_large" });
+  assertEquals(at({ max_tokens: 5, messages: [{ role: "user", content: "é".repeat(80) }] }), { ok: false, reason: "request_too_large" });
 });
 
 Deno.test("limits: vendor-side caps are pinned onto the request that is sent and hashed", async () => {
@@ -127,10 +127,17 @@ Deno.test("refusals: 409 reads as a definite non-start; a purchase that may exis
 // ── fail-closed RPC handling ────────────────────────────────────────────────
 
 function fakeDb(rpc: (fn: string, args: Record<string, unknown>) => unknown, rows: Record<string, unknown> = {}): AdmissionDb {
-  const sel = (table: string) => ({
-    eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: rows[`${table}:parent`] ?? null, error: null }) }),
-      maybeSingle: async () => ({ data: rows[table] ?? null, error: null }) }),
-  });
+  // A filter chain of any depth; one eq() reads `table`, more read `table:<n eq>`.
+  const sel = (table: string) => {
+    const chain = (depth: number) => ({
+      eq: () => chain(depth + 1),
+      maybeSingle: async () => {
+        const v = rows[depth === 1 ? table : depth === 2 ? `${table}:parent` : `${table}:${depth}`];
+        return v instanceof Error ? { data: null, error: { message: v.message } } : { data: v ?? null, error: null };
+      },
+    });
+    return chain(0);
+  };
   return {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       const v = await rpc(fn, args);
@@ -139,6 +146,7 @@ function fakeDb(rpc: (fn: string, args: Record<string, unknown>) => unknown, row
     from: (table: string) => ({ select: () => sel(table) }),
   } as unknown as AdmissionDb;
 }
+const TOKEN = "11111111-2222-4333-8444-555555555555";
 const AUTH = {
   id: "auth-1", queue_id: "q", workspace_id: "w", status: "active", deadline_at: new Date(Date.now() + 60000).toISOString(),
   actor_limits: {},
@@ -153,7 +161,8 @@ async function withGate(rpc: (fn: string, a: Record<string, unknown>) => unknown
   const real = globalThis.fetch;
   globalThis.fetch = createAdmissionFetch({
     baseFetch: (async (u: RequestInfo | URL) => { sent.push(String(u)); return new Response("{}"); }) as typeof fetch,
-    db: fakeDb(rpc, { discovery_smoke_authorizations: AUTH }), ownApi: OWN.href, log: () => {}, ...(now ? { now } : {}),
+    db: fakeDb(rpc, { discovery_smoke_authorizations: AUTH }), ownApi: OWN.href, log: () => {}, newKey: () => "k",
+    ...(now ? { now } : {}),
   });
   try {
     const res = await missionAdmission.run({ queueId: "q", workerId: "w", taskId: "t", generation: 1, ...over }, call);
@@ -182,7 +191,7 @@ Deno.test("gate: a slow RPC is a refusal, never a send", async () => {
 });
 
 Deno.test("gate: admitted, then rechecked immediately before sending", async () => {
-  const ok = { decision: "admitted", operation_key: "k", reservation_token: "tok", committed_microusd: 1, deadline_at: AUTH.deadline_at };
+  const ok = { decision: "admitted", operation_key: "model:k", reservation_token: TOKEN, committed_microusd: 1, deadline_at: AUTH.deadline_at };
   const sent = await withGate(() => ok);
   assertEquals(sent.sent.length, 1, "admitted and in time: sent once");
   const late = await withGate(() => ok, {}, () => Date.parse(AUTH.deadline_at) + 1);
@@ -224,4 +233,173 @@ Deno.test("gate: no authorization row, no admission", async () => {
     globalThis.fetch = real;
   }
   assertEquals(sent, []);
+});
+
+// ── Codex review R1–R7: one regression per confirmed defect ───────────────────
+
+const okFor = (key: string, over: Record<string, unknown> = {}) => ({
+  decision: "admitted", operation_key: key, reservation_token: TOKEN, committed_microusd: 1,
+  deadline_at: AUTH.deadline_at, ...over,
+});
+
+Deno.test("R5: an admitted answer missing or corrupting any field the send relies on sends nothing", async () => {
+  const bad: Array<[string, Record<string, unknown>]> = [
+    ["no deadline", { deadline_at: undefined }],
+    ["unparseable deadline", { deadline_at: "soon" }],
+    ["another operation", { operation_key: "model:someone-else" }],
+    ["negative commitment", { committed_microusd: -1 }],
+    ["fractional commitment", { committed_microusd: 0.5 }],
+    ["missing commitment", { committed_microusd: undefined }],
+    ["non-uuid token", { reservation_token: "synthetic" }],
+  ];
+  for (const [why, over] of bad) {
+    const r = await withGate(() => okFor("model:k", over));
+    assertEquals([r.status, r.decision, r.sent.length], [409, "admission_unavailable", 0], why);
+  }
+  assertEquals((await withGate(() => okFor("model:k"))).sent.length, 1, "the well-formed answer still sends");
+});
+
+Deno.test("R6: a mission call that ends while its admission is in flight sends nothing", async () => {
+  const r = await withGate(() => {
+    // The runner closes the context while this admission is still in flight.
+    missionAdmission.getStore()!.closedReason = "mission_call_ended";
+    return okFor("model:k");
+  });
+  assertEquals([r.decision, r.sent.length], ["closed_after_admission", 0]);
+});
+
+Deno.test("R3: model requests are the audited text-only shape; media, files, tools and unknown fields are refused", () => {
+  const lim = { max_request_bytes: 20000, max_output_tokens: 100 };
+  const openai = (b: Record<string, unknown>) =>
+    boundRequest(req("POST", "https://api.openai.com/v1/chat/completions", JSON.stringify({ model: "m", max_tokens: 10, ...b })), model, lim);
+  assert(openai({ messages: [{ role: "system", content: "s" }, { role: "user", content: [{ type: "text", text: "t" }] }] }).ok);
+  assert(openai({ messages: [{ role: "user", content: "t" }], response_format: { type: "json_schema", json_schema: { name: "x", schema: {} } } }).ok);
+  for (const [why, b] of [
+    ["remote image", { messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://x/i.png" } }] }] }],
+    ["audio input", { messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: "", format: "wav" } }] }] }],
+    ["file part", { messages: [{ role: "user", content: [{ type: "file", file: { file_id: "f" } }] }] }],
+    ["tools", { messages: [], tools: [{ type: "function", function: { name: "f" } }] }],
+    ["web search", { messages: [], web_search_options: {} }],
+    ["streaming", { messages: [], stream: true }],
+    ["tool message", { messages: [{ role: "tool", content: "x" }] }],
+    ["extra text-part field", { messages: [{ role: "user", content: [{ type: "text", text: "t", cache: 1 }] }] }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    const r = openai(b);
+    assert(!r.ok && r.reason.startsWith("not_text_only"), `${why}: ${JSON.stringify(r)}`);
+  }
+  const anth = classify("POST", "https://api.anthropic.com/v1/messages", "{\"model\":\"m\"}") as Exclude<Classified, { kind: "free" | "forbidden" }>;
+  const anthropic = (b: Record<string, unknown>) =>
+    boundRequest(req("POST", "https://api.anthropic.com/v1/messages", JSON.stringify({ model: "m", max_tokens: 10, ...b })), anth, lim);
+  assert(anthropic({ system: "s", messages: [{ role: "user", content: "t" }] }).ok);
+  for (const b of [
+    { messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://x" } }] }] },
+    { messages: [{ role: "user", content: [{ type: "document", source: { type: "url", url: "https://x" } }] }] },
+    { system: [{ type: "text", text: "s", cache_control: { type: "ephemeral" } }], messages: [] },
+    { messages: [], tools: [] },
+    { messages: [], thinking: { type: "enabled", budget_tokens: 1000 } },
+  ]) assertEquals(anthropic(b).ok, false, JSON.stringify(b));
+});
+
+Deno.test("R4: a redirect is never followed, from the project's own API or from an admitted request", async () => {
+  const seen: RequestInit[] = [];
+  const redirecting = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(init ?? {});
+    return new Response(null, { status: 307, headers: { location: "https://api.resend.com/emails" } });
+  }) as typeof fetch;
+  const free = createAdmissionFetch({ baseFetch: redirecting, db: fakeDb(() => null), ownApi: OWN.href, log: () => {} });
+  const r = await free("https://proj.supabase.co/rest/v1/rpc/x", { method: "POST", body: "{}", redirect: "follow" });
+  assertEquals(r.status, 409);
+  assertEquals(((await r.json()) as { error: { decision: string } }).error.decision, "redirect_refused");
+  assertEquals(seen[0].redirect, "manual", "the caller's follow is overridden");
+
+  const real = globalThis.fetch;
+  globalThis.fetch = createAdmissionFetch({
+    baseFetch: redirecting, db: fakeDb(() => okFor("model:k"), { discovery_smoke_authorizations: AUTH }),
+    ownApi: OWN.href, log: () => {}, newKey: () => "k",
+  });
+  try {
+    const m = await missionAdmission.run({ queueId: "q", workerId: "w", taskId: "t", generation: 1 }, call);
+    assertEquals(m.status, 409);
+    assertEquals(((await m.json()) as { error: { decision: string } }).error.decision, "redirect_refused");
+    assertEquals(seen[1].redirect, "manual");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+Deno.test("R1: a refused PROVIDER request reads as uncertain when an earlier purchase exists or cannot be ruled out", async () => {
+  const start = () => fetch("https://api.apify.com/v2/acts/a~b/runs?token=t", { method: "POST", body: "{}" });
+  const quotes = {
+    ...AUTH,
+    approved_quotes: { jobs: { allowed_kinds: ["provider"], allowed_actors: ["apify:a~b"], maximum_microusd: 1, source: "s",
+      liability_bound_ref: "r", observed_at: new Date().toISOString(), request_limits: { max_request_bytes: 1000 } } },
+  };
+  const run = async (prior: unknown, admit: unknown, ctxOver: Record<string, unknown> = {}) => {
+    const real = globalThis.fetch;
+    const sent: string[] = [];
+    globalThis.fetch = createAdmissionFetch({
+      baseFetch: (async (u: RequestInfo | URL) => { sent.push(String(u)); return new Response("{}"); }) as typeof fetch,
+      db: fakeDb(() => admit, { discovery_smoke_authorizations: quotes, "discovery_smoke_operations:4": prior }),
+      ownApi: OWN.href, log: () => {},
+    });
+    try {
+      const r = await missionAdmission.run({ queueId: "q", workerId: "w", taskId: "t", generation: 1, ...ctxOver }, start);
+      await r.body?.cancel();
+      return { status: r.status, sent: sent.length };
+    } finally {
+      globalThis.fetch = real;
+    }
+  };
+  const stopped = { decision: "stopped" };
+  assertEquals(await run({ operation_key: "x", kind: "provider" }, stopped), { status: 503, sent: 0 }, "earlier purchase exists");
+  assertEquals(await run(new Error("read failed"), stopped), { status: 503, sent: 0 }, "earlier purchase cannot be ruled out");
+  assertEquals(await run(null, stopped), { status: 409, sent: 0 }, "provably none earlier: a definite non-start");
+  assertEquals(await run(null, new Error("lost answer")), { status: 409, sent: 0 },
+    "this attempt's own (possibly committed) admission is not an earlier purchase");
+  const ac = new AbortController(); ac.abort();
+  assertEquals(await run({ operation_key: "x", kind: "provider" }, stopped, { signal: ac.signal }), { status: 503, sent: 0 },
+    "a local revocation of a replay is still uncertain");
+});
+
+Deno.test("R7: Apify charges are read from the start response as from status reads, by the repository's receipt rule", async () => {
+  const { apifyReceiptFromRun } = await import("../../../supabase/functions/_shared/providerReceipts.ts");
+  const { receiptUsd } = await import("../../../supabase/functions/_shared/budgetPolicy.ts");
+  const ev = { pricingPerEvent: { actorChargeEvents: { "actor-start": { eventPriceUsd: 0.001 }, job: { eventPriceUsd: "0.001" } } } };
+  const fixtures: Array<Record<string, unknown> | null> = [
+    null, {}, { usageTotalUsd: 1 }, { usageTotalUsd: -1 }, { usageTotalUsd: 0.0123 },
+    { pricingInfo: ev, chargedEventCounts: { "actor-start": 1, job: 25 } },
+    { usageTotalUsd: 0.01, pricingInfo: ev, chargedEventCounts: { "actor-start": 1, job: 25 } },
+    { usageTotalUsd: 0.5, pricingInfo: ev, chargedEventCounts: { job: 3, unknown: 9 } },
+    { pricingInfo: { pricingPerEvent: { actorChargeEvents: {} } }, chargedEventCounts: { job: 1 } },
+  ];
+  for (const f of fixtures) {
+    const want = receiptUsd(apifyReceiptFromRun(f));
+    assertEquals(apifyCharge(f), want === null ? null : Math.ceil(want * 1_000_000), JSON.stringify(f));
+  }
+
+  const receipts: Array<Record<string, unknown>> = [];
+  const real = globalThis.fetch;
+  const quotes = {
+    ...AUTH,
+    approved_quotes: { jobs: { allowed_kinds: ["provider"], allowed_actors: ["apify:a~b"], maximum_microusd: 1, source: "s",
+      liability_bound_ref: "r", observed_at: new Date().toISOString(), request_limits: { max_request_bytes: 1000 } } },
+  };
+  globalThis.fetch = createAdmissionFetch({
+    baseFetch: (async () => new Response(JSON.stringify({ data: { id: "run-1", defaultDatasetId: "ds-1", status: "SUCCEEDED", usageTotalUsd: 1 } }),
+      { status: 201 })) as typeof fetch,
+    db: fakeDb((fn, a) => {
+      if (fn === "record_discovery_smoke_receipt") { receipts.push(a); return true; }
+      return okFor(String(a.p_key));
+    }, { discovery_smoke_authorizations: quotes }),
+    ownApi: OWN.href, log: () => {},
+  });
+  try {
+    const r = await missionAdmission.run({ queueId: "q", workerId: "w", taskId: "t", generation: 1 },
+      () => fetch("https://api.apify.com/v2/acts/a~b/runs", { method: "POST", body: "{}" }));
+    await r.body?.cancel();
+  } finally {
+    globalThis.fetch = real;
+  }
+  assertEquals(receipts.length, 1, "ids and charge in one write");
+  assertEquals([receipts[0].p_run_id, receipts[0].p_dataset_id, receipts[0].p_reported_microusd], ["run-1", "ds-1", 1_000_000]);
 });

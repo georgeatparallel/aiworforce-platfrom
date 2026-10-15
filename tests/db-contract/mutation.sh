@@ -4,7 +4,8 @@
 #   1. revert the D1 PostgREST fix: the fenced-write tests fail;
 #   2. build without the held credit re-arm migration: the credit tests fail;
 #   3. build without, or with one guard removed from, the held smoke admission
-#      (migration, transport gate, poll loop): a named admission test fails.
+#      (migration, transport gate, poll loop, Codex review R1–R7 fixes): a
+#      named admission test fails.
 #
 #   PG_ADMIN_URL=… POSTGREST_BIN=… tests/db-contract/mutation.sh
 #
@@ -58,13 +59,15 @@ echo "mutant killed: without the re-arm migration a refunded key's purchase goes
 adm_sql="$root/supabase/migrations-held/20261015140000_discovery_smoke_admission.sql"
 gate_ts="$root/supabase/functions/_shared/smokeAdmission.ts"
 tools_ts="$root/supabase/functions/_shared/toolRegistry.ts"
+credit_ts="$root/supabase/functions/_shared/creditAuthorization.ts"
 restore_list=()
-for f in "$adm_sql" "$gate_ts" "$tools_ts"; do
+for f in "$adm_sql" "$gate_ts" "$tools_ts" "$credit_ts"; do
   cp "$f" "$f.mutation-backup"; restore_list+=("$f")
 done
 trap 'cp "$backup" "$real"; for f in "${restore_list[@]}"; do mv -f "$f.mutation-backup" "$f"; done; rm -f "$backup" "$out"' EXIT
 adm_tests="$root/tests/db-contract/smokeAdmission.contract.test.ts"
 gate_tests="$root/tests/db-contract/smokeAdmissionRuntime.contract.test.ts"
+unit_tests="$root/tests/edge-functions/_shared/smokeAdmission.test.ts"
 
 # prove_killed <label> <file> <literal to find> <replacement> <test file> <test name that must FAIL>
 prove_killed() {
@@ -129,10 +132,31 @@ prove_killed "worker may authorize" "$adm_sql" \
 prove_killed "gate passes requests with no mission" "$gate_ts" 'if (!ctx) return refuse("no_mission_context");' 'if (!ctx) return d.baseFetch(input, init);' \
   "$gate_tests" "gate: outside a mission, before binding, after revocation, or to an unknown host, nothing is sent"
 prove_killed "replayed purchase reported as a definite refusal" "$gate_ts" \
-  "status: PURCHASE_MAY_EXIST.has(decision) ? ADMISSION_UNCERTAIN_STATUS : ADMISSION_REFUSED_STATUS," \
-  "status: ADMISSION_REFUSED_STATUS," \
+  "const purchaseMayExist = PURCHASE_MAY_EXIST.has(decision) || earlierPurchase;" \
+  "const purchaseMayExist = false;" \
   "$gate_tests" "apify: an uncertain start keeps its credit HELD and is never bought again"
 prove_killed "vendor caps not pinned" "$gate_ts" "url.searchParams.set(k, String(v));" "void [k, v];" \
   "$gate_tests" "apify: admitted with the template's vendor caps, run id durable, polls admitted, one credit charged"
 prove_killed "poll loop ignores a refusal" "$tools_ts" "    if (isAdmissionRefusal(poll)) {" "    if (false) {" \
   "$gate_tests" "apify: when polls run out the wait stops at once; the run stays pending with its id"
+
+# Codex review R1–R7: each fix removed in turn must fail its own regression.
+prove_killed "R1 later refusal refunds an earlier hold" "$gate_ts" \
+  'const earlier = c.kind === "provider" && (authUnavailable || (prior !== null && prior !== "no"));' \
+  'const earlier = false;' \
+  "$gate_tests" "R1: a later refusal (the authorization is stopped) never refunds an earlier uncertain Apify hold"
+prove_killed "R2 uncertain Firecrawl refunded" "$credit_ts" " || error.startsWith(FIRECRAWL_UNCERTAIN)" "" \
+  "$gate_tests" "R2: in the smoke, an uncertain Firecrawl purchase keeps its credit HELD"
+prove_killed "R3 remote media accepted" "$gate_ts" "const textOnly = textOnlyModelRequest(c.vendor, pinned);" "const textOnly = null;" \
+  "$unit_tests" "R3: model requests are the audited text-only shape; media, files, tools and unknown fields are refused"
+prove_killed "R4 redirects followed" "$gate_ts" '{ ...(init ?? {}), redirect: "manual" }' "init" \
+  "$unit_tests" "R4: a redirect is never followed, from the project's own API or from an admitted request"
+prove_killed "R5 malformed admission trusted" "$gate_ts" \
+  'if (bad) return { decision: "admission_unavailable", detail: `malformed_admission:${bad}` };' "void bad;" \
+  "$unit_tests" "R5: an admitted answer missing or corrupting any field the send relies on sends nothing"
+prove_killed "R6 closure not rechecked" "$gate_ts" \
+  'if (ctx.closedReason) return refuse("closed_after_admission", ctx.closedReason);' "" \
+  "$unit_tests" "R6: a mission call that ends while its admission is in flight sends nothing"
+prove_killed "R7 start charge dropped" "$gate_ts" \
+  'const charge = c.captures === "apify_run" ? apifyCharge(run ?? null) : null;' "const charge = null as number | null;" \
+  "$gate_tests" "R7: a charge reported in the START response is recorded, and an over-quote stops the mission"

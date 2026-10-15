@@ -56,9 +56,9 @@ function fakeVendor(script: Script) {
 /** Install the gate as the process fetch, run `fn` inside the mission, restore. */
 async function inMission<T>(
   m: SmokeMission, vendor: ReturnType<typeof fakeVendor>, fn: () => Promise<T>,
-  over: Partial<MissionAdmissionContext> = {},
+  over: Partial<MissionAdmissionContext> = {}, db: AdmissionDb = client as unknown as AdmissionDb,
 ): Promise<T> {
-  const gate = createAdmissionFetch({ baseFetch: vendor.fetch, db: client as unknown as AdmissionDb, ownApi: REST_URL, log: () => {} });
+  const gate = createAdmissionFetch({ baseFetch: vendor.fetch, db, ownApi: REST_URL, log: () => {} });
   const ctx: MissionAdmissionContext = { queueId: m.queueId, workerId: m.workerId, taskId: m.taskId, generation: m.generation, ...over };
   globalThis.fetch = gate;
   try {
@@ -286,4 +286,93 @@ Deno.test("runner: the handler's billable calls run inside the mission, with the
   assertEquals(v.to("api.openai.com").length, 1);
   const [o] = await ops(m);
   assertEquals(o.kind, "model");
+});
+
+// ── Codex review R1, R2, R7 on real credit RPCs ───────────────────────────────
+
+/** The admission RPC fails; everything else (reads, credits) still works. */
+const admissionOutage = {
+  rpc: (fn: string, args: Record<string, unknown>) => fn === "admit_discovery_smoke"
+    ? Promise.resolve({ data: null, error: { message: "synthetic admission outage" } })
+    : client.rpc(fn, args),
+  from: (t: string) => client.from(t),
+} as unknown as AdmissionDb;
+
+for (const [why, prepare, db] of [
+  ["the authorization is stopped", (m: SmokeMission) => sql`select public.stop_discovery_smoke(${m.queueId}, 'test')`, undefined],
+  ["the admission RPC is down", async () => {}, admissionOutage],
+  ["the mission is revoked locally", async () => {}, undefined],
+] as const) {
+  Deno.test(`R1: a later refusal (${why}) never refunds an earlier uncertain Apify hold`, opts, async () => {
+    const m = await fundedMission();
+    const v = fakeVendor((r) => r.method === "POST" ? json(503, { error: "upstream" }) : json(404, {}));
+    await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+    assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] });
+    await prepare(m);
+    const ac = new AbortController();
+    if (why === "the mission is revoked locally") ac.abort();
+    const replay = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)), { signal: ac.signal }, db);
+    assert(String(replay.error).startsWith(APIFY_START_UNCERTAIN), String(replay.error));
+    assertEquals(v.seen.filter((x) => x.method === "POST").length, 1, "never bought again");
+    assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, "still held, not refunded");
+  });
+}
+
+Deno.test("R1: a first purchase refused outright is still a definite non-start and refunds its own credit", opts, async () => {
+  const m = await fundedMission();
+  await sql`select public.stop_discovery_smoke(${m.queueId}, 'test')`;
+  const v = fakeVendor(() => json(500, {}));
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assertEquals(res.error, "apify_start_failed:409");
+  assertEquals(await credits(m.ws), { balance: 10, reserved: 0, statuses: ["not_charged"] });
+});
+
+Deno.test("R2: in the smoke, an uncertain Firecrawl purchase keeps its credit HELD", opts, async () => {
+  const m = await fundedMission();
+  const v = fakeVendor(() => json(503, { error: "upstream" }));
+  const res = await inMission(m, v, () => runTool("scrape_url", { url: "https://example.com/about", max_pages: 1 }, toolCtx(m)));
+  assert(String(res.error).startsWith("firecrawl_uncertain"), String(res.error));
+  assertEquals(v.seen.length, 1, "the retry is the same purchase and is not sent");
+  assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, "held, not refunded");
+  // A definite 4xx is still refunded.
+  const m2 = await fundedMission();
+  const v2 = fakeVendor(() => json(400, { error: "bad request" }));
+  const r2 = await inMission(m2, v2, () => runTool("scrape_url", { url: "https://example.com/about", max_pages: 1 }, toolCtx(m2)));
+  assertEquals(r2.ok, false);
+  assertEquals(await credits(m2.ws), { balance: 10, reserved: 0, statuses: ["not_charged"] });
+});
+
+Deno.test("R2: outside the smoke, Firecrawl settlement is unchanged", opts, async () => {
+  const m = await fundedMission();
+  const prior = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.origin === new URL(REST_URL).origin) return realFetch(input, init);
+    calls++;
+    return json(503, {});
+  }) as typeof fetch;
+  try {
+    const res = await runTool("scrape_url", { url: "https://example.com/about", max_pages: 1 }, toolCtx(m));
+    assert(String(res.error).startsWith("Firecrawl 503"), String(res.error));
+  } finally {
+    globalThis.fetch = prior;
+  }
+  assertEquals(calls, 2, "no gate: the existing retry runs");
+  assertEquals(await credits(m.ws), { balance: 10, reserved: 0, statuses: ["not_charged"] }, "refunded exactly as before");
+});
+
+Deno.test("R7: a charge reported in the START response is recorded, and an over-quote stops the mission", opts, async () => {
+  const m = await fundedMission();
+  const v = fakeVendor((r) => r.method === "POST"
+    ? json(201, { data: { id: "run-x", defaultDatasetId: "ds-x", status: "SUCCEEDED", usageTotalUsd: 1 } })
+    : r.url.pathname.endsWith("/items") ? json(200, []) : json(200, { data: { id: "run-x", status: "SUCCEEDED" } }));
+  await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  const [op] = await ops(m);
+  assertEquals(op.reported_microusd, "1000000");
+  const [a] = await sql`select status, stop_reason from public.discovery_smoke_authorizations where queue_id = ${m.queueId}`;
+  assertEquals(a.status, "stopped");
+  const v2 = fakeVendor(() => json(200, {}));
+  await inMission(m, v2, () => runTool("scrape_url", { url: "https://example.com/x", max_pages: 1 }, toolCtx(m)));
+  assertEquals(v2.seen.length, 0, "nothing further is admitted after an over-quote charge");
 });

@@ -42,19 +42,15 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
-  ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, isAdmissionRefusal,
+  ADMISSION_GATE_MARK, ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, isAdmissionRefusal, SMOKE_ADMISSION_ENV,
+  smokeAdmissionEnforced,
 } from "./smokeAdmissionRefusal.ts";
 
-export { ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, isAdmissionRefusal };
+export { ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, isAdmissionRefusal, SMOKE_ADMISSION_ENV, smokeAdmissionEnforced };
 
-export const SMOKE_ADMISSION_ENV = "DISCOVERY_SMOKE_ADMISSION";
 /** An admission RPC slower than this is a refusal, never a send. */
 export const ADMISSION_RPC_TIMEOUT_MS = 10_000;
 
-/** Only omission or an explicit "off" disables it; any other value enforces. */
-export function smokeAdmissionEnforced(raw: string | undefined): boolean {
-  return raw !== undefined && raw.trim() !== "" && raw.trim().toLowerCase() !== "off";
-}
 
 // ── CLASSIFICATION ───────────────────────────────────────────────────────────
 
@@ -225,6 +221,11 @@ export function boundRequest(
       if (!vals.every((v) => allowed.some((a) => sameJson(a, v)))) return { ok: false, reason: `value_not_allowed:${k}` };
     }
     if (c.kind === "model") {
+      // R3. Request bytes bound input tokens only for TEXT. A remote image,
+      // file, audio or tool call is charged for content those bytes never
+      // contain, so anything but the audited text-only shape is refused.
+      const textOnly = textOnlyModelRequest(c.vendor, pinned);
+      if (textOnly) return { ok: false, reason: `not_text_only:${textOnly}` };
       const out = pinned[c.outputField];
       if (typeof limits.max_output_tokens !== "number") return { ok: false, reason: "no_output_bound" };
       if (typeof out !== "number" || !Number.isInteger(out) || out < 1 || out > limits.max_output_tokens) {
@@ -243,6 +244,54 @@ export function boundRequest(
   return { ok: true, request: { method: req.method, url, body: body ?? null } };
 }
 
+// ── THE AUDITED TEXT-ONLY MODEL REQUEST ─────────────────────────────────────
+//
+// Exactly the fields our three model transports send (aiProvider,
+// gptProvider/modelRequestBody, the strategist transport), and nothing that
+// pulls in content or charges beyond the request's own bytes: no media or file
+// parts, no tools, no web search, no audio, no streaming options, no logprobs.
+// A field not listed here is refused, so a future option fails closed.
+const OPENAI_FIELDS = new Set(["model", "messages", "max_tokens", "max_completion_tokens", "temperature", "top_p",
+  "response_format", "reasoning_effort", "seed", "stop", "n"]);
+const ANTHROPIC_FIELDS = new Set(["model", "messages", "max_tokens", "system", "temperature", "top_p", "top_k",
+  "stop_sequences"]);
+const isPlainText = (v: unknown): boolean => typeof v === "string";
+/** A content value: a string, or text parts only (`{type:"text", text}`). */
+function textContent(v: unknown): boolean {
+  if (isPlainText(v)) return true;
+  return Array.isArray(v) && v.every((p) =>
+    p && typeof p === "object" && !Array.isArray(p) &&
+    Object.keys(p).every((k) => k === "type" || k === "text") &&
+    (p as Record<string, unknown>).type === "text" && isPlainText((p as Record<string, unknown>).text)
+  );
+}
+
+/** Why a model request is not the audited text-only shape, or null when it is. */
+export function textOnlyModelRequest(vendor: "openai" | "anthropic", b: Record<string, unknown>): string | null {
+  const allowed = vendor === "openai" ? OPENAI_FIELDS : ANTHROPIC_FIELDS;
+  for (const k of Object.keys(b)) if (!allowed.has(k)) return `field:${k}`;
+  const roles = vendor === "openai" ? ["system", "developer", "user", "assistant"] : ["user", "assistant"];
+  // Absent messages carry no input at all (the vendor refuses such a request).
+  if ("messages" in b && !Array.isArray(b.messages)) return "messages";
+  for (const m of (b.messages ?? []) as unknown[]) {
+    if (!m || typeof m !== "object" || Array.isArray(m)) return "message";
+    const msg = m as Record<string, unknown>;
+    if (!Object.keys(msg).every((k) => k === "role" || k === "content" || (vendor === "openai" && k === "name"))) {
+      return "message_field";
+    }
+    if (!roles.includes(String(msg.role))) return "message_role";
+    if (!textContent(msg.content)) return "message_content";
+  }
+  if (vendor === "anthropic" && "system" in b && !textContent(b.system)) return "system";
+  if (vendor === "openai" && "response_format" in b) {
+    const rf = b.response_format as Record<string, unknown> | null;
+    if (!rf || typeof rf !== "object" || !["text", "json_object", "json_schema"].includes(String(rf.type)) ||
+      !Object.keys(rf).every((k) => k === "type" || k === "json_schema")) return "response_format";
+  }
+  if (vendor === "openai" && "reasoning_effort" in b && typeof b.reasoning_effort !== "string") return "reasoning_effort";
+  return null;
+}
+
 /** sha256 hex of the request as sent, minus any credential in the query string. */
 export async function payloadHash(req: PhysicalRequest): Promise<string> {
   const u = new URL(req.url.href);
@@ -258,14 +307,12 @@ export async function payloadHash(req: PhysicalRequest): Promise<string> {
 /** The two calls the gate makes; a supabase-js client satisfies it. */
 export interface AdmissionDb {
   rpc(fn: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string } | null }>;
-  from(table: string): {
-    select(cols: string): {
-      eq(col: string, v: unknown): {
-        eq(col: string, v: unknown): { maybeSingle(): PromiseLike<{ data: unknown; error: { message: string } | null }> };
-        maybeSingle(): PromiseLike<{ data: unknown; error: { message: string } | null }>;
-      };
-    };
-  };
+  from(table: string): { select(cols: string): AdmissionFilter };
+}
+/** A supabase-js filter chain, as far as the gate uses it. */
+export interface AdmissionFilter {
+  eq(col: string, v: unknown): AdmissionFilter;
+  maybeSingle(): PromiseLike<{ data: unknown; error: { message: string } | null }>;
 }
 
 export type AdmissionDecision =
@@ -286,6 +333,24 @@ function withTimeout<T>(p: PromiseLike<T>, ms: number): Promise<T> {
   ]).finally(() => clearTimeout(timer));
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Why an `admitted` answer cannot be trusted, or null when it can. Every field
+ * the send depends on is checked: the reservation token, the operation it
+ * names (it must be the one asked for), a finite non-negative commitment and a
+ * finite deadline. A missing deadline once compared as `now >= NaN`, which is
+ * false, and let the request through (Codex review R5).
+ */
+export function malformedAdmission(d: Record<string, unknown>, expectedKey: string): string | null {
+  if (typeof d.reservation_token !== "string" || !UUID_RE.test(d.reservation_token)) return "reservation_token";
+  if (d.operation_key !== expectedKey) return "operation_key";
+  const c = d.committed_microusd;
+  if (typeof c !== "number" || !Number.isSafeInteger(c) || c < 0) return "committed_microusd";
+  if (typeof d.deadline_at !== "string" || !Number.isFinite(Date.parse(d.deadline_at))) return "deadline_at";
+  return null;
+}
+
 /** One admission. Any error, timeout or malformed answer is a refusal. */
 export async function admitOperation(db: AdmissionDb, a: AdmitArgs, timeoutMs = ADMISSION_RPC_TIMEOUT_MS): Promise<AdmissionDecision> {
   try {
@@ -297,8 +362,9 @@ export async function admitOperation(db: AdmissionDb, a: AdmitArgs, timeoutMs = 
     if (error) return { decision: "admission_unavailable", detail: error.message.slice(0, 160) };
     const d = data as { decision?: unknown } | null;
     if (!d || typeof d.decision !== "string") return { decision: "admission_unavailable", detail: "malformed_answer" };
-    if (d.decision === "admitted" && typeof (d as { reservation_token?: unknown }).reservation_token !== "string") {
-      return { decision: "admission_unavailable", detail: "admitted_without_token" };
+    if (d.decision === "admitted") {
+      const bad = malformedAdmission(d as Record<string, unknown>, a.key);
+      if (bad) return { decision: "admission_unavailable", detail: `malformed_admission:${bad}` };
     }
     return d as AdmissionDecision;
   } catch (e) {
@@ -322,15 +388,37 @@ export async function recordReceipt(db: AdmissionDb, r: {
   }
 }
 
-export async function loadAuthorization(db: AdmissionDb, queueId: string): Promise<Authorization | null> {
+/** The queue row's authorization; null when there is none; "unavailable" when it could not be read. */
+export async function loadAuthorization(db: AdmissionDb, queueId: string): Promise<Authorization | null | "unavailable"> {
   try {
     const { data, error } = await withTimeout(db.from("discovery_smoke_authorizations")
       .select("id, queue_id, workspace_id, status, deadline_at, approved_quotes, actor_limits")
       .eq("queue_id", queueId).maybeSingle(), ADMISSION_RPC_TIMEOUT_MS);
-    if (error || !data) return null;
-    return data as Authorization;
+    if (error) return "unavailable";
+    return (data as Authorization | null) ?? null;
   } catch {
-    return null;
+    return "unavailable";
+  }
+}
+
+/**
+ * Was this exact purchase (actor + payload) already admitted under this
+ * authorization? "yes" / "no", or "unknown" when the read failed. Decides how a
+ * refusal of a PROVIDER request reads (Codex review R1): a refused attempt is
+ * not proof that an earlier attempt bought nothing.
+ */
+export async function priorPurchase(
+  db: AdmissionDb, authorizationId: string, actor: string, payloadHash: string,
+): Promise<"yes" | "no" | "unknown"> {
+  try {
+    const { data, error } = await withTimeout(db.from("discovery_smoke_operations")
+      .select("operation_key, kind")
+      .eq("authorization_id", authorizationId).eq("actor", actor).eq("payload_hash", payloadHash)
+      .eq("kind", "provider").maybeSingle(), ADMISSION_RPC_TIMEOUT_MS);
+    if (error) return "unknown";
+    return data ? "yes" : "no";
+  } catch {
+    return "unknown";
   }
 }
 
@@ -367,7 +455,7 @@ export interface MissionAdmissionContext {
   generation: number | null;
   /** The worker's revocation: once aborted, nothing more is admitted. */
   signal?: AbortSignal;
-  /** Loaded once per mission; the database stays the authority. */
+  /** Loaded once found; the database stays the authority. */
   authorization?: Authorization | null;
   /** Set when the database said no more polls / stopped: refused locally from then on. */
   closedReason?: string | null;
@@ -387,11 +475,21 @@ export const missionAdmission = new AsyncLocalStorage<MissionAdmissionContext>()
 const PURCHASE_MAY_EXIST = new Set(["uncertain", "adopt"]);
 export const ADMISSION_UNCERTAIN_STATUS = 503;
 
-export function refusal(decision: string, detail?: unknown): Response {
-  return new Response(JSON.stringify({ error: { type: ADMISSION_REFUSED_TYPE, decision, detail: detail ?? null, message: `mission admission refused: ${decision}` } }), {
-    status: PURCHASE_MAY_EXIST.has(decision) ? ADMISSION_UNCERTAIN_STATUS : ADMISSION_REFUSED_STATUS,
+/**
+ * A refusal response. `earlierPurchase` is the gate's own finding that an
+ * earlier attempt may already have bought this purchase (R1).
+ */
+export function refusal(decision: string, detail?: unknown, earlierPurchase = false): Response {
+  const purchaseMayExist = PURCHASE_MAY_EXIST.has(decision) || earlierPurchase;
+  return new Response(JSON.stringify({ error: { type: ADMISSION_REFUSED_TYPE, decision, detail: detail ?? null, purchase_may_exist: purchaseMayExist, message: `mission admission refused: ${decision}` } }), {
+    status: purchaseMayExist ? ADMISSION_UNCERTAIN_STATUS : ADMISSION_REFUSED_STATUS,
     headers: { "content-type": "application/json", "x-agentory-admission": "refused" },
   });
+}
+
+/** A redirect the runtime was told not to follow ("manual"). */
+function isRedirect(res: Response): boolean {
+  return res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400);
 }
 
 /** Decisions after which nothing else in this mission can be admitted. */
@@ -433,7 +531,7 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
   const newKey = d.newKey ?? (() => crypto.randomUUID());
   const ownApi = d.ownApi ? new URL(d.ownApi) : null;
 
-  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const gate = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     let req: PhysicalRequest;
     try {
       req = await readRequest(input, init);
@@ -441,66 +539,106 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
       return refusal("unreadable_request", String(e).slice(0, 120));
     }
     const c = classifyRequest(req, ownApi);
-    if (c.kind === "free") return d.baseFetch(input, init);
+    // R4. Never follow a redirect: the next hop would skip classification and
+    // admission. The project's own API answers without one.
+    if (c.kind === "free") {
+      const res = await d.baseFetch(input, { ...(init ?? {}), redirect: "manual" });
+      if (!isRedirect(res)) return res;
+      await res.body?.cancel();
+      log("[smoke-admission] refused", { decision: "redirect_refused", host: req.url.hostname, path: req.url.pathname });
+      return refusal("redirect_refused", res.status);
+    }
     const ctx = missionAdmission.getStore();
+    // What is known about THIS purchase's identity, filled in as it is worked
+    // out, so a refusal can say whether the same purchase may already exist.
+    let authUnavailable = false;
+    let actor: string | null = c.kind === "provider" || c.kind === "model" ? c.actor : null;
+    // R1. Whether an EARLIER attempt may already have bought this purchase,
+    // read before this attempt asks for admission (so its own admission, even
+    // one whose answer is lost, never counts as "earlier").
+    let prior: "yes" | "no" | "unknown" | null = null;
     const refuse = (decision: string, detail?: unknown) => {
-      log("[smoke-admission] refused", { decision, detail: detail ?? null, host: req.url.hostname, path: req.url.pathname, queue: ctx?.queueId ?? null });
-      return refusal(decision, detail);
+      // A PROVIDER request refused now is not proof the same purchase was
+      // never made before: it is reported uncertain whenever an earlier one
+      // exists or could not be ruled out, so an earlier uncertain credit hold
+      // is never refunded by a later refusal.
+      const earlier = c.kind === "provider" && (authUnavailable || (prior !== null && prior !== "no"));
+      log("[smoke-admission] refused", { decision, detail: detail ?? null, earlier_purchase: earlier, host: req.url.hostname, path: req.url.pathname, queue: ctx?.queueId ?? null });
+      return refusal(decision, detail, earlier);
     };
     if (c.kind === "forbidden") return refuse("forbidden", c.reason);
     if (!ctx) return refuse("no_mission_context");
-    if (ctx.signal?.aborted) return refuse("revoked");
-    if (ctx.closedReason) return refuse(ctx.closedReason, "closed");
-    if (!ctx.taskId || typeof ctx.generation !== "number") return refuse("not_bound");
     // Cached once found; a missing or unreadable row is asked again next time.
-    if (!ctx.authorization) ctx.authorization = await loadAuthorization(d.db, ctx.queueId);
+    if (!ctx.authorization) {
+      const loaded = await loadAuthorization(d.db, ctx.queueId);
+      if (loaded === "unavailable") {
+        authUnavailable = true;
+        return refuse("authorization_unavailable");
+      }
+      ctx.authorization = loaded;
+    }
     const auth = ctx.authorization;
     if (!auth) return refuse("not_authorized");
 
     // A poll belongs to a purchase this authorization admitted, or to nothing.
     let parent: { operation_key: string; actor: string; reservation_token: string } | null = null;
-    let actor: string;
     if (c.kind === "poll") {
       parent = await findParent(d.db, auth.id, c.ref);
       if (!parent) return refuse("missing_parent");
       actor = parent.actor;
-    } else {
-      actor = c.actor;
     }
-    const tpl = templateFor(auth, c.kind, actor);
+    const tpl = templateFor(auth, c.kind, actor!);
     if (!tpl.ok) return refuse(tpl.reason, actor);
     const bounded = boundRequest(req, c, tpl.template.request_limits);
     if (!bounded.ok) return refuse("request_limits", bounded.reason);
     const final = bounded.request;
     const hash = await payloadHash(final);
     const key = c.kind === "provider" ? `provider:${actor}:${hash}` : `${c.kind}:${newKey()}`;
+    if (c.kind === "provider") prior = await priorPurchase(d.db, auth.id, actor!, hash);
+
+    // Local stops, checked once the purchase is identifiable so a refusal of a
+    // replay still reads as uncertain.
+    if (ctx.signal?.aborted) return refuse("revoked");
+    if (ctx.closedReason) return refuse(ctx.closedReason, "closed");
+    if (!ctx.taskId || typeof ctx.generation !== "number") return refuse("not_bound");
 
     const decision = await admitOperation(d.db, {
       queueId: ctx.queueId, workerId: ctx.workerId, taskId: ctx.taskId, generation: ctx.generation,
-      key, kind: c.kind, actor, templateId: tpl.id, payloadHash: hash, parentKey: parent?.operation_key ?? null,
+      key, kind: c.kind, actor: actor!, templateId: tpl.id, payloadHash: hash, parentKey: parent?.operation_key ?? null,
     });
     if (decision.decision !== "admitted") {
       if (CLOSING.has(decision.decision)) ctx.closedReason = decision.decision;
       return refuse(decision.decision, decision);
     }
     const admitted = decision as Extract<AdmissionDecision, { decision: "admitted" }>;
-    // Rechecked AFTER admission, immediately before the send. The slot stays
-    // consumed (conservative); the request is not made.
+    // Rechecked AFTER admission, immediately before the send: revocation, a
+    // mission call that ended while the admission was in flight (R6), and the
+    // deadline. The slot stays consumed (conservative); the request is not made.
     if (ctx.signal?.aborted) return refuse("revoked_after_admission");
-    if (now() >= Date.parse(admitted.deadline_at)) return refuse("deadline_after_admission");
+    if (ctx.closedReason) return refuse("closed_after_admission", ctx.closedReason);
+    if (!(now() < Date.parse(admitted.deadline_at))) return refuse("deadline_after_admission");
 
     // Exactly the request that was bounded and hashed: its URL (with any
     // pinned caps) and its body. Headers and signal are the caller's.
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     headers.delete("content-length");
     const res = await d.baseFetch(final.url.href, {
-      method: final.method, headers, body: final.body ?? undefined,
+      method: final.method, headers, body: final.body ?? undefined, redirect: "manual",
       signal: init?.signal ?? (input instanceof Request ? input.signal : undefined),
     });
+    if (isRedirect(res)) {
+      // Sent and admitted, but not followed: a provider request stays uncertain.
+      await res.body?.cancel();
+      log("[smoke-admission] refused", { decision: "redirect_refused", key: admitted.operation_key, status: res.status });
+      return refusal("redirect_refused", res.status, c.kind === "provider");
+    }
     log("[smoke-admission] sent", { kind: c.kind, actor, key: admitted.operation_key, committed_microusd: admitted.committed_microusd, status: res.status });
     await observe(d.db, ctx.queueId, c, res, admitted, parent, log);
     return res;
   };
+  // Lets the transports tell the smoke is active (smokeAdmissionActive).
+  Object.defineProperty(gate, ADMISSION_GATE_MARK, { value: true });
+  return gate;
 }
 
 /**
@@ -517,26 +655,72 @@ async function observe(
 ): Promise<void> {
   try {
     if (c.kind === "provider" && c.captures && res.ok) {
-      const j = await res.clone().json().catch(() => null) as { id?: unknown; data?: { id?: unknown; defaultDatasetId?: unknown } } | null;
-      const run = c.captures === "apify_run" ? j?.data : j;
+      const j = await res.clone().json().catch(() => null) as { id?: unknown; data?: Record<string, unknown> } | null;
+      const run = (c.captures === "apify_run" ? j?.data : j) as Record<string, unknown> | null | undefined;
       const runId = typeof run?.id === "string" ? run.id : null;
       const datasetId = c.captures === "apify_run" && typeof j?.data?.defaultDatasetId === "string" ? j.data.defaultDatasetId : null;
-      if (runId) {
-        const ok = await recordReceipt(db, { queueId, key: admitted.operation_key, token: admitted.reservation_token, runId, datasetId });
-        if (!ok) log("[smoke-admission] run id NOT recorded; the purchase stays uncertain", { key: admitted.operation_key });
+      // R7. The start response can already carry the run's charges (a run that
+      // finished at once); they are recorded with the ids in one write.
+      const charge = c.captures === "apify_run" ? apifyCharge(run ?? null) : null;
+      if (runId || charge !== null) {
+        const ok = await recordReceipt(db, {
+          queueId, key: admitted.operation_key, token: admitted.reservation_token, runId, datasetId,
+          ...(charge !== null ? { reportedMicrousd: charge, source: "apify_run(start).receipt" } : {}),
+        });
+        if (!ok) log("[smoke-admission] start receipt NOT recorded; the purchase stays uncertain", { key: admitted.operation_key });
       }
     }
     if (c.kind === "poll" && c.vendor === "apify" && "runId" in c.ref && parent && res.ok) {
-      const j = await res.clone().json().catch(() => null) as { data?: { usageTotalUsd?: unknown } } | null;
-      const usd = j?.data?.usageTotalUsd;
-      if (typeof usd === "number" && Number.isFinite(usd) && usd >= 0) {
+      const j = await res.clone().json().catch(() => null) as { data?: Record<string, unknown> } | null;
+      const charge = apifyCharge(j?.data ?? null);
+      if (charge !== null) {
         await recordReceipt(db, {
           queueId, key: parent.operation_key, token: parent.reservation_token,
-          reportedMicrousd: Math.ceil(usd * 1_000_000), source: "apify_run.usageTotalUsd",
+          reportedMicrousd: charge, source: "apify_run(status).receipt",
         });
       }
     }
   } catch (e) {
     log("[smoke-admission] observation failed", String(e).slice(0, 160));
   }
+}
+
+/**
+ * The run's charge in micro-dollars, by the repository's receipt rule: the
+ * larger of Apify's settled usage total and its priced charged events, never
+ * their sum (`budgetPolicy.receiptUsd` over `providerReceipts.apifyReceiptFromRun`).
+ * Each report is a running total, and the database keeps the largest one, so a
+ * start figure followed by later status figures is never counted twice.
+ *
+ * Self-contained on purpose (this module imports nothing it does not own); a
+ * test pins it equal to those two functions so the rules cannot drift.
+ */
+export function apifyCharge(run: Record<string, unknown> | null): number | null {
+  if (!run) return null;
+  const money = (v: unknown) => {
+    const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const vals: number[] = [];
+  if (typeof run.usageTotalUsd === "number" && Number.isFinite(run.usageTotalUsd) && run.usageTotalUsd >= 0) {
+    vals.push(run.usageTotalUsd);
+  }
+  const events = (run.pricingInfo as { pricingPerEvent?: { actorChargeEvents?: Record<string, { eventPriceUsd?: unknown }> } } | null)
+    ?.pricingPerEvent?.actorChargeEvents;
+  const counts = run.chargedEventCounts as Record<string, unknown> | null | undefined;
+  if (events && typeof events === "object" && counts && typeof counts === "object") {
+    const prices: Record<string, number> = {};
+    for (const [name, ev] of Object.entries(events)) {
+      const p = money(ev?.eventPriceUsd);
+      if (p !== null) prices[name] = p;
+    }
+    if (Object.keys(prices).length) {
+      let charged = 0;
+      for (const [ev, n] of Object.entries(counts)) {
+        if (typeof n === "number" && Number.isFinite(n) && prices[ev] !== undefined) charged += n * prices[ev];
+      }
+      if (Number.isFinite(charged) && charged >= 0) vals.push(charged);
+    }
+  }
+  return vals.length ? Math.ceil(Math.max(...vals) * 1_000_000) : null;
 }
