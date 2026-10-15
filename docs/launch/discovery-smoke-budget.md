@@ -102,10 +102,11 @@ Replay tests pass (one existing ignored display-only case).
 The independent durable proposal now contains precise two-table/four-RPC SQL, a
 rollback that refuses to discard audit records, and 33 passing offline SQL and
 mutation controls. It is outside migration/bootstrap directories and is **not
-applied or wired into physical transports**. Three real multi-session PostgreSQL
-tests are prepared and type-checked but unrun; embedded PostgreSQL serializes
-requests and is not proof of lock contention. No actual price or provider
-receipt was verified; all proposal controls are synthetic.
+applied or wired into physical transports**. Independent native verification now
+passes all three PostgreSQL contention tests, eight failure-injection controls
+and two native mutation controls against that reference. This does not verify
+Claude's future production adapter or physical transport coverage. No actual
+price or provider receipt was verified; all proposal controls are synthetic.
 
 Activation therefore remains blocked even after all Tier 0/1 merges and these
 passing tests. Approval is still required for durable schema/admission wiring
