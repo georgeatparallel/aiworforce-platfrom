@@ -102,3 +102,27 @@ Replayed against real Postgres (PGlite) in
 `tests/infra/` still reads these files — the baseline's structure, the V2
 queue's invariants, RLS coverage and schema drift all keep their guarantees.
 Holding a file changes where it lives, not what it must satisfy.
+
+## `20261015130000_credits_rearm_settled_key.sql`
+
+Billing. `credits_reserve` replayed a key whose reservation had been
+**refunded**, either settled `not_charged` (the call did not start) or
+`released` by the stale reaper. A later attempt under that key was allowed
+with no balance check, and settling it charged 0, so a real purchase went
+uncharged.
+
+This migration **re-arms** such a key in place: the same conditional debit as
+a new reservation, the row locked first so concurrent attempts re-arm once,
+and the reaper's 30-minute window counted from the re-arm (`rearmed_at`,
+`rearm_count`, both additive). A key that is `reserved`, `charged`, `partial`
+or `granted` is still a replay. `credits_finalize` is untouched.
+
+**Not approved for any hosted project.** It needs billing sign-off. Applied
+only by `tests/db-contract/bootstrap.sh` to the lane's throwaway database.
+`tests/db-contract/creditRearm.contract.test.ts` proves the behaviour, and
+`tests/db-contract/mutation.sh` proves those tests fail without it. It is
+independent of the Lead V2 queue chain and of `20261015120000` (purchase
+claims, concurrency): either can be applied without the others.
+
+Rollback, verbatim to the baseline functions:
+`rollback/20261015130000_credits_rearm_settled_key.down.sql`.
