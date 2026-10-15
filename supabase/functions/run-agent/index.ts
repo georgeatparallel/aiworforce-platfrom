@@ -136,7 +136,8 @@ import {
   assertPaidExecutionAllowed, buildPaidExecutionPreflight,
 } from "../_shared/leadPaidExecutionPreflight.ts";
 import {
-  mergePendingRuns, recoverCompletedRuns, recoverPendingRuns, type LedgerStartedRow,
+  COMPLETED_RUN_STATUSES, mergePendingRuns, readResumableTimeoutRows, recoverCompletedRuns, recoverPendingRuns,
+  resolvedRunIdsFrom, type LedgerStartedRow,
 } from "../_shared/pendingRunRecovery.ts";
 import { LEAD_EXECUTION_CALLS_TABLE } from "../_shared/executionLedger.ts";
 import {
@@ -3118,7 +3119,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 "status, request_input, started_at, created_at")
               .eq("task_id", leadResumeParentTaskId)
               .eq("workspace_id", workspace_id)
-              .in("status", ["succeeded", "empty"])
+              // `reused` too: a run ADOPTED in an earlier slice is a finished,
+              // paid-for dataset. Without it, an adoption whose checkpoint
+              // write was lost was neither pending nor completed to the next
+              // slice, which bought the question again.
+              .in("status", [...COMPLETED_RUN_STATUSES])
               .not("provider_run_id", "is", null)
               .order("started_at", { ascending: true })
               .limit(200) as unknown as { data: LedgerStartedRow[] | null; error: unknown };
@@ -3151,7 +3156,18 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               console.error("[run-agent][pending-run-recovery] read failed", describeReadError(error));
               return [];
             }
-            return data ?? [];
+            // ── AND A RUN STILL EXECUTING WHEN ITS POLL WINDOW CLOSED ──────
+            //
+            // The transport finalizes that call `timed_out` WITH its run id and
+            // `metadata.resumable: true` (`outcomeFromToolResult`): billed,
+            // unread, pending. Read on its own window, same task + workspace
+            // gate, keeping only the runs still executing
+            // (`isResumableTimeout`). A failure there keeps these `started`
+            // rows: best effort, as above.
+            const resumable = await readResumableTimeoutRows(supabase as never, {
+              table: LEAD_EXECUTION_CALLS_TABLE, parentTaskId: leadResumeParentTaskId, workspaceId: workspace_id,
+            }, (msg, meta) => console.error(`[run-agent]${msg}`, describeReadError(meta)));
+            return [...(data ?? []), ...resumable];
           } catch (e) {
             // RECOVERY MUST NOT BE ABLE TO FAIL A RUN IT ONLY REPAIRS. Same
             // rule the execution ledger follows: observability and repair are
@@ -3176,13 +3192,13 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // deno-lint-ignore no-explicit-any
             const { data, error } = await (supabase as any)
               .from(LEAD_EXECUTION_CALLS_TABLE)
-              .select("provider_run_id, status")
+              .select("provider_run_id, status, metadata")
               .eq("task_id", leadResumeParentTaskId)
               .eq("workspace_id", workspace_id)
               .in("provider_run_id", ids)
               .in("status", ["reused", "succeeded", "failed", "timed_out"])
               .limit(200) as unknown as {
-                data: Array<{ provider_run_id: string | null }> | null; error: unknown;
+                data: LedgerStartedRow[] | null; error: unknown;
               };
             if (error) {
               // BEST EFFORT, LIKE THE READ ABOVE. An unreadable answer means
@@ -3192,9 +3208,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 String(error));
               return new Set<string>();
             }
-            return new Set(
-              (data ?? []).map((r) => r.provider_run_id ?? "").filter((x) => !!x),
-            );
+            // A RESUMABLE `timed_out` row does not resolve its run: the run was
+            // still executing when it was written (`resolvedRunIdsFrom`).
+            return resolvedRunIdsFrom(data ?? []);
           } catch (e) {
             console.error("[run-agent][pending-run-recovery] resolved read threw",
               String(e));

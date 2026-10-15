@@ -45,7 +45,8 @@
 // REPLACE a POST — it can never add a charge. The worst case is re-reading a
 // run that had in fact finished, which costs nothing.
 //
-// Pure. No network, no database, no clock.
+// Pure. No network, no database, no clock — except `readResumableTimeoutRows`,
+// the one read, against an injected builder.
 
 import { inputFingerprint } from "./leadResumeState.ts";
 import { redactProviderInput } from "./executionLedger.ts";
@@ -62,6 +63,111 @@ export interface LedgerStartedRow {
   request_input?: Record<string, unknown> | null;
   started_at?: string | null;
   created_at?: string | null;
+  /**
+   * The finalization metadata (`outcomeFromToolResult`). Read only to tell a
+   * RESUMABLE timeout — the poll window closed on a run still RUNNING, so
+   * `metadata.resumable` is true — from a run that genuinely ended.
+   */
+  metadata?: Record<string, unknown> | null;
+}
+
+/**
+ * A `timed_out` row whose run is still executing. The transport finalizes a
+ * poll window that closed on a RUNNING/READY Apify run — and a D3 re-read that
+ * found it still running — as `timed_out` with the run id and
+ * `metadata.resumable: true` (`outcomeFromToolResult`). That run is billed and
+ * unread: pending, exactly like a `started` row. A run Apify itself timed out
+ * or aborted is `timed_out` with `resumable: false`, and has ended.
+ */
+export function isResumableTimeout(r: Pick<LedgerStartedRow, "status" | "metadata">): boolean {
+  return r.status === "timed_out" && r.metadata?.["resumable"] === true;
+}
+
+/** A row that names a run still owed a read: `started`, or a resumable timeout. */
+export function isPendingLedgerRow(r: Pick<LedgerStartedRow, "status" | "metadata">): boolean {
+  return r.status === "started" || isResumableTimeout(r);
+}
+
+/**
+ * The statuses whose rows MAY account for a run (run-agent's `resolvedRunIds`
+ * read). A `timed_out` row among them resolves its run only when it is not
+ * resumable — see {@link resolvedRunIdsFrom}.
+ */
+export const RESOLVING_STATUSES: readonly string[] = ["reused", "succeeded", "failed", "timed_out"];
+
+/**
+ * Which runs the ledger has already accounted for.
+ *
+ * A RESUMABLE `timed_out` row does not resolve its run: the run was still
+ * executing when that row was finalized — the first poll window closing, or a
+ * later re-read that found it still running. Counting it as resolved dropped a
+ * run that was paid for and never read, and the next slice could buy the same
+ * question again.
+ */
+export function resolvedRunIdsFrom(
+  rows: ReadonlyArray<Pick<LedgerStartedRow, "provider_run_id" | "status" | "metadata">>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const r of rows) {
+    const id = typeof r.provider_run_id === "string" ? r.provider_run_id.trim() : "";
+    if (!id) continue;
+    if (!RESOLVING_STATUSES.includes(String(r.status ?? ""))) continue;
+    if (isResumableTimeout(r)) continue;
+    out.add(id);
+  }
+  return out;
+}
+
+/** The slice of the PostgREST builder `readResumableTimeoutRows` uses — a fake in tests. */
+export interface LedgerReadQuery {
+  select(columns: string): LedgerReadQuery;
+  eq(column: string, value: unknown): LedgerReadQuery;
+  not(column: string, operator: string, value: unknown): LedgerReadQuery;
+  order(column: string, o: { ascending: boolean }): LedgerReadQuery;
+  limit(n: number): PromiseLike<{ data: unknown[] | null; error: unknown }>;
+}
+export interface LedgerReadDb {
+  from(table: string): LedgerReadQuery;
+}
+
+/** One lineage's timed-out runs worth reading: newest first, bounded like the `started` read. */
+export const RESUMABLE_TIMEOUT_READ_LIMIT = 50;
+
+/**
+ * THE ONE READ IN THIS FILE: the lineage's `timed_out` rows that still name a
+ * run executing (`isResumableTimeout`), for `recoverPendingRuns`.
+ *
+ * Scoped to the PARENT task and the WORKSPACE — the ownership gate the
+ * `started` read uses — so a run is only ever adopted by the lineage that paid
+ * for it. Its own window, newest first, so terminal timeouts never push a
+ * `started` row out of that read's. Best effort: no parent, an error or a
+ * throw is "nothing more to recover", never a failed run.
+ */
+export async function readResumableTimeoutRows(
+  db: LedgerReadDb,
+  scope: { table: string; parentTaskId: string | null; workspaceId: string },
+  log: (msg: string, meta?: unknown) => void = () => {},
+): Promise<LedgerStartedRow[]> {
+  if (!scope.parentTaskId) return [];
+  try {
+    const { data, error } = await db.from(scope.table)
+      .select("capability, provider_id, provider_run_id, dataset_id, " +
+        "status, request_input, started_at, created_at, metadata")
+      .eq("task_id", scope.parentTaskId)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("status", "timed_out")
+      .not("provider_run_id", "is", null)
+      .order("started_at", { ascending: false })
+      .limit(RESUMABLE_TIMEOUT_READ_LIMIT);
+    if (error) {
+      log("[pending-run-recovery] timed-out read failed", error);
+      return [];
+    }
+    return ((data ?? []) as LedgerStartedRow[]).filter(isResumableTimeout);
+  } catch (e) {
+    log("[pending-run-recovery] timed-out read threw", String(e));
+    return [];
+  }
 }
 
 /**
@@ -77,6 +183,22 @@ export interface LedgerStartedRow {
  * `input_fingerprint` is what actually identifies the question, and it is
  * strictly stronger than the capability: the same input to the same provider is
  * the same purchase whichever stage asked for it.
+ *
+ * ── AND IT CARRIES NO D3 `selection`, ON PURPOSE ───────────────────────────
+ *
+ * Rebuilding one from the row (`provider_call_spec.capability` + the sent
+ * `input`) was tried and is UNSAFE in this engine (chaos lab, Query B
+ * d22d9ee6). The D3 re-ask dedupes owed questions against the slice's own
+ * strategy by the PRE-compile selection input; the ledger holds only the
+ * POST-compile payload, so the two never match. When the slice re-proposes the
+ * same page, the owed re-ask adopts the run first and the slice's own,
+ * identical question then finds nothing pending and BUYS IT AGAIN (pending
+ * page 2 / page 3 with the slice's writes lost: one question bought twice).
+ * And a re-planned query is compiled against the RESTORED retrieval plan,
+ * which predates the amendment that proposed it, so the re-ask compiles to a
+ * different input and adoption-only refuses it — safe, but nothing adopted.
+ * Such a run stays listed (adopted if asked again, never bought) until
+ * `awaitedPendingRuns` stops it holding the lineage.
  */
 export interface RecoveredPendingRun {
   capability: null;
@@ -103,9 +225,10 @@ export function redactionIsIdentityFor(input: unknown): boolean {
 /**
  * Rebuild the pending runs a hard-killed slice never checkpointed.
  *
- * A row qualifies only when it is still `started` AND names a run — anything
- * else either finished (and has its answer recorded) or never reached the
- * provider (and cost nothing).
+ * A row qualifies only when it is still `started` — or `timed_out` on a run
+ * still executing (`isResumableTimeout`) — AND names a run; anything else
+ * either finished (and has its answer recorded) or never reached the provider
+ * (and cost nothing).
  */
 export function recoverPendingRuns(
   rows: readonly LedgerStartedRow[],
@@ -127,8 +250,9 @@ export function recoverPendingRuns(
    *
    * The constraint violation is fixed. This is the guard that makes the NEXT
    * settle failure cost a stale ledger row instead of a parked lineage: a run
-   * with any terminal row — `reused`, `succeeded`, `failed`, `timed_out` — has
-   * been accounted for, and re-queueing it can only mislead.
+   * with any terminal row — `reused`, `succeeded`, `failed`, a `timed_out`
+   * that is not resumable — has been accounted for, and re-queueing it can
+   * only mislead. Built by {@link resolvedRunIdsFrom}.
    *
    * Absent or empty preserves the previous behaviour exactly.
    */
@@ -137,9 +261,19 @@ export function recoverPendingRuns(
   const out: RecoveredPendingRun[] = [];
   const seen = new Set<string>();
   for (const r of rows) {
-    if (r.status !== "started") continue;
+    // A resumable `timed_out` row is as pending as a `started` one: the poll
+    // window closed on a run still executing (`isResumableTimeout`).
+    if (!isPendingLedgerRow(r)) continue;
     const runId = typeof r.provider_run_id === "string" ? r.provider_run_id.trim() : "";
-    if (!runId || seen.has(runId)) continue;
+    if (runId && seen.has(runId)) {
+      // THE WAIT IS BOUNDED FROM THE PURCHASE. A later re-read of the same run
+      // (D3, still executing) must not restart `awaitedPendingRuns`' clock.
+      const first = out.find((x) => x.run_id === runId);
+      const at = r.started_at ?? r.created_at ?? null;
+      if (first && at && at < first.started_at) first.started_at = at;
+      continue;
+    }
+    if (!runId) continue;
     // AN OUTCOME ELSEWHERE OUTRANKS A STALE `started`.
     if (resolvedRunIds.has(runId)) continue;
     // The ACTOR key is what `pending_runs.provider` holds. `provider_id` is the
@@ -236,7 +370,16 @@ export interface RecoveredCompletedRun {
   input_fingerprint: string;
 }
 
-const COMPLETED_STATUSES = new Set(["succeeded", "empty"]);
+/**
+ * A run whose dataset is complete and paid for. `reused` is one too: an
+ * adoption is recorded `reused` only when the run FINISHED and its rows were
+ * read (`outcomeFromToolResult`; run-agent's `onRunAdopted` settles the started
+ * row the same way). Leaving it out meant a run adopted in slice N whose
+ * checkpoint write was then lost was known to no later slice — not pending (it
+ * is settled), not completed — and slice N+1 bought the question again.
+ */
+export const COMPLETED_RUN_STATUSES: readonly string[] = ["succeeded", "empty", "reused"];
+const COMPLETED_STATUSES = new Set(COMPLETED_RUN_STATUSES);
 
 export function recoverCompletedRuns(rows: readonly LedgerStartedRow[]): RecoveredCompletedRun[] {
   const out: RecoveredCompletedRun[] = [];
