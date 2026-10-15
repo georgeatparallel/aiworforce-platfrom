@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Stands in for psql in tests/infra/testWorkerProposal.test.ts: any call is a
+# connection the script must not have made.
+echo "PSQL_CALLED $*"
+exit 99

@@ -1,5 +1,13 @@
 # Which Supabase project does a command touch?
 
+> **Correction (2026-10-14): "TEST" here is the LIVE project.** Since the
+> move to `ohsdatpvfdjdemstoiuj`, one project serves both roles:
+> `src/lib/env/projectEnvironment.ts` maps both `production` and `test` to it,
+> and `scripts/verify-deploy-target.mjs` does the same. So `npm run supabase:test`
+> reaches **production**. There is no non-production Supabase project today.
+> A test deployment needs a new one: see `docs/launch/test-worker-hosting.md`.
+> The rest of this page predates that and is kept as written.
+
 ## The default was production
 
 `supabase/config.toml` named `wqnigjhcwjxtmordrwno` — **production** — until
