@@ -1,0 +1,350 @@
+{
+  "schema": "discovery-quality-evidence-v1",
+  "provenance": "RECORDED EVIDENCE copied from committed snapshots; no new service access. Company statements are not independently fact-checked. Descriptions capped at 2000 characters and emails redacted.",
+  "source_files": [
+    "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+    "tests/fixtures/lead-v2/run-4250f181/task.json"
+  ],
+  "rows": [
+    {
+      "id": "size:ByteByteGo",
+      "name": "ByteByteGo",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "ByteByteGo",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "A popular weekly newsletter covering topics and trends in large-scale system design, from the authors of the best-selling System Design Interview series.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "unverified_discovery_band",
+      "band_confidence": "low",
+      "associated_member_count": 86,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:Psychology Today",
+      "name": "Psychology Today",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "Psychology Today",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "Psychology Today is devoted exclusively to everybody's favorite subject: ourselves.\n\nAt PsychologyToday.com, we have gathered renowned academics, psychiatrists, psychologists and authors in our field to contribute their thoughts and ideas on what makes us tick—there are over 900 of them—creating a truly live stream of what's going on in \"psychology today.\"​\n\nOur magazine, first launched in 1967, continues to thrive.\n\nPsychology Today's Therapy Directory (powered by Sussex Directories, Inc) provides a comprehensive directory of therapists, psychiatrists and treatment facilities near you.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "unverified_discovery_band",
+      "band_confidence": "low",
+      "associated_member_count": 2135,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:Deadline Hollywood",
+      "name": "Deadline Hollywood",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "Deadline Hollywood",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "Deadline.com is the premier news source covering the business of entertainment, including movies, television, online, digital and related areas. Deadline was founded by veteran journalist Nikki Finke in 2006. Since then, the site has grown to feature a number of additional prominent and experienced entertainment editors from around the world.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "unverified_discovery_band",
+      "band_confidence": "low",
+      "associated_member_count": 190,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:How to AI",
+      "name": "How to AI",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "How to AI",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "Subscribe for free at https://how-to-ai.guide",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "unverified_discovery_band",
+      "band_confidence": "low",
+      "associated_member_count": 100,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:Recode",
+      "name": "Recode",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "Recode",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "Recode is a tech news, reviews and analysis site, from the most informed and respected journalists in technology and media. Because everything in tech and media is constantly being rethought, refreshed, and renewed, Recode’s aim is to reimagine tech journalism.  Recode is the producer and host of the Code Conference events founded in 2014. \r\n\r\nRecode is part of the Vox Media family and joined by The Verge, Vox.com, SB Nation, Polygon, Eater, Racked, Curbed. Vox Media is redefining the modern media company by empowering the smartest creative voices with the technology to create and distribute premium content, and that connects with an audience of 165 million.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "declared_company_record_band",
+      "band_confidence": "medium",
+      "associated_member_count": 490,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:Design Milk",
+      "name": "Design Milk",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "Design Milk",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "Design Milk is a leader in the modern design, digital media, interior and architectural trade, and consumer industries. We support the world’s best independent brands, emerging designers, destinations, design events, and products through exceptional, award-winning content across the worlds of art, architecture, interior design, furniture, fashion, and technology.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "declared_company_record_band",
+      "band_confidence": "medium",
+      "associated_member_count": 697,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:Braintrust",
+      "name": "Braintrust",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "Braintrust",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "Braintrust is revolutionizing hiring with Braintrust AIR, the world's first and only end-to-end AI recruiting platform. Trained with human insights and proprietary data, Braintrust AIR reduces time to hire from months to days, instantly matching you with pre-vetted qualified candidates, and conducting the first round phone screen for you. Trusted by hundreds of Fortune 1000 enterprises including Nestlé, Porsche, Atlassian, Goldman Sachs, and Nike, Braintrust AIR is making talent acquisition professionals 100x more effective and saving companies hundreds of thousands of dollars in recruiting costs.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "declared_company_record_band",
+      "band_confidence": "medium",
+      "associated_member_count": 390,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:DeepLearning.AI",
+      "name": "DeepLearning.AI",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "DeepLearning.AI",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "DeepLearning.AI is making a world-class AI education accessible to people around the globe. DeepLearning.AI was founded by Andrew Ng, a global leader in AI.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "declared_company_record_band",
+      "band_confidence": "medium",
+      "associated_member_count": 658,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:Wall Street Oasis",
+      "name": "Wall Street Oasis",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "Wall Street Oasis",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "🧠 What Is Wall Street Oasis (WSO)?\n\nWall Street Oasis (WSO) is the largest online community and career platform for students and professionals pursuing careers in finance, consulting, and related industries. Founded by Patrick Curtis, a former investment banker, WSO combines expert education, mentorship, and a massive peer-driven ecosystem to help people break into elite finance roles—from investment banking and private equity to hedge funds, venture capital, and management consulting.\n\n🌐 The Community\n\nAt its core, WSO began as a forum—a place where finance professionals and aspiring candidates could share insights, discuss recruiting tips, and demystify the industry. Over time, it’s grown into a global community of over 900,000 members, including analysts, associates, VPs, partners, and students from top universities worldwide.\n\nThe forums cover topics such as:\nInterview and recruiting experiences\nResume and networking advice\nCompensation data and bonus reports\nMBA and graduate program discussions\nLateral transitions and career changes\n\n🚀 WSO Academy\n\nWSO Academy is the platform’s flagship educational program—a structured, high-touch accelerator designed to help students and career changers land top finance offers within months, not years.\n\nIt combines:\nLive office hours with senior mentors and finance professionals\nBootcamps covering financial modeling, valuation, and technical interview prep\nAccess to 2,000+ mentors across investment banking, private equity, and hedge funds\nNetworking and application strategy guidance\nFull tuition refund guarantee if students don’t land a lucrative offer within a set timeframe\n\nThe program is tailored to four key groups:\n🎓 Target school students\n🏫 Non-target students\n🔁 Career changers\n🌍 International candidates",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "declared_company_record_band",
+      "band_confidence": "medium",
+      "associated_member_count": 834,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:BigRio",
+      "name": "BigRio",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "BigRio",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "BigRio is a technology consulting firm empowering data to drive innovation and advanced analytics. We specialize in cutting-edge Big Data, Machine Learning, and Custom Software strategy, analysis, architecture, and implementation solutions. We are an elite group with MIT roots, shining when tasked with complex missions. Whether it’s assembling mounds of data from a variety of sources, surfacing intelligence with Deep Learning, or building high-volume, highly-available systems, we consistently deliver.\n \nWith extensive domain knowledge, BigRio’s scientists and engineers design and build best-in-class solutions across a variety of verticals. This diverse industry exposure and our constant run-in with cutting-edge technology equips us with invaluable tools, strategies, and techniques. Our knowledge and horsepower bring innovative, cost-conscious, and extensible results to complex business challenges.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "declared_company_record_band",
+      "band_confidence": "medium",
+      "associated_member_count": 124,
+      "exact_headcount": null
+    },
+    {
+      "id": "size:Inman",
+      "name": "Inman",
+      "source_file": "tests/fixtures/lead-v2/size-semantics-replay-2026-09-24/canary_companies.json",
+      "source_key": "Inman",
+      "snapshot_date": "2026-09-24",
+      "observation_date": null,
+      "observation_date_note": "Source identifies snapshot capture day only; original provider observation timestamp is unavailable.",
+      "evidence_type": "company_self_description",
+      "confidence": "medium",
+      "description": "The smartest real estate professionals start their day with Inman.\n\nInman is the leading source of news, events, insights, and community for the residential real estate industry. Trusted by real estate agents, brokers, executives, and decision-makers across the housing landscape, Inman delivers independent journalism covering market trends, technology, business strategy, economic forces, and the people shaping the future of real estate.\n\nBuilt on a foundation of journalistic integrity and powered by a modern media platform, Inman has helped real estate professionals navigate an ever-changing industry for decades. Guided by the belief that independent reporting can thrive alongside live events, industry sponsorships, digital media, and a robust professional community, Inman has earned its reputation as one of the most trusted media brands in the country.\n\nNEWS\nInman Select is the premium subscription platform, providing exclusive access to industry-leading journalism, sharp analysis, special reports, market insights, and expert commentary. Subscribers gain the information and perspective needed to understand market shifts, identify emerging trends, and make informed business decisions.\n\nEVENTS\nInman Connect is where real estate's brightest minds gather to learn, network, and grow in person. Keynotes, panels, workshops, and curated networking opportunities put attendees in the room with the leaders defining the industry while delivering practical knowledge attendees can apply to their businesses. For thousands, Inman Connect serves as a much needed change of scenery and space to learn, grow, and connect.\n\nCOMMUNITY\nInman Community is an online platform available to Inman event attendees and members, empowering them to connect, network, share knowledge, and have niche conversations with their peers before, during, and after events. \n\nTo learn more about Inman Select, attend Inman Connect, submit a story, or explore sponsorship opportunities, visit Inman.com.",
+      "band": {
+        "start": 11,
+        "end": 50
+      },
+      "band_evidence_type": "declared_company_record_band",
+      "band_confidence": "medium",
+      "associated_member_count": 169,
+      "exact_headcount": null
+    },
+    {
+      "id": "startup:Lab0",
+      "name": "Lab0",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "lab0.ai",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "Enterprise software implementation is broken,  and it has been for decades. \r\nEvery rollout, whether it's a traditional ERP or a new AI system, requires months of manual integration, configuration, and tuning done by armies of system integrators and forward-deployed engineers. \r\nLab0 builds agentic systems that automate this layer, compressing months-long implementations into weeks."
+    },
+    {
+      "id": "startup:Gojiberry AI",
+      "name": "Gojiberry AI",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "gojiberry.ai",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "Gojiberry is building the AI GTM team for B2B companies.\r\n\r\nWe start with outbound: Gojiberry finds buyers showing intent, enriches them, reaches out, follows up, handles replies, and books qualified meetings.\r\n\r\nCompanies use Gojiberry to replace the old way of doing outbound: buying tools, hiring SDRs & agencies, testing lists, writing messages, and guessing what works. Gojiberry turns it into one AI team that finds buyers and books meetings.\r\n\r\nEvery campaign makes Gojiberry smarter. It learns which buyers convert, which signals matter, which messages get replies, and which actions create revenue. Over time, Gojiberry uses what works across similar companies and industries to help every new customer get better results from day one.\r\n\r\nLong term, Gojiberry will become the system that finds every revenue opportunity and acts on it: outbound leads, website visitors, inbound leads, old CRM leads, replies, meetings, CRM updates, new campaign ideas, and account expansion.\r\n\r\nThe goal is to make every B2B company able to run a high-performing GTM team without hiring one.\r\n\r\nWe grew from $0 to $2.5M ARR in 10 months, are growing 30% MoM, profitable, and used by 2,000+ customers.\r\n\r\nCust…[truncated]"
+    },
+    {
+      "id": "startup:Fuse AI",
+      "name": "Fuse AI",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "fuseai.com",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "FuseAI is the AI-native sales platform for modern revenue teams.\r\n\r\nBuilt for high-performance outbound, FuseAI consolidates your entire GTM stack - data, enrichment, multi-channel automation, real-time buying signals, and AI-driven execution  into one seamless system.\r\n\r\nWith powerful integrations and intelligent workflows, FuseAI doesn’t just help you run campaigns. It turns every signal into pipeline, and every rep into a top performer."
+    },
+    {
+      "id": "startup:PropelAuth",
+      "name": "PropelAuth",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "propelauth.com",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "PropelAuth provides the right level of authentication for all stages of a company. New startups can use our hosted pre-built UIs which provide the simplest possible integration. Out of the box, our customers immediately have the same auth experience as large tech companies like Slack. As those startups grow, they can use our APIs and component libraries to pull aspects of the experience into their product.\r\n\r\nMore than just authentication, we will also provide useful functions tied to a \"user\" or \"organization\", like analytics, billing/subscriptions, referral programs, etc."
+    },
+    {
+      "id": "startup:SafetyKit",
+      "name": "SafetyKit",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "safetykit.com",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "SafetyKit's AI agents do the dirty work for big tech and finance companies so humans don't have to.\r\n\r\nToday companies rely on armies of low-paid outsourced humans to protect their platforms from fraud, harassment, and crime. It’s super important work, but the jobs are difficult and sometimes traumatizing, and it’s impossible to keep up. Our mission is to end this manual toil.\r\n\r\nWe learned this domain first-hand at Stripe and Airbnb, where first we built software for human reviewers, and then built models to replace them.\r\n\r\nWe’re a group of engineers from Stripe, Meta, Netflix, MIT, and Princeton that love language models and unironically love B2B SaaS. We know the economy is going to be rearranged over the next 4 years and we want to be in the driver’s seat.\r\n\r\nWe build vertical AI that works and have some of the world’s largest companies as paying customers. Patreon, Eventbrite, Upwork, Character.ai, Substack, Faire, along with a $10B+ marketplace, a $100B+ payments company, and more rely on SafetyKit in production."
+    },
+    {
+      "id": "startup:Every",
+      "name": "Every",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "every.io",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "Setup your entire back-office in one place.\r\n- Banking: Bank Accounts, Corporate Cards, Payments, Treasury\r\n- Bookkeeping & Tax: Keep you books in order and file income taxes at the end of the year\r\n- Payroll and Benefits: US Payroll in 50 states, US Contractors, International Contractors. Health, Vision, Dental, 401k Benefits"
+    },
+    {
+      "id": "startup:Nango",
+      "name": "Nango",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "nango.dev",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "Customers expect your SaaS to integrate with all the software they use.\r\n\r\nWith Nango, you ship integrations your customers love, fast.\r\n\r\nLeverage hundreds of pre-built integrations and unlimited customization."
+    },
+    {
+      "id": "startup:Pasito",
+      "name": "Pasito",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "pasito.ai",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "Pasito builds AI agents for insurance and benefits—transforming how benefits are built, delivered, and experienced.\r\n\r\nOur Core AI ingests and understands plan documents and employee census data to build structured benefit intelligence.\r\n\r\nOur Engagement AI Agents orchestrate complex workflows—powering decision support, plan comparisons, guides, highlight sheets, microsites, communications, claims reminders, RFP management, document audits, translations, and more—all from a single intelligent database.\r\n\r\nWith Pasito, carriers, brokers, and benefits vendors eliminate manual work, accelerate growth, and deliver the personalized benefits experiences employees deserve—all powered by compliant, scalable AI systems.\r\n\r\nBacked by Y Combinator, Core Innovation Capital, and other leading investors."
+    },
+    {
+      "id": "startup:FurtherAI",
+      "name": "FurtherAI",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "furtherai.com",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "FurtherAI is a domain-specific AI for the insurance industry. Our AI Assistant automates complex workflows like submission intake, policy comparisons, and underwriting audits - making teams faster, smarter, and more efficient.\r\n\r\nLeading insurers, reinsurers, MGAs, and brokers rely on FurtherAI to drive better decisions at scale. Backed by top investors including Y Combinator, Nexus, South Park Commons, and Converge, FurtherAI supports customers writing over $15B in premiums across all 50 states."
+    },
+    {
+      "id": "startup:Poly",
+      "name": "Poly",
+      "source_file": "tests/fixtures/lead-v2/run-4250f181/task.json",
+      "source_key": "poly.app",
+      "snapshot_date": "2026-09-13T16:20:27.202187+00:00",
+      "observation_date": null,
+      "observation_date_note": "Task update timestamp is recorded; individual description observation date is unavailable.",
+      "evidence_type": "captured_provider_description",
+      "confidence": "medium",
+      "description": "A personal cloud storage platform that's so good, it'll replace Finder / File Explorer on your desktop. Find anything with multi-modal, natural language search. Browse with a lightning fast interface that feels just like native. Organize, tag, view, edit, share, and more."
+    }
+  ]
+}

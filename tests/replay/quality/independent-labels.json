@@ -1,0 +1,503 @@
+{
+  "schema": "discovery-quality-labels-v1",
+  "provenance": "INDEPENDENTLY ASSIGNED evidence-interpretation labels. Assigned from captured descriptions before executing the benchmark predictor; not model outputs or company claims. Single annotator; no inter-rater reliability claim.",
+  "rubric": {
+    "target": "B2B software",
+    "MATCH": "A repeatable software/AI/developer product and business customer/use are stated. SaaS subscription proof is not required for this target.",
+    "NON_MATCH": "The described primary offering is editorial content, consumer product or consulting/custom services that does not meet the target.",
+    "UNKNOWN": "Either product, customer or primary business activity is missing/ambiguous. No facts inferred from industry tags or company reputation."
+  },
+  "industry": [
+    {
+      "id": "size:ByteByteGo",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Newsletter and interview books; the stated business is content, not a business software product."
+    },
+    {
+      "id": "size:Psychology Today",
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "Magazine and therapy-directory businesses are stated, but their audience/revenue mix and whether a qualifying business software product exists are unresolved."
+    },
+    {
+      "id": "size:Deadline Hollywood",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Entertainment journalism publisher; the described product is news."
+    },
+    {
+      "id": "size:How to AI",
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "A free subscription link alone does not establish product, customer or business activity."
+    },
+    {
+      "id": "size:Recode",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Journalism, news and conferences are explicitly described."
+    },
+    {
+      "id": "size:Design Milk",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Design-focused editorial content and media activity, not a described business software product."
+    },
+    {
+      "id": "size:Braintrust",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "A named AI recruiting platform conducts matching and screening; named enterprise customers use the product."
+    },
+    {
+      "id": "size:DeepLearning.AI",
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "AI education is stated; product delivery and customer segment are insufficient for this requirement."
+    },
+    {
+      "id": "size:Wall Street Oasis",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Student/professional community, career education and mentorship are the stated offering."
+    },
+    {
+      "id": "size:BigRio",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Technology consulting and custom software services are explicitly the primary described business."
+    },
+    {
+      "id": "size:Inman",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Independent journalism, events and industry media are stated."
+    },
+    {
+      "id": "startup:Lab0",
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "Enterprise implementation automation is described, but a repeatable product versus bespoke integration service is not established."
+    },
+    {
+      "id": "startup:Gojiberry AI",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "Automated outbound actions and a learning system sold to B2B companies, with stated recurring revenue and customers."
+    },
+    {
+      "id": "startup:Fuse AI",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "Named sales platform with integrations and automation for revenue teams establishes a software product and business buyer."
+    },
+    {
+      "id": "startup:PropelAuth",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "Hosted authentication UIs, APIs and component libraries supplied to startups establish product and business customers."
+    },
+    {
+      "id": "startup:SafetyKit",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "AI agents/software used in production by named paying companies establish a product and business customers."
+    },
+    {
+      "id": "startup:Every",
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "Banking, bookkeeping, payroll and tax are listed, but software-product delivery versus services/financial intermediation is unstated."
+    },
+    {
+      "id": "startup:Nango",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "A developer integration product used to ship integrations for customers' SaaS applications establishes business software delivery."
+    },
+    {
+      "id": "startup:Pasito",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "AI document and workflow systems used by carriers, brokers and benefits vendors establish product and business customers."
+    },
+    {
+      "id": "startup:FurtherAI",
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "Named assistant automates insurance workflows and is used by insurers/brokers as customers."
+    },
+    {
+      "id": "startup:Poly",
+      "label": "NON_MATCH",
+      "confidence": "medium",
+      "rationale": "Personal cloud storage for a user's desktop is explicitly consumer-oriented, not a stated business product."
+    }
+  ],
+  "size": [
+    {
+      "id": "size:ByteByteGo",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:ByteByteGo",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:ByteByteGo",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Psychology Today",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Psychology Today",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Psychology Today",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Deadline Hollywood",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Deadline Hollywood",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Deadline Hollywood",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:How to AI",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:How to AI",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:How to AI",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "low",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Recode",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "The read company record declares the requested band."
+    },
+    {
+      "id": "size:Recode",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Recode",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Design Milk",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "The read company record declares the requested band."
+    },
+    {
+      "id": "size:Design Milk",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Design Milk",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Braintrust",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "The read company record declares the requested band."
+    },
+    {
+      "id": "size:Braintrust",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Braintrust",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:DeepLearning.AI",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "The read company record declares the requested band."
+    },
+    {
+      "id": "size:DeepLearning.AI",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:DeepLearning.AI",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Wall Street Oasis",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "The read company record declares the requested band."
+    },
+    {
+      "id": "size:Wall Street Oasis",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Wall Street Oasis",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:BigRio",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "The read company record declares the requested band."
+    },
+    {
+      "id": "size:BigRio",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:BigRio",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Inman",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "label": "MATCH",
+      "confidence": "medium",
+      "rationale": "The read company record declares the requested band."
+    },
+    {
+      "id": "size:Inman",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    },
+    {
+      "id": "size:Inman",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "label": "UNKNOWN",
+      "confidence": "medium",
+      "rationale": "An unverified discovery band or overlapping/coarse band does not prove this requested range."
+    }
+  ]
+}
