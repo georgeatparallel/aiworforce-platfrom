@@ -1,0 +1,160 @@
+{
+  "provenance": {
+    "kind": "synthetic_control",
+    "author": "Codex",
+    "authored_at": "2026-10-14",
+    "note": "Invented reserved-domain companies and source text; simulated model proposals, not recorded provider/model output. Never real performance."
+  },
+  "rows": [
+    {
+      "id": "agency-buyers",
+      "source_url": "https://agency-buyers.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "Our cloud-based SaaS software is built for staffing agencies.",
+      "proposed_business_model": "b2b_saas",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "consultant-buyers",
+      "source_url": "https://consultant-buyers.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "Our software is sold to consulting firms.",
+      "proposed_business_model": "b2b_software",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "provider-buyers",
+      "source_url": "https://provider-buyers.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "Our SaaS application is designed for professional service providers.",
+      "proposed_business_model": "b2b_saas",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "plain-software",
+      "source_url": "https://plain-software.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "Our B2B software helps businesses manage inventory.",
+      "proposed_business_model": "b2b_software",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "consultant-vendor",
+      "source_url": "https://consultant-vendor.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "We offer consulting services for B2B SaaS software companies.",
+      "proposed_business_model": "b2b_service",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "consumer-vendor",
+      "source_url": "https://consumer-vendor.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "Our software application is designed for consumers.",
+      "proposed_business_model": "consumer",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "platform-only",
+      "source_url": "https://platform-only.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "A platform for consulting firms.",
+      "proposed_business_model": "b2b_software",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "mixed-delivery",
+      "source_url": "https://mixed-delivery.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "Our B2B SaaS software and consulting services are sold to businesses.",
+      "proposed_business_model": "b2b_saas",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "negated",
+      "source_url": "https://negated.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "We are not a consulting agency; we sell B2B SaaS software.",
+      "proposed_business_model": "b2b_saas",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    },
+    {
+      "id": "mixed-audience",
+      "source_url": "https://mixed-audience.example/product",
+      "observed_at": "2026-10-14T12:00:00.000Z",
+      "evidence_type": "synthetic_first_party_product_description",
+      "source_text": "Our software serves businesses and consumers.",
+      "proposed_business_model": "b2b_saas",
+      "employee_band": {
+        "min": 11,
+        "max": 50,
+        "source": "linkedin_declared"
+      },
+      "size_evidence_type": "synthetic_declared_band",
+      "size_confidence": "high"
+    }
+  ]
+}

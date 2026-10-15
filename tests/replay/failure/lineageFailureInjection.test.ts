@@ -248,7 +248,9 @@ Deno.test("[failure] 3 a STALLED worker loses its lease mid-slice: another worke
   assertEquals([s.queue.status, s.lineage?.status, s.lineage?.lease_holder ?? null, s.claimHeld], ["complete", "terminal", null, false]);
   const stalled = s.lab.events.filter((e) => e.attempt === 2);
   assertEquals(stalled.find((e) => e.at === "claim_release")?.detail?.released, false, "its claim had been superseded");
-  assertEquals(stalled.find((e) => e.at === "lineage_release")?.detail?.reason, "not_lease_holder");
+  // Superseded (its verdict was fenced), it does not release the lineage at all.
+  assertEquals(stalled.find((e) => e.at === "lineage_release"), undefined);
+  assertEquals(stalled.find((e) => e.at === "lineage_release_skipped")?.detail?.reason, "superseded");
 });
 
 // D1 (fixed). The stale worker's end-of-slice write used to land over the
@@ -288,6 +290,41 @@ Deno.test("[failure] 3 D1 a stale FIRST slice wakes after a newer slice wrote a 
   };
   assertSettledConsistently(s, "stale first slice");
   assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
+});
+
+// The stale worker wakes while the NEW generation is mid-slice and holds the
+// lineage. The lease's holder is the task id, which both generations share, so
+// the stale release used to SUCCEED: it cleared the live generation's lease and
+// wrote its stale state — the live slice then could not release (not the
+// holder) and the lineage carried the stale slice's state. A superseded slice
+// now releases nothing; the live generation's lease and release stand.
+Deno.test("[failure] 3 a stale worker wakes while the new generation HOLDS the lineage: it does not release it — the live generation's lease and release stand, nothing bought twice", async () => {
+  const lab = await ChaosLab.open(D22());
+  const a = await lab.stalledWorker();                 // A: slice 1 bought, end write pending
+  await lab.advance(400);                               // A's queue lease expires
+  const b = await lab.stalledAfterLease();              // B claims, takes the lineage lease, holds
+  const held = await lab.lineageRow();
+  const bAttempt = lab.events.find((e) => e.at === "stalled_after_lease")!.attempt;
+  assertEquals(held?.lease_holder, lab.taskId, "B holds the lineage");
+  await a.resume();                                     // A wakes and finishes its slice
+  assert(lab.events.some((e) => e.attempt === 1 && e.at === "end_write_fenced"), "A's verdict is fenced");
+  assertEquals(lab.events.find((e) => e.attempt === 1 && e.at === "lineage_release_skipped")?.detail?.reason, "superseded");
+  assertEquals(lab.events.find((e) => e.attempt === 1 && e.at === "lineage_release"), undefined, "A released nothing");
+  const after = await lab.lineageRow();
+  assertEquals([after?.lease_holder, after?.lease_expires_at, after?.state_version, after?.status],
+    [held?.lease_holder, held?.lease_expires_at, held?.state_version, held?.status], "the lineage is exactly as B holds it");
+  await b.resume();                                     // B's slice runs on and releases normally
+  assertEquals(lab.events.find((e) => e.attempt === bAttempt && e.at === "lineage_release")?.detail?.released, true,
+    "the live generation still holds — and releases — its lease");
+  await lab.runToSettle();
+  const task = await lab.taskRow();
+  const s: Settled = {
+    lab, queue: await lab.lab.row(lab.queueId), task, lineage: await lab.lineageRow(), claimHeld: await lab.claimHeld(),
+    lastQualified: [...lab.runs].reverse().find((r) => r.qualified)?.qualified ?? [], terminal: task?.result?.terminal_status,
+  };
+  assertSettledConsistently(s, "stale worker during a live generation");
+  assertEquals([s.terminal, s.lastQualified], ["search_exhausted", [CONTINUUM]]);
+  assertEquals(lab.duplicatePurchases(), []);
 });
 
 let stalled: Promise<Settled> | null = null;

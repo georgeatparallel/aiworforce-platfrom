@@ -41,6 +41,7 @@ import { canonicalModelId, MODEL_PRICES } from "./modelCostModel.ts";
 // this module, so a value import here would be a cycle. Types are erased, so
 // this one is not.
 import type { ModelCallTelemetry } from "./modelCostModel.ts";
+import { retryTransient, type RetryOptions } from "./retryTransient.ts";
 
 export const EXECUTION_LEDGER_VERSION = "lead-execution-ledger-v1" as const;
 
@@ -245,7 +246,12 @@ export interface ExecutionLedgerRow extends Omit<ExecutionCallSpec, "request_inp
  */
 export interface LedgerWriter {
   insert(row: ExecutionLedgerRow): Promise<void>;
-  finalize(id: string, patch: Partial<ExecutionLedgerRow>): Promise<void>;
+  /**
+   * Resolves `false` when the write did not land (the database answered an
+   * error); anything else is "written". Optional to report: a writer that
+   * resolves nothing is read as having written, as before.
+   */
+  finalize(id: string, patch: Partial<ExecutionLedgerRow>): Promise<void | boolean>;
 }
 
 // ── REDACTION ───────────────────────────────────────────────────────────────
@@ -585,6 +591,12 @@ export interface AuditedResult<T> {
  */
 export type LedgerProgress = (patch: Partial<ExecutionLedgerRow>) => Promise<void>;
 
+/**
+ * How a failed progress write is retried: 3 attempts, ~1.25 s of waiting at
+ * most. Small on purpose — it sits between the start POST and the first poll.
+ */
+export const PROGRESS_WRITE_RETRY: RetryOptions = { attempts: 3, delaysMs: [250, 1_000] };
+
 export async function withExecutionAudit<T>(
   writer: LedgerWriter | null | undefined,
   spec: ExecutionCallSpec,
@@ -608,12 +620,24 @@ export async function withExecutionAudit<T>(
   };
   // Mid-flight facts go straight to the row. Failures are logged, never thrown:
   // losing a progress write must not fail a call that is otherwise fine.
+  //
+  // RETRIED, BOUNDED. The one progress write is the provider run id, the
+  // moment the start POST returns it — the only durable record of a billed run
+  // until the call finalizes. One statement timeout there and a hard kill
+  // before the `finally` left `started, provider_run_id: null`: a run nothing
+  // can adopt. The write is an idempotent UPDATE by row id, so a failed one is
+  // tried again (PROGRESS_WRITE_RETRY), and never past that.
   const progress: LedgerProgress = async (patch) => {
-    try {
-      await writer.finalize(row.id, patch);
-    } catch (e) {
-      console.error("[execution-ledger] progress failed", String(e));
-    }
+    const write = async (): Promise<boolean> => {
+      try {
+        return (await writer.finalize(row.id, patch)) !== false;
+      } catch (e) {
+        console.error("[execution-ledger] progress failed", String(e));
+        return false;
+      }
+    };
+    const { result: written, attempts } = await retryTransient(write, (ok) => !ok, PROGRESS_WRITE_RETRY);
+    if (!written) console.error("[execution-ledger] progress lost", { attempts });
   };
 
   try {
@@ -1427,7 +1451,11 @@ export function createLedgerWriter(db: LedgerDb): LedgerWriter {
     async finalize(id, patch) {
       const { error } = await db.from(LEAD_EXECUTION_CALLS_TABLE)
         .update(toDbRow(patch)).eq("id", id);
-      if (error) console.error("[execution-ledger] finalize error", describeDbError(error));
+      if (error) {
+        console.error("[execution-ledger] finalize error", describeDbError(error));
+        return false;
+      }
+      return true;
     },
   };
 }

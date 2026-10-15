@@ -25,7 +25,7 @@
 
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-  authorizeProviderCall, settleProviderCall, resolveCreditEnforcement,
+  authorizeProviderCall, settleProviderCall, resolveCreditEnforcement, creditSettlementFor,
   describeRpcError, CREDITS_PER_PROVIDER_CALL, CREDIT_ENFORCEMENT_ENV,
   CREDIT_REFUSED_ERROR, type CreditDb,
 } from "../../../supabase/functions/_shared/creditAuthorization.ts";
@@ -302,4 +302,16 @@ Deno.test("14. describeRpcError never yields [object Object]", () => {
     .includes("23514"));
   assert(!describeRpcError({ weird: true }).includes("[object Object]"));
   assertEquals(describeRpcError("plain"), "plain");
+});
+
+Deno.test("15. settlement: an uncertain Apify start is HELD; everything else settles on whether a run exists", () => {
+  assertEquals(creditSettlementFor({ ok: true }), { action: "settle", started: true });
+  assertEquals(creditSettlementFor({ ok: false, error: "apify_run_failed", data: { run_id: "R1" } }), { action: "settle", started: true });
+  assertEquals(creditSettlementFor({ ok: false, error: "apify_start_failed:409" }), { action: "settle", started: false });
+  assertEquals(creditSettlementFor({ ok: false, error: CREDIT_REFUSED_ERROR }), { action: "settle", started: false });
+  for (const e of ["apify_start_uncertain:0", "apify_start_uncertain:503", "apify_start_uncertain:missing_run_id"]) {
+    assertEquals(creditSettlementFor({ ok: false, error: e }), { action: "hold", reason: e });
+  }
+  // A run id settles it, uncertain or not: the run exists and is charged.
+  assertEquals(creditSettlementFor({ ok: false, error: "apify_start_uncertain:503", data: { run_id: "R2" } }), { action: "settle", started: true });
 });

@@ -1,0 +1,208 @@
+{
+  "schema": "discovery-quality-synthetic-v1",
+  "provenance": "SYNTHETIC controls only. Not recorded performance.",
+  "industry": [
+    {
+      "id": "s-product",
+      "description": "Enterprise software for finance departments.",
+      "truth": "MATCH"
+    },
+    {
+      "id": "s-consumer",
+      "description": "Consumer software for personal use.",
+      "truth": "NON_MATCH"
+    },
+    {
+      "id": "s-service",
+      "description": "Business consulting agency services.",
+      "truth": "NON_MATCH"
+    },
+    {
+      "id": "s-empty",
+      "description": "",
+      "truth": "UNKNOWN"
+    }
+  ],
+  "sizes": [
+    {
+      "id": "exact37",
+      "evidence_type": "exact_headcount",
+      "value": 37,
+      "observed_at": "2026-10-01",
+      "confidence": "high",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 50
+      },
+      "truth": "MATCH"
+    },
+    {
+      "id": "exact70",
+      "evidence_type": "exact_headcount",
+      "value": 70,
+      "observed_at": "2026-10-01",
+      "confidence": "high",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 50
+      },
+      "truth": "NON_MATCH"
+    },
+    {
+      "id": "broad",
+      "evidence_type": "employee_band",
+      "value": {
+        "min": 11,
+        "max": 50
+      },
+      "observed_at": "2026-10-01",
+      "confidence": "medium",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 11,
+        "max": 20
+      },
+      "truth": "UNKNOWN"
+    },
+    {
+      "id": "partial",
+      "evidence_type": "employee_band",
+      "value": {
+        "min": 11,
+        "max": 50
+      },
+      "observed_at": "2026-10-01",
+      "confidence": "medium",
+      "requirement": {
+        "kind": "exact_range",
+        "min": 40,
+        "max": 70
+      },
+      "truth": "UNKNOWN"
+    },
+    {
+      "id": "same-band",
+      "evidence_type": "employee_band",
+      "value": {
+        "min": 11,
+        "max": 50
+      },
+      "observed_at": "2026-10-01",
+      "confidence": "medium",
+      "requirement": {
+        "kind": "band",
+        "min": 11,
+        "max": 50
+      },
+      "truth": "MATCH"
+    }
+  ],
+  "accounting_plans": [
+    {
+      "route": "company-first",
+      "identity": {
+        "mission": "US business software, declared 11-50, venture funding 365d, growth hiring 30d",
+        "as_of": "2026-10-14",
+        "budget": 0.14,
+        "population": "four-synthetic-companies-v1"
+      },
+      "discovered": 4,
+      "qualified": 1,
+      "calls": [
+        {
+          "actor": "apify_linkedin_company_search",
+          "input": {
+            "maxItems": 4,
+            "scraperMode": "short"
+          }
+        },
+        {
+          "actor": "apify_funding_atomus",
+          "input": {
+            "companies": [
+              "https://www.linkedin.com/company/control-a",
+              "https://www.linkedin.com/company/control-b",
+              "https://www.linkedin.com/company/control-c",
+              "https://www.linkedin.com/company/control-d"
+            ]
+          }
+        },
+        {
+          "actor": "apify_linkedin_company_details",
+          "input": {
+            "companies": [
+              "https://www.linkedin.com/company/control-a",
+              "https://www.linkedin.com/company/control-b"
+            ]
+          }
+        },
+        {
+          "actor": "apify_linkedin_job_search",
+          "input": {
+            "company": [
+              "https://www.linkedin.com/company/control-a",
+              "https://www.linkedin.com/company/control-b"
+            ],
+            "maxItems": 20,
+            "jobTitles": [
+              "growth"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "route": "job-first",
+      "identity": {
+        "mission": "US business software, declared 11-50, venture funding 365d, growth hiring 30d",
+        "as_of": "2026-10-14",
+        "budget": 0.14,
+        "population": "four-synthetic-companies-v1"
+      },
+      "discovered": 4,
+      "qualified": 1,
+      "calls": [
+        {
+          "actor": "apify_linkedin_job_search",
+          "input": {
+            "company": [
+              "https://www.linkedin.com/company/control-a",
+              "https://www.linkedin.com/company/control-b",
+              "https://www.linkedin.com/company/control-c",
+              "https://www.linkedin.com/company/control-d"
+            ],
+            "maxItems": 40,
+            "jobTitles": [
+              "growth"
+            ]
+          }
+        },
+        {
+          "actor": "apify_linkedin_company_details",
+          "input": {
+            "companies": [
+              "https://www.linkedin.com/company/control-a",
+              "https://www.linkedin.com/company/control-b",
+              "https://www.linkedin.com/company/control-c",
+              "https://www.linkedin.com/company/control-d"
+            ]
+          }
+        },
+        {
+          "actor": "apify_funding_atomus",
+          "input": {
+            "companies": [
+              "https://www.linkedin.com/company/control-a",
+              "https://www.linkedin.com/company/control-b",
+              "https://www.linkedin.com/company/control-c",
+              "https://www.linkedin.com/company/control-d"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "accounting_plan_note": "HAND-WRITTEN SYNTHETIC cost-model plans with imposed identical outcomes, not routing engine results or recorded provider calls. These test accounting and comparability infrastructure only."
+}

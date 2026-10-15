@@ -94,3 +94,30 @@ Deno.test("[failure] source order: a terminal lineage is never claimed again (th
   assert(fn.length < sql.length, "claim_next_lead_mission is no longer redefined here");
   assert(fn.slice(0, fn.indexOf("$function$;")).includes("l.status in ('cancelled', 'terminal')"));
 });
+
+Deno.test("[failure] source order: a SUPERSEDED slice (its verdict fenced) releases no lineage, dispatches nothing, finalizes no plan, writes no panel, and its terminal guard stands down — as the lab mirrors", () => {
+  const file = "supabase/functions/run-agent/index.ts";
+  const src = read(file);
+  assertInOrder(src, file, [
+    'guardResult("slice_result"',
+    "const sliceSuperseded = sliceResultWrite.fenced;",
+    'terminalGuard.disarm("fenced_stale_generation");',
+    "if (holdsLease && leaseVersion !== null && !sliceSuperseded) {",
+    "releaseLineageLease({",
+    "!queueOwnsContinuation && !sliceSuperseded) {",
+    "dispatchContinuation({",
+    "if (!sliceSuperseded) {",
+    "await finalizeCompanyFirstPlan(",
+    "if (!sliceSuperseded) await persistLeadResultsPanel(",
+  ]);
+  // The guard's own write is fenced on the slice's generation once it is known.
+  assertInOrder(src, file, [
+    "let guardFence: SliceFence | null = null;",
+    "writeTask: async (id, patch) => {",
+    "fencedTaskUpdate(supabase as unknown as FencedTaskDb, id, guardFence, { requireOpen: false }",
+    "const sliceFence: SliceFence = {",
+    "guardFence = sliceFence;",
+  ]);
+  const lab = read("tests/replay/lib/chaos.ts");
+  assertInOrder(lab, "tests/replay/lib/chaos.ts", ["superseded = w.fenced;", "if (superseded) {", '"lineage_release_skipped"', "releaseLineageLease({"]);
+});

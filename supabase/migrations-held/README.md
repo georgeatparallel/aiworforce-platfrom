@@ -97,8 +97,46 @@ ignored (hold kept). Rollback, verbatim to 20261003120000's function:
 Replayed against real Postgres (PGlite) in
 `tests/infra/leadMissionV2ProductiveContinuationNoBackoff.test.ts`.
 
+## `20261015120000_provider_purchase_claims.sql`
+
+**PROPOSED — NOT APPLIED, NOT WIRED, NOT APPROVED.** One buyer per provider-call
+idempotency key, decided in the database before the start POST, under D1's
+generation token (`tasks.checkpoint_version`). Closes the one purchase race
+nothing else covers: a stalled worker and the worker that reclaimed its mission
+both POSTing the same Actor run (the execution ledger's key index is not
+unique, and `credits_reserve` replays a repeated key). See
+`docs/launch/lead-v2-reliability-proposals.md` §1 for the wiring, which is a
+separate change. Additive and service-role only; a database without it answers
+PGRST202 and every caller keeps today's behaviour. Rollback:
+`rollback/20261015120000_provider_purchase_claims.down.sql`. Replayed against
+real Postgres (PGlite) in `tests/infra/providerPurchaseClaims.test.ts`.
+
 ## Tests
 
 `tests/infra/` still reads these files — the baseline's structure, the V2
 queue's invariants, RLS coverage and schema drift all keep their guarantees.
 Holding a file changes where it lives, not what it must satisfy.
+
+## `20261015130000_credits_rearm_settled_key.sql`
+
+Billing. `credits_reserve` replayed a key whose reservation had been
+**refunded**, either settled `not_charged` (the call did not start) or
+`released` by the stale reaper. A later attempt under that key was allowed
+with no balance check, and settling it charged 0, so a real purchase went
+uncharged.
+
+This migration **re-arms** such a key in place: the same conditional debit as
+a new reservation, the row locked first so concurrent attempts re-arm once,
+and the reaper's 30-minute window counted from the re-arm (`rearmed_at`,
+`rearm_count`, both additive). A key that is `reserved`, `charged`, `partial`
+or `granted` is still a replay. `credits_finalize` is untouched.
+
+**Not approved for any hosted project.** It needs billing sign-off. Applied
+only by `tests/db-contract/bootstrap.sh` to the lane's throwaway database.
+`tests/db-contract/creditRearm.contract.test.ts` proves the behaviour, and
+`tests/db-contract/mutation.sh` proves those tests fail without it. It is
+independent of the Lead V2 queue chain and of `20261015120000` (purchase
+claims, concurrency): either can be applied without the others.
+
+Rollback, verbatim to the baseline functions:
+`rollback/20261015130000_credits_rearm_settled_key.down.sql`.
