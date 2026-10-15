@@ -8,10 +8,10 @@
     "acceptance_pr": 89,
     "acceptance_head": "16fa9e7a",
     "runtime_guards_branch": "codex/smoke-execution-guards",
-    "runtime_guards_head": "528cd317",
+    "runtime_guards_head": "9aec00da",
     "integrated_base": "9453b7c5",
     "durable_proposal_branch": "codex/smoke-durable-admission-proposal",
-    "durable_proposal_head": "4fe8a3e3"
+    "durable_proposal_head": "a64aa848"
   },
   "mission": "Find 1 US B2B software company with a current declared 11\u201350 employee band and an open Account Executive posting dated within 30 days.",
   "eligibility": {
@@ -73,7 +73,7 @@
     "requested_lead_count": 1
   },
   "enforcement": {
-    "local_all_model_attempts": "IMPLEMENTED_REQUEST_ONLY",
+    "local_all_model_attempts": "PARTIAL_GPT_AND_GENERIC_AI_REQUEST_ONLY",
     "model_unknown_rate_and_uncertain_usage": "IMPLEMENTED_STRICT_OPT_IN",
     "model_usage_retained_after_drain": "IMPLEMENTED_REQUEST_ONLY",
     "provider_invalid_quotes": "IMPLEMENTED",
@@ -84,7 +84,9 @@
     "mission_deadline_across_reenqueue": "BLOCKED_REQUIRES_IMMUTABLE_MISSION_AUTHORIZATION",
     "actual_vendor_charge_maximum": "BLOCKED_REQUIRES_VERIFIED_UPPER_QUOTES_AND_EXTERNAL_CONTROLS",
     "test_target_billing_and_schema": "BLOCKED_REQUIRES_CLAUDE_VALIDATION_AND_SEPARATE_AUTHORIZATION",
-    "durable_proposal": "SQL_TESTED_OFFLINE_NOT_APPLIED_NOT_WIRED"
+    "durable_proposal": "SQL_TESTED_OFFLINE_NOT_APPLIED_NOT_WIRED",
+    "strategist_prospective_model_admission": "BLOCKED_CONFIRMED_CHECK_ONLY_TRANSPORT_GAPS",
+    "firecrawl_physical_retry_admission": "BLOCKED_TWO_POSTS_PER_LOGICAL_CREDIT_RESERVATION"
   },
   "accounting": {
     "committed_estimates": "Prospective conservative upper bounds including pending and uncertain operations; never free after checkpoint loss.",
@@ -101,7 +103,9 @@
     "live_receipts_and_credits_reconciled": false,
     "nonproduction_target_verified": false,
     "worker_proposal_remains_inactive": true,
-    "native_multisession_tests_executed": false,
-    "all_physical_transports_durably_gated": false
+    "native_multisession_tests_executed": true,
+    "all_physical_transports_durably_gated": false,
+    "native_multisession_scope": "REFERENCE_PROPOSAL_ONLY",
+    "claude_durable_implementation_verified": false
   }
 }

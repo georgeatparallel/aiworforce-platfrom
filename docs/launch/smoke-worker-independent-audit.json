@@ -1,0 +1,152 @@
+{
+  "schema": "independent-smoke-workflow-audit-v1",
+  "evidence_class": "repository_source_observation",
+  "base": "9453b7c5",
+  "status": "NO_GO",
+  "authorizes_execution": false,
+  "checks": [
+    {
+      "id": "LEAD_V2_MISSION_PROVIDER_USD_CAP",
+      "status": "DECLARED_MATCH",
+      "expected": "0.20",
+      "observed": "0.20"
+    },
+    {
+      "id": "LEAD_V2_MISSION_CREDIT_CAP",
+      "status": "DECLARED_MATCH",
+      "expected": "5",
+      "observed": "5"
+    },
+    {
+      "id": "LEAD_CREDIT_ENFORCEMENT",
+      "status": "DECLARED_MATCH",
+      "expected": "enforce",
+      "observed": "enforce"
+    },
+    {
+      "id": "LINEAGE_LEASE_ENFORCED",
+      "status": "DECLARED_MATCH",
+      "expected": "true",
+      "observed": "true"
+    },
+    {
+      "id": "LEAD_V2_SPECS",
+      "status": "MISMATCH",
+      "expected": "enforce",
+      "observed": null
+    },
+    {
+      "id": "MODEL_SPEND_ENFORCEMENT",
+      "status": "DECLARED_MATCH",
+      "expected": "enforce",
+      "observed": "enforce"
+    },
+    {
+      "id": "MODEL_SPEND_CEILING_USD",
+      "status": "DECLARED_MATCH",
+      "expected": "0.05",
+      "observed": "0.05"
+    },
+    {
+      "id": "MODEL_SPEND_PERIOD_DAYS",
+      "status": "DECLARED_MATCH",
+      "expected": "1",
+      "observed": "1"
+    },
+    {
+      "id": "MODEL_RUN_MAX_ALL_CALLS",
+      "status": "MISMATCH",
+      "expected": "4",
+      "observed": null
+    },
+    {
+      "id": "MODEL_RUN_MAX_CALLS",
+      "status": "MISMATCH",
+      "expected": "4",
+      "observed": "2"
+    },
+    {
+      "id": "MODEL_RUN_REQUIRE_PRICED",
+      "status": "MISMATCH",
+      "expected": "true",
+      "observed": null
+    },
+    {
+      "id": "LEAD_V2_SMOKE_WALL_CLOCK",
+      "status": "MISMATCH",
+      "expected": "enforce",
+      "observed": null
+    },
+    {
+      "id": "LEAD_WORKER_MAX_RUNTIME_MS",
+      "status": "MISMATCH",
+      "expected": "300000",
+      "observed": "150000"
+    },
+    {
+      "id": "LEAD_MAX_AUTO_CONTINUATIONS",
+      "status": "DECLARED_MATCH",
+      "expected": "1",
+      "observed": "1"
+    },
+    {
+      "id": "same_single_workspace_binding",
+      "status": "MISMATCH",
+      "expected": "same one test workspace on worker and cap",
+      "observed": {
+        "worker": "${{ vars.TEST_WORKSPACE_ID }}",
+        "cap": null
+      }
+    },
+    {
+      "id": "single_workflow_concurrency",
+      "status": "DECLARED_MATCH",
+      "expected": "one serialized manual worker workflow",
+      "observed": {
+        "group": "discovery-test-worker",
+        "cancel-in-progress": false
+      }
+    },
+    {
+      "id": "test_openai_credential_binding",
+      "status": "MISMATCH",
+      "expected": "OPENAI_API_KEY from a TEST_ secret for gptProvider",
+      "observed": null
+    },
+    {
+      "id": "logical_mission_absolute_deadline",
+      "status": "UNVERIFIED",
+      "expected": "one original absolute five-minute deadline, including queue/retries/backoff",
+      "observed": null
+    },
+    {
+      "id": "durable_physical_transport_coverage",
+      "status": "UNVERIFIED",
+      "expected": "every physical model/provider/retry/page/poll/receipt operation admitted",
+      "observed": null
+    },
+    {
+      "id": "actual_workspace_and_test_target",
+      "status": "UNVERIFIED",
+      "expected": "one resolved approved internal workspace and isolated target",
+      "observed": null
+    },
+    {
+      "id": "external_vendor_liability",
+      "status": "UNVERIFIED",
+      "expected": "verified request/token bounds and external controls; estimates alone do not prove invoice maximum",
+      "observed": null
+    }
+  ],
+  "counts": {
+    "declared_matches": 9,
+    "mismatches": 8,
+    "unverified": 4
+  },
+  "cost_evidence": {
+    "actual_provider_receipts": null,
+    "historical_captures": 0,
+    "verified_live_prices": false
+  },
+  "note": "A matching declaration is not runtime enforcement. No secret values or resolved environment settings were read."
+}

@@ -112,3 +112,37 @@ passing tests. Approval is still required for durable schema/admission wiring
 and conservative mission-liability retention; exact test schema/billing checks,
 physical request bounds, verified prices, native contention/crash/transport
 proofs and separate live authorization must precede execution.
+
+## Independent verification and current NO-GO
+
+The reference suite now passes 46 tests, including 13 native PostgreSQL
+controls, with zero ignored when the isolated local URL is supplied. That
+evidence is explicitly scoped to the reference proposal. The production
+implementation and all physical transports remain unverified; there is no live
+authorization.
+
+Three active runtime characterizations reproduce two gaps without changing
+production code: the strategist adapter starts an unknown-price request and can
+start two concurrent requests under a one-attempt cap; Firecrawl can issue two
+scrape POSTs under one logical credit reservation. These passing tests record
+unsafe behavior, not acceptance. Actual failed-request billing is UNKNOWN.
+
+[`smoke-worker-independent-audit.json`](smoke-worker-independent-audit.json)
+contains the repeatable read-only workflow comparison: 9 matching declarations,
+8 differences and 4 unverified guarantees, out of 21 checks. The workflow is
+still inactive and was not modified. Missing controls include strict pricing,
+all-attempt admission, an absolute deadline, consistent workspace declarations
+and the test OpenAI credential mapping. Differences in the stricter per-slice
+allowance/runtime are specification differences, not evidence of an overcharge.
+A worker session timeout or sum of slice times cannot prove mission duration.
+
+Even a synthetic workflow with every candidate setting matched remains NO-GO:
+actual workspace isolation, durable physical-path coverage, persistent mission
+deadlines and maximum external liability need independent runtime evidence.
+Estimates, pending holds, token-table prices, synthetic receipts and actual
+provider invoices remain distinct. No hard vendor invoice or remote-stop
+guarantee follows from a local counter or deadline.
+
+Claude's durable branch was not visible among remote heads at review time.
+Review and native/failure tests against its exact commit are a remaining gate;
+no production adapter or migration is implemented on these branches.

@@ -39,7 +39,7 @@ Deno.test("candidate settings align shared limits and distinguish per-request gu
   assertEquals(e.LEAD_V2_WORKER_WORKSPACES, e.LEAD_V2_MISSION_CAP_WORKSPACES);
   assertEquals(
     spec.enforcement.local_all_model_attempts,
-    "IMPLEMENTED_REQUEST_ONLY",
+    "PARTIAL_GPT_AND_GENERIC_AI_REQUEST_ONLY",
   );
   assert(
     spec.enforcement.durable_mission_model_reservations.startsWith("BLOCKED"),
@@ -50,7 +50,15 @@ Deno.test("unproved durable enforcement and test billing keep activation blocked
   assertEquals(spec.status, "BLOCKED");
   assertEquals(spec.authorizes_execution, false);
   assertEquals(spec.activation_gate.ready, false);
-  assertEquals(spec.activation_gate.native_multisession_tests_executed, false);
+  assertEquals(spec.activation_gate.native_multisession_tests_executed, true);
+  assertEquals(
+    spec.activation_gate.native_multisession_scope,
+    "REFERENCE_PROPOSAL_ONLY",
+  );
+  assertEquals(
+    spec.activation_gate.claude_durable_implementation_verified,
+    false,
+  );
   assertEquals(
     spec.activation_gate.all_physical_transports_durably_gated,
     false,
