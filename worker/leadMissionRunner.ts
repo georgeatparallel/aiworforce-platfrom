@@ -24,6 +24,7 @@ import { revocableDeadline } from "../supabase/functions/_shared/revocableDeadli
 import {
   type LineageOutcomeRow, prepareV2LeadCount, mapRefusal, mapTaskOutcome, withResume, type TaskOutcomeRow,
 } from "../supabase/functions/_shared/leadMissionV2Request.ts";
+import { missionAdmission, type MissionAdmissionContext } from "../supabase/functions/_shared/smokeAdmission.ts";
 
 export interface LeadMissionRunner {
   /** The worker claims nothing unless this is true. */
@@ -47,6 +48,13 @@ export interface LeadMissionRunnerDeps {
    */
   readLineageOutcome?: (lineageId: string) => Promise<LineageOutcomeRow | null>;
   log?: (msg: string, meta?: unknown) => void;
+  /**
+   * Durable smoke admission (smokeAdmission.ts), when the worker enforces it.
+   * Each mission's handler call then runs inside its own admission context, so
+   * the transport gate can attribute every billable request to this queue row,
+   * task and generation. Absent: no context is bound, exactly as before.
+   */
+  admission?: { workerId: string };
 }
 
 export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRunner {
@@ -65,9 +73,15 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
 
       let taskId: string | null = mission.taskId;
       let lineageId: string | null = mission.lineageId;
+      // Task and generation are filled in when the handler binds; until then
+      // the gate admits nothing.
+      const admission: MissionAdmissionContext | null = d.admission
+        ? { queueId: mission.queueId, workerId: d.admission.workerId, taskId: null, generation: null, signal: ctl.signal }
+        : null;
+      const call = (fn: () => Promise<Response>) => admission ? missionAdmission.run(admission, fn) : fn();
       let res: Response;
       try {
-        res = await d.handler(
+        res = await call(() => d.handler(
           new Request(`${d.functionsBaseUrl.replace(/\/+$/, "")}/run-agent`, {
             method: "POST",
             headers: {
@@ -83,18 +97,25 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
             continuationOwner: "v2_queue",
             // The floor for the lineage counter (`resolveLineageProgress`).
             queueContinuations: mission.continuations ?? null,
-            onExecutionBound: async ({ taskId: t, lineageId: l }) => {
+            onExecutionBound: async ({ taskId: t, lineageId: l, generation }) => {
               taskId = t;
               lineageId = l;
               const bound = await d.bind(mission.queueId, t, l);
               // A refused bind means another task already belongs to this
               // mission, or this worker no longer owns it. Start nothing paid.
               if (!bound) deadline.revoke("bind_refused");
+              else if (admission) {
+                admission.taskId = t;
+                admission.generation = generation ?? null;
+              }
             },
           },
-        );
+        ));
       } finally {
         ctl.signal.removeEventListener("abort", onAbort);
+        // Work the handler left running (a stray timer, an unawaited promise)
+        // keeps this context; from here it is admitted nothing.
+        if (admission) admission.closedReason = "mission_call_ended";
       }
 
       if (!taskId) {

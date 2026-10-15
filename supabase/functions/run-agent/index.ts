@@ -915,7 +915,12 @@ export interface RunAgentRunOptions {
    * lost task-row copy cannot reset the lineage (Query B d22d9ee6).
    */
   queueContinuations?: number | null;
-  onExecutionBound?: (ids: { taskId: string; lineageId: string; holdsLease: boolean }) =>
+  /**
+   * `generation` is this slice's D1 fence (`tasks.checkpoint_version`), so a
+   * durable admission can refuse a superseded slice (smokeAdmission.ts).
+   * Absent or null, the smoke admission gate admits nothing for the slice.
+   */
+  onExecutionBound?: (ids: { taskId: string; lineageId: string; holdsLease: boolean; generation?: number | null }) =>
     void | Promise<void>;
 }
 
@@ -1594,7 +1599,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // heartbeat target, never the run.
   if (inProcess.onExecutionBound) {
     try {
-      await inProcess.onExecutionBound({ taskId: task.id, lineageId: lineageRootId, holdsLease });
+      await inProcess.onExecutionBound({ taskId: task.id, lineageId: lineageRootId, holdsLease, generation: sliceFence.generation });
     } catch (e) {
       console.error("[run-agent][in-process] onExecutionBound failed", String(e));
     }

@@ -140,3 +140,31 @@ claims, concurrency): either can be applied without the others.
 
 Rollback, verbatim to the baseline functions:
 `rollback/20261015130000_credits_rearm_settled_key.down.sql`.
+
+## `20261015140000_discovery_smoke_admission.sql`
+
+Durable admission for **one** controlled Discovery smoke mission (at most
+$0.25: $0.20 provider + $0.05 model). Derived from Codex's proposal on
+`codex/smoke-durable-admission-proposal`; the changes from it are listed in
+`docs/launch/discovery-smoke-admission.md`.
+
+Two tables (`discovery_smoke_authorizations`, one per queue row, and
+`discovery_smoke_operations`, one per admitted transport) and four RPCs:
+`authorize_discovery_smoke` (administrators only; never granted to
+`service_role`), `admit_discovery_smoke` (the only way the worker gets
+permission for a billable request), `record_discovery_smoke_receipt` (run ids
+and reported charges, immutable) and `stop_discovery_smoke` (one-way). The
+worker can read both tables and nothing else: it cannot create, widen, reset
+or extend an authorization. Nothing is refunded.
+
+**Not approved for any hosted project.** Depends on the held Lead V2 chain.
+Applied only by `tests/db-contract/bootstrap.sh` to the lane's throwaway
+database, and, opt-in, by `scripts/test-project/build-test-schema.sh
+--with-held-admission` to a new non-production project.
+`tests/db-contract/smokeAdmission.contract.test.ts` proves the behaviour and
+`tests/db-contract/mutation.sh` proves those tests fail without it. Inert until
+a worker runs with `DISCOVERY_SMOKE_ADMISSION` enforced (it is unset by
+default).
+
+Rollback (refuses while any authorization or operation row exists):
+`rollback/20261015140000_discovery_smoke_admission.down.sql`.

@@ -40,6 +40,9 @@ import { newStatus, healthView, startHealthServer } from "./health.ts";
 import { buildInfo } from "../supabase/functions/_shared/buildStamp.ts";
 import { mountApi } from "./api/server.ts";
 import { sealFunctionListeners } from "./api/routes.ts";
+import {
+  createAdmissionFetch, smokeAdmissionEnforced, SMOKE_ADMISSION_ENV, type AdmissionDb,
+} from "../supabase/functions/_shared/smokeAdmission.ts";
 
 // EVERY LINE CARRIES ITS TIME — the worker's and run-agent's (in-process) alike.
 // Query B d22d9ee6 had a 5.5-minute stretch no log line could place.
@@ -134,6 +137,17 @@ async function main() {
   // process. The worker only needs run-agent sealed; the API may import three
   // more, so all four flags are set here, once, before anything is loaded.
   sealFunctionListeners();
+  // DURABLE SMOKE ADMISSION — opt-in, unset by default. Enforced, every request
+  // this process sends to a paid host needs a committed admission for the
+  // mission it belongs to (smokeAdmission.ts); anything else is refused. Its
+  // own client keeps the real fetch, so the gate never admits itself.
+  const admissionEnforced = smokeAdmissionEnforced(env(SMOKE_ADMISSION_ENV));
+  if (admissionEnforced) {
+    const baseFetch = globalThis.fetch.bind(globalThis);
+    const admissionDb = createClient(url, key, { auth: { persistSession: false }, global: { fetch: baseFetch } });
+    globalThis.fetch = createAdmissionFetch({ baseFetch, db: admissionDb as unknown as AdmissionDb, ownApi: url });
+    console.log("[worker] smoke admission ENFORCED: every billable request needs a durable admission");
+  }
   const { handleRunAgent } = await import("../supabase/functions/run-agent/index.ts");
 
   const db = createClient(url, key, { auth: { persistSession: false } });
@@ -178,6 +192,7 @@ async function main() {
       return { status: str(l.status), terminal_reason: str(l.terminal_reason), terminal_status: str(l.r_terminal_status) };
     },
     log,
+    ...(admissionEnforced ? { admission: { workerId } } : {}),
   });
 
   const role = resolveRole(env);

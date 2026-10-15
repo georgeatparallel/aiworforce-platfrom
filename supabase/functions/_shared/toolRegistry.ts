@@ -336,6 +336,7 @@ async function execScrapeUrl(input: unknown): Promise<ToolResult> {
     await new Promise((r) => setTimeout(r, 2000));
     const s = await firecrawlGet(FIRECRAWL_API_KEY, `/crawl/${jobId}`).catch(() => null);
     if (!s) continue;
+    if (isAdmissionRefusal(s)) break;  // not admitted: stop waiting, nothing was sent
     status = s.data;
     if (status?.status === "completed" || status?.status === "failed") break;
   }
@@ -388,6 +389,7 @@ import {
   CREDIT_REFUSED_ERROR, type CreditDb,
 } from "./creditAuthorization.ts";
 import { priceFor } from "./creditPricing.ts";
+import { isAdmissionRefusal } from "./smokeAdmissionRefusal.ts";
 
 const APIFY_BASE = "https://api.apify.com/v2";
 
@@ -1242,6 +1244,13 @@ async function execSourceWithApify(
       timeoutMs: 10_000,
     }).catch(() => null);
     if (!poll) continue;
+    // NO POLL WAS ADMITTED (smokeAdmission.ts: budget, deadline, cancellation).
+    // Stop waiting exactly as `stopWaiting` does: the run stays pending, its id
+    // already recorded, and nothing was sent.
+    if (isAdmissionRefusal(poll)) {
+      console.log("[toolRegistry] poll not admitted; the Apify run stays pending", { run_id, status });
+      break;
+    }
     if (poll.status === 401 || poll.status === 403) {
       return { ok: false, unavailable: true, error: "apify_unauthorized", data: { run_id } };
     }

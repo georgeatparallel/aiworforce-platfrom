@@ -82,7 +82,7 @@ Deno.test("[failure] source order: the worker reads the queue's continuations at
   // task row, and from the lineage row when the task row says it did not end (D4).
   const runner = "worker/leadMissionRunner.ts";
   assertInOrder(read(runner), runner, [
-    "res = await d.handler(", "const row = await d.readTaskOutcome(taskId);", "d.readLineageOutcome(lineageId ?? taskId)",
+    "res = await call(() => d.handler(", "const row = await d.readTaskOutcome(taskId);", "d.readLineageOutcome(lineageId ?? taskId)",
     "mapTaskOutcome(row, lineage)",
   ]);
 });

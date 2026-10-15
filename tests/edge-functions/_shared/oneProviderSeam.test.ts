@@ -69,6 +69,12 @@ const ACCOUNTED: Readonly<Record<string, string>> = Object.freeze({
   // `recordModelCall`, and consults `authorizeModelSpend` before it spends.
   // That row lands in `lead_model_calls`, which is the view the ceiling itself
   // sums, so image spend both counts toward the ceiling and is stopped by it.
+  // Not a caller. The worker's opt-in smoke admission gate names these hosts
+  // to CLASSIFY requests other seams make; it forwards an admitted request
+  // unchanged and never originates one. Every model call still starts in
+  // aiProvider or gptProvider and is metered there.
+  "_shared/smokeAdmission.ts":
+    "classifier only: admits or refuses requests made by the accounted seams; originates no model call",
   "_shared/imageProvider.ts":
     "OpenAI images; emits via ImageProviderDeps.onImageCall on success and failure, " +
     "ledgered as a model_call and gated by authorizeModelSpend in generate-content-image",

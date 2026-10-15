@@ -59,7 +59,7 @@ Deno.test("the terminal guard receives a deadline ONLY when an in-process caller
 Deno.test("onExecutionBound fires after the lease gate + lineage link, before any engine, and cannot throw into the run", () => {
   const gate = SRC.indexOf("if (!leaseGate.proceed) {");
   const link = SRC.indexOf(".update({ lineage_id: lineageRootId }).eq(\"id\", task.id);");
-  const call = SRC.indexOf("await inProcess.onExecutionBound({ taskId: task.id, lineageId: lineageRootId, holdsLease });");
+  const call = SRC.indexOf("await inProcess.onExecutionBound({ taskId: task.id, lineageId: lineageRootId, holdsLease, generation: sliceFence.generation });");
   const engine = SRC.indexOf("await runCapabilityPlan({");
   const legacy = SRC.indexOf("executeCompanyFirstRoute({");
   assert(gate > 0 && link > 0 && call > 0 && engine > 0 && legacy > 0, "all landmarks must exist");
