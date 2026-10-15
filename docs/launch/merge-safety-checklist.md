@@ -19,29 +19,38 @@ outside it, so only a person with access can confirm them.
 
 ## Verify in each dashboard (read-only; change nothing)
 
-`launch/hardening` is the repository's **default branch**, so any service
-connected with default settings follows it.
+`launch/hardening` is the repository's **default branch**. Railway and Netlify
+both name it as their production branch, so their *auto-deploy* setting is
+what keeps a merge from deploying.
 
-| Where | Status | Evidence needed | Safe to merge runtime changes when |
-|---|---|---|---|
-| **Supabase** native GitHub integration (project `ohsdatpvfdjdemstoiuj` → Project Settings → Integrations → GitHub) | **VERIFIED DISCONNECTED, 2026-10-14** (checked by the owner: the page shows "Connect GitHub", no repository) | done | — |
-| **Railway** → the worker service → Settings → Source | trial expired; branch **unverified** | screenshot of Source (repo, branch, automatic deployments, "Wait for CI") and of the Deployments list (latest deployment, its commit, status) | auto-deploy is off, or the branch is not `launch/hardening` (last recorded 2026-09-29: `feat/lead-mission-v2-worker`). A reactivated trial would otherwise deploy the branch head |
-| **Railway** → Variables (names only) | unverified | whether `LEAD_V2_WORKER_WORKSPACES` is set (value not needed) | recorded, so a reactivation is not a surprise |
-| **Netlify** → Site configuration → Build & deploy → Continuous deployment | production deploys paused (credits exhausted); production branch **unverified** | screenshot of "Branches and deploy contexts" (production branch, branch deploys, deploy previews) and of "Build settings" (builds active or stopped) | the production branch is not `launch/hardening`, or builds are stopped. When credits return, Netlify builds the production branch's head |
-| **GitHub** → repository Settings → GitHub Apps, and Settings → Webhooks | **unverified** (the catch-all for anything else that deploys on push: Vercel, Render, Railway or Netlify apps, Lovable, custom hooks) | screenshot of both lists | nothing there deploys from `launch/hardening`, or each one has been checked as above |
-| **Lovable** (if listed under GitHub Apps) | unverified | the project's GitHub connection (repo, branch) | it does not build from this repository's `launch/hardening` |
+Owner-verified 2026-10-14/15:
 
-**Not proof that every deployment is disabled.** The Supabase result covers
-the native integration only. Other ways to deploy remain and need no merge:
-- the manual `deploy-held-back-functions.yml` (it asks for the release SHA to
-  be typed);
-- the Supabase CLI or MCP from any machine holding an access token.
-Neither runs on a merge.
+| Hook | Finding | Status |
+|---|---|---|
+| **Supabase** native GitHub integration (`ohsdatpvfdjdemstoiuj`) | "Connect GitHub", no repository connected | ✅ **verified inactive** |
+| **Railway** (worker service) | production branch `launch/hardening`; **automatic deployments DISABLED** (confirmed in dashboard); trial expired | ✅ **verified inactive**. Re-enabling auto-deploy would deploy the branch head |
+| **GitHub** repository webhooks | none configured | ✅ **verified none** |
+| **Netlify** (site `teal-chimera-be7c79`) | production branch `launch/hardening`; **"Stop builds" selected**; final stopped status pending | ⏳ **pending**: confirm "Builds: stopped" on Build settings. A PR push that gets no Netlify deploy preview is consistent with it |
+| **Lovable** (GitHub App installed) | which repo and branch its project syncs; whether it publishes on sync | ⏳ **unverified** |
+| **Render** (GitHub App installed) | any service linked to this repo; its branch; auto-deploy on/off | ⏳ **unverified** |
+| **Vercel** (GitHub App installed) | any project linked to this repo; its production branch; Git deployments on/off | ⏳ **unverified** |
 
-**Tier 0 (below) changes no deployable file**, and today neither Railway
-(expired) nor Netlify (paused) can build. So Tier 0 needs only approval.
-**Tier 1 (runtime) waits for the Railway, Netlify and GitHub Apps/Webhooks
-rows.**
+Circumstantial only: no Vercel or Render check, status or comment has
+appeared on any of the PRs opened 2026-10-14 (#76 to #89). Vercel posts on
+every PR of a linked project, so this suggests nothing is linked; Render
+posts only when PR previews are on. **Not proof**; the dashboards decide.
+
+**Not proof that every deployment is disabled.** These rows cover push-
+and merge-triggered hooks only. Two manual paths remain, and neither runs on
+a merge:
+- `deploy-held-back-functions.yml`, which asks for the release SHA to be
+  typed;
+- the Supabase CLI or MCP, from any machine holding an access token.
+
+**Gate:**
+- **Tier 0 merges** when the Netlify, Lovable, Render and Vercel rows are
+  confirmed and you approve explicitly.
+- **Tier 1 merges** under the same condition, plus a separate approval.
 
 ## Merge order (each needs approval, and green CI on its head at merge time)
 
