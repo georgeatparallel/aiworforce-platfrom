@@ -28,7 +28,7 @@
 
 import { withBuildStamp } from "../_shared/buildStamp.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { excludeV2OwnedTasks, loadV2OwnedTaskIds } from "../_shared/leadMissionV2Request.ts";
+import { excludeV2OwnedTasks, loadV2OwnedTaskIdsStrict } from "../_shared/leadMissionV2Request.ts";
 import {
   eligibleForAutoResume, resumeRequestFor, STALE_AFTER_MS, MAX_RESUMABLE_AGE_MS,
   type StalledTaskRow,
@@ -298,8 +298,14 @@ Deno.serve(withBuildStamp(async (req) => {
   // A task the V2 worker executes is resumed ONLY by that worker, which re-claims
   // its own queue row. Two resumers on one task is how a round gets paid twice,
   // and V1 finishing V2 missions would contaminate the V1/V2 comparison.
-  // Tolerant: with no queue table or no V2 rows this excludes nothing.
-  const v2Owned = await loadV2OwnedTaskIds(admin as never, rows.map((r) => r.id));
+  // With no queue table or no V2 rows this excludes nothing. A read that FAILED
+  // is not "no V2 tasks": the pass is skipped rather than resume — and possibly
+  // end — a lineage the V2 worker owns. The next tick tries again.
+  const v2Owned = await loadV2OwnedTaskIdsStrict(admin as never, rows.map((r) => r.id));
+  if (v2Owned === null) {
+    console.error("[resume-stalled-leads] V2 ownership unreadable: pass skipped", { candidates: rows.length });
+    return json({ skipped: "v2_ownership_unreadable", candidates: rows.length });
+  }
   const sweepable = excludeV2OwnedTasks(rows, v2Owned);
 
   const considered: Array<Record<string, unknown>> = [];

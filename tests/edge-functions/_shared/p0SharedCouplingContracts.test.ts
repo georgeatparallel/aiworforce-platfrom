@@ -65,7 +65,8 @@ Deno.test("orchestrate routes to V2 only for an allowlisted workspace with a val
 
 Deno.test("resume-stalled-leads excludes V2-owned tasks", () => {
   const r = FN("resume-stalled-leads/index.ts");
-  assert(r.includes("loadV2OwnedTaskIds(admin as never, rows.map((r) => r.id))"));
+  // Strict: an unreadable ownership answer skips the pass (leadMissionV2Request.test.ts).
+  assert(r.includes("loadV2OwnedTaskIdsStrict(admin as never, rows.map((r) => r.id))"));
   assert(r.includes("excludeV2OwnedTasks(rows, v2Owned)"));
 });
 
