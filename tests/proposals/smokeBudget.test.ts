@@ -498,6 +498,13 @@ Deno.test("proposal: rollback refuses to destroy authorization/audit; empty sche
     await h.db.exec(UP);
     await h.authorize();
     await assertRejects(() => h.db.exec(DOWN), Error, "smoke audit exists");
+    // A failed explicit rollback transaction stays aborted until rolled back.
+    await assertRejects(
+      () => h.db.exec("select 1"),
+      Error,
+      "current transaction is aborted",
+    );
+    await h.db.exec("rollback");
     assertEquals(
       (await h.db.query(
         "select count(*)::int as n from public.discovery_smoke_authorizations",
@@ -554,6 +561,45 @@ Deno.test("proposal: failed durable insert grants no admission and leaves no par
       "drop trigger synthetic_failure on public.discovery_smoke_operations",
     );
     assertEquals((await h.admit(request(id, "failed"))).decision, "admitted");
+  }));
+
+Deno.test("proposal: approved discovery templates require a matching single-use page admission", () =>
+  testCase(async (h, id) => {
+    const r = request(id, "discovery", {
+      quote: quote(10000, { template_id: "discovery-control" }),
+    });
+    assertEquals((await h.admit(r)).decision, "missing_page");
+    assertEquals(
+      (await h.admit(
+        request(id, "page", {
+          kind: "page",
+          payload: r.payload,
+          amount: 0,
+          quote: quote(0),
+        }),
+      )).decision,
+      "admitted",
+    );
+    assertEquals(
+      (await h.admit({ ...r, parent: "page" })).decision,
+      "admitted",
+    );
+    assertEquals(
+      (await h.admit({ ...r, parent: "page" })).decision,
+      "uncertain",
+    );
+    assertEquals(
+      (await h.admit(
+        request(id, "other-page", { kind: "page", amount: 0, quote: quote(0) }),
+      )).decision,
+      "transport_limit",
+    );
+    assertEquals(
+      (await h.admit(
+        request(id, "other-discovery", { parent: "page", quote: r.quote }),
+      )).decision,
+      "missing_page",
+    );
   }));
 
 Deno.test("proposal: no migration, runtime, bootstrap or workflow automatically loads this SQL", async () => {

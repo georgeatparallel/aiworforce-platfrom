@@ -62,6 +62,7 @@ async function open() {
     );
     await admin.unsafe(rewrite(UP));
   } catch (e) {
+    await admin.unsafe("rollback");
     await admin.unsafe(`drop schema ${schema} cascade`);
     await Promise.all([admin.end(), a.end(), b.end()]);
     throw e;

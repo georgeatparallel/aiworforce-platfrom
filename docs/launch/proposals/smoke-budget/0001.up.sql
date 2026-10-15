@@ -1,3 +1,5 @@
+-- Review artifact only: atomic even if a SQL client continues after an error.
+begin;
 -- PROPOSAL ONLY. Outside all migration/bootstrap directories; never auto-applied.
 -- Fixed first-smoke authorization, not a new credit policy. USD uses integer micros.
 -- Tests load this text only into disposable offline databases. Runtime is NOT wired.
@@ -46,6 +48,8 @@ create table public.discovery_smoke_operations (
 -- Re-keying an identical provider payload is not a fresh purchase permission.
 create unique index discovery_smoke_provider_payload on public.discovery_smoke_operations
   (authorization_id, actor, payload_hash) where kind = 'provider';
+create unique index discovery_smoke_page_dispatch on public.discovery_smoke_operations
+  (authorization_id, parent_key) where kind = 'provider' and parent_key is not null;
 
 alter table public.discovery_smoke_authorizations enable row level security;
 alter table public.discovery_smoke_operations enable row level security;
@@ -174,7 +178,16 @@ begin
     where authorization_id = a.id and operation_key = p_parent_key and kind = 'provider' and actor = p_actor) then
     return jsonb_build_object('decision','missing_parent');
   end if;
-  if p_kind <> 'poll' and p_parent_key is not null then
+  if p_kind = 'provider' and v_approved->>'requires_page' = 'true' then
+    if not exists (select 1 from public.discovery_smoke_operations where authorization_id = a.id
+      and operation_key = p_parent_key and kind = 'page' and actor = p_actor and payload_hash = p_payload_hash) then
+      return jsonb_build_object('decision','missing_page');
+    end if;
+    if exists (select 1 from public.discovery_smoke_operations where authorization_id = a.id
+      and kind = 'provider' and parent_key = p_parent_key) then
+      return jsonb_build_object('decision','page_already_consumed');
+    end if;
+  elsif p_kind <> 'poll' and p_parent_key is not null then
     return jsonb_build_object('decision','invalid_parent');
   end if;
   v_paid := p_kind = 'provider' or (p_kind = 'poll' and p_committed_microusd > 0);
@@ -258,3 +271,5 @@ revoke all on function public.stop_discovery_smoke(uuid) from public,anon,authen
 grant execute on function public.admit_discovery_smoke(uuid,uuid,uuid,integer,text,text,text,text,text,bigint,jsonb,text) to service_role;
 grant execute on function public.record_discovery_smoke_receipt(uuid,text,uuid,text,jsonb) to service_role;
 grant execute on function public.stop_discovery_smoke(uuid) to service_role;
+
+commit;

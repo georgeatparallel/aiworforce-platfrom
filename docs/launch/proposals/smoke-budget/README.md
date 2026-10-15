@@ -124,10 +124,12 @@ rows directly. Database owners/administrators remain trusted.
 
 ## Rollback and approval sequence
 
-The rollback removes only these four RPCs/two tables/index; it refuses while
-**any** authorization or operation exists, even if cancelled. It does not delete
-cost evidence, reverse credits or silently drop uncertain liabilities. For an
-empty never-used scratch schema it rolls back/reapplies cleanly. After use, stop
+Both SQL files wrap their changes in an explicit transaction, so a client
+continuing after an SQL error cannot partially apply or destroy the schema. The
+rollback removes only these four RPCs/two tables/index; it refuses while **any**
+authorization or operation exists, even if cancelled. It does not delete cost
+evidence, reverse credits or silently drop uncertain liabilities. For an empty
+never-used scratch schema it rolls back/reapplies cleanly. After use, stop
 admissions and drain/stop the worker, reconcile possible vendor liability,
 export immutable records and obtain an explicit archival/destruction decision.
 Keeping the inactive schema is the default. A runtime adapter with a missing RPC
@@ -185,8 +187,8 @@ type-checked, **not executed**. No live guarantee follows from ignored tests.
 
 ## Validation recorded for this revision
 
-On the `9453b7c5` base, the complete proposal suite reports **32 passed, zero
-failed, three ignored**: 20 SQL/state/permissions/rollback controls and 12
+On the `9453b7c5` base, the complete proposal suite reports **33 passed, zero
+failed, three ignored**: 21 SQL/state/permissions/rollback controls and 12
 mutation controls. The three ignored tests are the native multi-session proofs
 above, not expected failures or passing enforcement guarantees. All four test
 modules type-check and lint. SQL controls run without network permission.

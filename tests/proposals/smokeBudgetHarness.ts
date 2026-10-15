@@ -48,6 +48,7 @@ export const APPROVED_QUOTES = Object.fromEntries(
       const q = quote(amount);
       return [q.template_id, {
         ...q,
+        requires_page: false,
         allowed_kinds: ["provider", "model", "page", "poll"],
         allowed_actors: [
           ACTOR,
@@ -62,6 +63,10 @@ export const APPROVED_QUOTES = Object.fromEntries(
     },
   ),
 );
+APPROVED_QUOTES["discovery-control"] = {
+  ...APPROVED_QUOTES["control-10000"],
+  requires_page: true,
+};
 export interface Request {
   authorization: string;
   workspace: string;

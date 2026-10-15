@@ -1,3 +1,5 @@
+-- Review artifact only: atomic even if a SQL client continues after an error.
+begin;
 -- PROPOSAL ONLY. Refuse destructive rollback while any authorization/audit exists.
 -- Stop admissions/worker first; reconcile all possible liability and export the
 -- immutable audit. Removing runtime wiring must fail closed, never bypass budget.
@@ -13,3 +15,5 @@ drop function public.admit_discovery_smoke(uuid,uuid,uuid,integer,text,text,text
 drop function public.authorize_discovery_smoke(uuid,uuid,text,text,jsonb);
 drop table public.discovery_smoke_operations;
 drop table public.discovery_smoke_authorizations;
+
+commit;
