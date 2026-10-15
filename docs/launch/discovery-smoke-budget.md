@@ -100,7 +100,7 @@ recovery, fencing and credit-uncertainty changes. Its 8,653 edge tests and 270
 Replay tests pass (one existing ignored display-only case).
 
 The independent durable proposal now contains precise two-table/four-RPC SQL, a
-rollback that refuses to discard audit records, and 32 passing offline SQL and
+rollback that refuses to discard audit records, and 33 passing offline SQL and
 mutation controls. It is outside migration/bootstrap directories and is **not
 applied or wired into physical transports**. Three real multi-session PostgreSQL
 tests are prepared and type-checked but unrun; embedded PostgreSQL serializes
