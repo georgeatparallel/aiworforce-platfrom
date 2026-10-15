@@ -1,0 +1,201 @@
+{
+  "provenance": "synthetic controls; no provider/model calls, not production performance",
+  "rows": [
+    {
+      "id": "agency-buyers",
+      "truth": "MATCH",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "consultant-buyers",
+      "truth": "MATCH",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "provider-buyers",
+      "truth": "MATCH",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "plain-software",
+      "truth": "MATCH",
+      "prediction": "MATCH",
+      "eligibility": "eligible",
+      "checks": [
+        {
+          "result": "pass"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "consultant-vendor",
+      "truth": "NON_MATCH",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "consumer-vendor",
+      "truth": "NON_MATCH",
+      "prediction": "NON_MATCH",
+      "eligibility": "ineligible",
+      "checks": [
+        {
+          "result": "fail"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "platform-only",
+      "truth": "UNKNOWN",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "mixed-delivery",
+      "truth": "UNKNOWN",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "negated",
+      "truth": "UNKNOWN",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    },
+    {
+      "id": "mixed-audience",
+      "truth": "UNKNOWN",
+      "prediction": "UNKNOWN",
+      "eligibility": "pending",
+      "checks": [
+        {
+          "result": "unknown"
+        },
+        {
+          "result": "pass"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "samples": 10,
+    "known_truth": 6,
+    "unknown_truth": {
+      "numerator": 4,
+      "denominator": 10,
+      "percentage": 40
+    },
+    "unknown_predictions": {
+      "numerator": 8,
+      "denominator": 10,
+      "percentage": 80
+    },
+    "industry_precision": {
+      "numerator": 1,
+      "denominator": 1,
+      "percentage": 100
+    },
+    "industry_recall": {
+      "numerator": 1,
+      "denominator": 4,
+      "percentage": 25
+    },
+    "industry_decision_coverage": {
+      "numerator": 2,
+      "denominator": 10,
+      "percentage": 20
+    },
+    "supported_positive_matches": 1,
+    "unsupported_positive_matches": 0,
+    "positive_matches_with_unknown_truth": 0,
+    "false_exclusions": 0,
+    "unresolved_known_matches": 3,
+    "qualified": 1,
+    "company_yield": {
+      "numerator": 1,
+      "denominator": 10,
+      "percentage": 10
+    },
+    "mandatory_decision_coverage": {
+      "numerator": 12,
+      "denominator": 20,
+      "percentage": 60
+    },
+    "mandatory_support_coverage": {
+      "numerator": 11,
+      "denominator": 20,
+      "percentage": 55
+    }
+  },
+  "baseline_commit": "fec34976d1d88a2539a9aaf8a8e27e5fe2be923a",
+  "generation": "Actual pre-fix production implementation, offline synthetic controls, benchmark.ts --snapshot; no providers/models.",
+  "fixture_sha256": {
+    "synthetic-evidence.json": "337f2d93b5a7c74ac67b7fdb9362d591394ab087a3f5a82ff8276e3c76a65e1a",
+    "synthetic-labels.json": "eb200645ef647af85cc55853cc9cfcc58e7faf3f622cd19a524b156c44e025ad"
+  }
+}
