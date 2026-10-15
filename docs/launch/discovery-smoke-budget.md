@@ -20,14 +20,19 @@ evidence is not a hard rejection. Every mandatory verification remains required.
 
 ## What changes in the proposed settings
 
-| #87's inactive proposal         | Consistent proposed smoke value        | Limitation                                                                            |
-| ------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------- |
-| Provider cap $0.25              | $0.20                                  | Existing ledger bounds reserved estimates; actual invoices need bounded quotes        |
-| Credit cap 10                   | 5                                      | Also tightens global purchased-provider-call count under the existing one-credit rule |
-| Workspace model meter $1.00     | $0.05                                  | Still retrospective once per request; cannot guarantee a $0.05 mission budget         |
-| Unpriced model calls 50         | 4, plus new all-attempt guard 4        | New all-attempt guard is request-local, not durable across a new process              |
-| Worker 300000 ms per invocation | Same plus fixed queue wall-clock guard | Derived from server-persisted queue.created_at; never renewed by a retry/checkpoint   |
-| Default continuation allowance  | 1 continuation                         | Bounds clean two-slice execution; does not replace a global deadline or retry budget  |
+| #87's current inactive proposal  | Consistent proposed smoke value                                          | Limitation                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Provider cap $0.20               | $0.20 (already aligned)                                                  | Existing ledger bounds reserved estimates; actual invoices need bounded quotes                                            |
+| Credit cap 5                     | 5 (already aligned)                                                      | Does not establish atomic cross-process purchase admission                                                                |
+| Workspace model meter $0.05      | $0.05 (already aligned)                                                  | Still retrospective once per request; cannot guarantee a $0.05 mission budget                                             |
+| Unpriced model calls 2 per slice | 4 unpriced and 4 all-attempt slots per request                           | The new all-attempt guard covers priced calls and retries; neither count is durable across a new process                  |
+| Worker 150000 ms per invocation  | 300000 ms invocation maximum plus fixed 300000 ms queue wall-clock guard | Two slices, queue delay and retry backoff share the original queue deadline; adding per-slice times alone is insufficient |
+| 1 continuation                   | 1 continuation (already aligned)                                         | Bounds clean two-slice execution; does not replace a global deadline or retry budget                                      |
+
+This comparison pins #87 at `2a60a41a`. Its comment that two unpriced calls per
+slice imply at most four model calls per mission is not an enforcement
+guarantee: priced calls, retries and newly constructed collectors need separate
+admission. This specification does not amend or activate Claude's proposal.
 
 The JSON's environment/request objects are **candidate specifications only**.
 Setting them is insufficient to unlock execution. Missing variables do not

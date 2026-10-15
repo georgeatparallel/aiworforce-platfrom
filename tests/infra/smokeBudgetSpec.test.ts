@@ -23,7 +23,7 @@ Deno.test("smoke specification has one bounded monetary and purchase authorizati
   assertEquals(l.provider_polls, 5);
 });
 
-Deno.test("candidate settings tighten the old proposal and distinguish per-request guards", () => {
+Deno.test("candidate settings align shared limits and distinguish per-request guards", () => {
   const e = spec.candidate_environment_spec_not_applied;
   assertEquals(
     Number(e.LEAD_V2_MISSION_PROVIDER_USD_CAP),
