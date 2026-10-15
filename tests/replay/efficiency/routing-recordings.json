@@ -1,0 +1,7 @@
+{
+  "provenance": {
+    "kind": "recorded_fixture_index",
+    "note": "No matched recorded routing runs are available. Add independently reviewed, sanitized paired inputs only; synthetic controls belong in tests, not here."
+  },
+  "runs": []
+}
