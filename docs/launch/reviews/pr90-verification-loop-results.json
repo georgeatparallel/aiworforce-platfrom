@@ -1,0 +1,123 @@
+{
+  "schema": "pr90-seven-bug-retest-v1",
+  "reviewed_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+  "original_test_commit": "092d2e937031f0e4d09570e10260e93563d12f5d",
+  "unchanged_test_modules": 6,
+  "source_and_test_hashes_verified": true,
+  "command_exit_code": 1,
+  "passed": 24,
+  "failed": 7,
+  "skipped": 0,
+  "bugs": [
+    {
+      "id": "SAF-001",
+      "severity": "P1",
+      "original_failure": "Admission RPC outage refunds an earlier uncertain Apify hold",
+      "fix_sha": null,
+      "retest_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+      "retest": "FAIL",
+      "expected_safe_behavior": "Original credit remains reserved; refunded credits stay zero; one vendor POST and one durable commitment",
+      "remaining_risk": "Later transport refusals must not erase prior liability",
+      "matching_test_count": 1
+    },
+    {
+      "id": "SAF-002",
+      "severity": "P1",
+      "original_failure": "Stopped authorization refunds an earlier uncertain Apify hold",
+      "fix_sha": null,
+      "retest_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+      "retest": "FAIL",
+      "expected_safe_behavior": "Original credit remains reserved after stop; refunded credits stay zero; no additional vendor POST",
+      "remaining_risk": "Cancellation is not proof of no vendor charge",
+      "matching_test_count": 1
+    },
+    {
+      "id": "SAF-003",
+      "severity": "P1",
+      "original_failure": "Uncertain Firecrawl purchase is refunded",
+      "fix_sha": null,
+      "retest_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+      "retest": "FAIL",
+      "expected_safe_behavior": "Uncertain credit remains reserved; one physical vendor POST despite internal retry",
+      "remaining_risk": "Firecrawl settlement contract requires billing-policy review",
+      "matching_test_count": 1
+    },
+    {
+      "id": "SAF-004",
+      "severity": "P1",
+      "original_failure": "Remote image content passes byte/output bounds",
+      "fix_sha": null,
+      "retest_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+      "retest": "FAIL",
+      "expected_safe_behavior": "Remote-image request refuses under this text-only/unpriced-media template; missing output bound also refuses",
+      "remaining_risk": "Text-only protocol/token overhead, model tier and external rates still require verified maximum quotes",
+      "matching_test_count": 1
+    },
+    {
+      "id": "SAF-005",
+      "severity": "P1",
+      "original_failure": "An own-API redirect sends to a directly forbidden host",
+      "fix_sha": null,
+      "retest_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+      "retest": "FAIL",
+      "expected_safe_behavior": "Structured refusal; zero requests to unapproved destination",
+      "remaining_risk": "Non-fetch clients and future SDKs are outside a global-fetch patch; no current paid non-fetch caller was found",
+      "matching_test_count": 1
+    },
+    {
+      "id": "SAF-006",
+      "severity": "P1",
+      "original_failure": "Malformed admitted RPC data reaches vendor transport",
+      "fix_sha": null,
+      "retest_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+      "retest": "FAIL",
+      "expected_safe_behavior": "Zero vendor sends when deadline/operation/cost fields are missing",
+      "remaining_risk": "Full response identity, cost and deadline validation must fail closed",
+      "matching_test_count": 1
+    },
+    {
+      "id": "SAF-007",
+      "severity": "P1",
+      "original_failure": "Handler closure while admission is pending still allows transport",
+      "fix_sha": null,
+      "retest_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+      "retest": "FAIL",
+      "expected_safe_behavior": "Zero vendor sends after context closes; already committed reservation retained",
+      "remaining_risk": "In-flight vendor work still requires conservative accounting; external atomic cancellation cannot be assumed",
+      "matching_test_count": 1
+    }
+  ],
+  "all_seven_pass": false,
+  "authorizes_live_execution": false,
+  "actual_vendor_receipts": [],
+  "actual_vendor_spend_usd": null,
+  "original_characterizations": {
+    "passed": 43,
+    "failed": 0,
+    "mutations_killed": 8
+  },
+  "adjacent_characterizations": {
+    "passed": 7,
+    "failed": 0
+  },
+  "adjacent_required_safety": {
+    "passed": 5,
+    "failed": 2,
+    "failed_ids": [
+      "ADJ-001",
+      "ADJ-004"
+    ]
+  },
+  "pr_comment": {
+    "posted": false,
+    "failure": "GitHub API proxy CONNECT denied HTTP 403, including anonymous request; authorized POST remains Forbidden after restoration retry",
+    "prepared_body": "docs/launch/reviews/pr90-consolidated-comment.md"
+  },
+  "new_fix_available": false,
+  "poll_policy": {
+    "actual_cap": 5,
+    "twelve_read_experiment": "SYNTHETIC_SCRATCH_SQL_ONLY",
+    "receipt_lane_reserved": false,
+    "live_policy_changed": false
+  }
+}

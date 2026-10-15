@@ -1,0 +1,83 @@
+{
+  "schema": "pr90-independent-safety-cases-v1",
+  "original_test_commit": "092d2e937031f0e4d09570e10260e93563d12f5d",
+  "original_source_sha": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+  "original_characterization_count": 43,
+  "original_safe_mode": {
+    "passed": 24,
+    "failed": 7
+  },
+  "severity_scope": "P1 review priority; no observed production incident or P0 claim",
+  "bugs": [
+    {
+      "id": "SAF-001",
+      "severity": "P1",
+      "file": "verify.ts",
+      "original_test_locator": "rpc-outage",
+      "original_failure": "Admission RPC outage refunds an earlier uncertain Apify hold",
+      "expected_safe_behavior": "Original credit remains reserved; refunded credits stay zero; one vendor POST and one durable commitment",
+      "remaining_risk": "Later transport refusals must not erase prior liability",
+      "determinism": "Synthetic request/response; explicit DB transaction or controlled callback boundary; loopback HTTP only for redirect. No paid API, random completion timing or live pricing."
+    },
+    {
+      "id": "SAF-002",
+      "severity": "P1",
+      "file": "verify.ts",
+      "original_test_locator": "cancelled-replay",
+      "original_failure": "Stopped authorization refunds an earlier uncertain Apify hold",
+      "expected_safe_behavior": "Original credit remains reserved after stop; refunded credits stay zero; no additional vendor POST",
+      "remaining_risk": "Cancellation is not proof of no vendor charge",
+      "determinism": "Synthetic request/response; explicit DB transaction or controlled callback boundary; loopback HTTP only for redirect. No paid API, random completion timing or live pricing."
+    },
+    {
+      "id": "SAF-003",
+      "severity": "P1",
+      "file": "verify.ts",
+      "original_test_locator": "Firecrawl characterization",
+      "original_failure": "Uncertain Firecrawl purchase is refunded",
+      "expected_safe_behavior": "Uncertain credit remains reserved; one physical vendor POST despite internal retry",
+      "remaining_risk": "Firecrawl settlement contract requires billing-policy review",
+      "determinism": "Synthetic request/response; explicit DB transaction or controlled callback boundary; loopback HTTP only for redirect. No paid API, random completion timing or live pricing."
+    },
+    {
+      "id": "SAF-004",
+      "severity": "P1",
+      "file": "verify.ts",
+      "original_test_locator": "remote multimodal input",
+      "original_failure": "Remote image content passes byte/output bounds",
+      "expected_safe_behavior": "Remote-image request refuses under this text-only/unpriced-media template; missing output bound also refuses",
+      "remaining_risk": "Text-only protocol/token overhead, model tier and external rates still require verified maximum quotes",
+      "determinism": "Synthetic request/response; explicit DB transaction or controlled callback boundary; loopback HTTP only for redirect. No paid API, random completion timing or live pricing."
+    },
+    {
+      "id": "SAF-005",
+      "severity": "P1",
+      "file": "egress.ts",
+      "original_test_locator": "allowed API redirect",
+      "original_failure": "An own-API redirect sends to a directly forbidden host",
+      "expected_safe_behavior": "Structured refusal; zero requests to unapproved destination",
+      "remaining_risk": "Non-fetch clients and future SDKs are outside a global-fetch patch; no current paid non-fetch caller was found",
+      "determinism": "Synthetic request/response; explicit DB transaction or controlled callback boundary; loopback HTTP only for redirect. No paid API, random completion timing or live pricing."
+    },
+    {
+      "id": "SAF-006",
+      "severity": "P1",
+      "file": "verify.ts",
+      "original_test_locator": "malformed admitted deadline",
+      "original_failure": "Malformed admitted RPC data reaches vendor transport",
+      "expected_safe_behavior": "Zero vendor sends when deadline/operation/cost fields are missing",
+      "remaining_risk": "Full response identity, cost and deadline validation must fail closed",
+      "determinism": "Synthetic request/response; explicit DB transaction or controlled callback boundary; loopback HTTP only for redirect. No paid API, random completion timing or live pricing."
+    },
+    {
+      "id": "SAF-007",
+      "severity": "P1",
+      "file": "verify.ts",
+      "original_test_locator": "handler closing during admission",
+      "original_failure": "Handler closure while admission is pending still allows transport",
+      "expected_safe_behavior": "Zero vendor sends after context closes; already committed reservation retained",
+      "remaining_risk": "In-flight vendor work still requires conservative accounting; external atomic cancellation cannot be assumed",
+      "determinism": "Synthetic request/response; explicit DB transaction or controlled callback boundary; loopback HTTP only for redirect. No paid API, random completion timing or live pricing."
+    }
+  ]
+}

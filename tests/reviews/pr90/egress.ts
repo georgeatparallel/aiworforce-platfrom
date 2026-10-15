@@ -12,7 +12,7 @@ const unusedDb = {
     throw new Error("unexpected lookup");
   },
 };
-Deno.test("PR90 DEFECT characterization: an allowed API redirect reaches a denied host without admission", async () => {
+Deno.test("SAF-005 [P1] PR90 DEFECT characterization: an allowed API redirect reaches a denied host without admission", async () => {
   let calls = 0;
   const vendor = Deno.serve({
     hostname: "127.0.0.1",

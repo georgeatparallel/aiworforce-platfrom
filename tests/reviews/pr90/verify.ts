@@ -301,7 +301,8 @@ Deno.test("PR90 native billing control: uncertain start and ordinary replay keep
   }));
 for (const failure of ["rpc-outage", "cancelled-replay"]) {
   Deno.test(
-    "PR90 DEFECT characterization: " + failure +
+    (failure === "rpc-outage" ? "SAF-001 [P1] " : "SAF-002 [P1] ") +
+      "PR90 DEFECT characterization: " + failure +
       " refunds an existing uncertain purchase hold",
     () =>
       test(async (h) => {
@@ -348,7 +349,7 @@ for (const failure of ["rpc-outage", "cancelled-replay"]) {
       }),
   );
 }
-Deno.test("PR90 bounds: absent output limit refuses, remote multimodal input remains accepted", () => {
+Deno.test("SAF-004 [P1] PR90 bounds: absent output limit refuses, remote multimodal input remains accepted", () => {
   const url = new URL("https://api.openai.com/v1/chat/completions");
   const req = {
     method: "POST",
@@ -382,7 +383,7 @@ Deno.test("PR90 bounds: absent output limit refuses, remote multimodal input rem
     "small serialized request does not include the remote image bytes",
   );
 });
-Deno.test("PR90 DEFECT characterization: malformed admitted deadline fails open at send", () =>
+Deno.test("SAF-006 [P1] PR90 DEFECT characterization: malformed admitted deadline fails open at send", () =>
   test(async (h) => {
     let calls = 0;
     const db = {
@@ -514,7 +515,7 @@ Deno.test("PR90 native: post-admission revocation refuses transport and retains 
     assertEquals(sent, 0);
     assertEquals((await h.rows()).length, 1);
   }));
-Deno.test("PR90 DEFECT characterization: a handler closing during admission still allows transport", () =>
+Deno.test("SAF-007 [P1] PR90 DEFECT characterization: a handler closing during admission still allows transport", () =>
   test(async (h) => {
     let sent = 0;
     const ctx = { ...h.ctx, closedReason: null as string | null };
@@ -634,7 +635,7 @@ for (const scenario of ["generation", "cancellation"]) {
       }),
   );
 }
-Deno.test("PR90 Firecrawl characterization: retry is suppressed but uncertain credit is refunded", () =>
+Deno.test("SAF-003 [P1] PR90 Firecrawl characterization: retry is suppressed but uncertain credit is refunded", () =>
   test(async (h) => {
     await installCredits(h);
     let calls = 0;

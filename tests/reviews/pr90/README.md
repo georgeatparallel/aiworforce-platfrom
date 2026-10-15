@@ -90,3 +90,68 @@ controls use the actual tool loop but accelerate its 3000 ms sleeps; their
 nominal wait times are not vendor latency measurements. Crash tests inject
 boundary failures and use fresh mission contexts/connections; they do not
 SIGKILL a real worker or contact a real provider.
+
+## Independent verification loop
+
+The seven original failures now carry unique IDs `SAF-001`–`SAF-007`, all P1.
+[`safety-cases.json`](safety-cases.json) records the original failure, exact
+safe expectation and residual risk for each. These IDs split the two Apify
+outage and cancellation cases; they do not replace the earlier report's R1–R8
+section IDs. The original 43-check suite and its assertions are retained. The
+original review commit is immutable and remains available as
+`092d2e937031f0e4d09570e10260e93563d12f5d`.
+
+```sh
+node tests/reviews/pr90/assert-originals.mjs
+git fetch origin launch/hardening:refs/remotes/origin/launch/hardening \
+  pull/90/head:refs/remotes/origin/review-pr90
+git rev-parse refs/remotes/origin/review-pr90
+node tests/reviews/pr90/prepare-retest.mjs <exact-40-character-fetched-SHA>
+python3 tests/reviews/pr90/run-safety.py <printed-preparation.json-path>
+```
+
+Run from the repository root, with the same localhost database and cached Deno
+environment described above. The preservation guard compares all six original
+test/helper modules to the original Git commit using the TypeScript parser and
+printer. It ignores only test names and comments/formatting; changing an
+assertion, fixture or conditional fails the check. It also requires the original
+source fingerprint JSON to remain unchanged.
+
+Preparation creates a separate temporary archive of an already fetched commit.
+It copies the identical test code into that temporary directory and changes only
+the copy's source fingerprints to the exact target SHA. The branch's original
+pins are never overwritten. Execution verifies source/test hashes, runs all 31
+required-safe tests and writes fresh JUnit, logs and per-ID JSON. Missing,
+duplicate or skipped IDs cannot be PASS; nonzero exits and type-check failures
+remain failures. No script fetches a vendor, changes Claude's branch or applies
+SQL to an application database.
+
+Use `--filter SAF-001` through the normal Deno command for a single
+counterexample. All seven cases use controlled responses/callback boundaries and
+native DB state; none depends on live vendor latency or pricing. Test ports and
+schema names are allocated for isolation, rather than used as behavioral random
+inputs.
+
+`adjacent.ts` is a separate runner. It must not be included in, or relabeled as,
+the seven-failure/43-check baseline:
+
+```sh
+deno test --cached-only --allow-read --allow-env --allow-net=127.0.0.1 \
+  tests/reviews/pr90/adjacent.ts
+PR90_REQUIRE_ADJACENT_SAFE=1 deno test --cached-only --allow-read --allow-env \
+  --allow-net=127.0.0.1 tests/reviews/pr90/adjacent.ts
+```
+
+At the original SHA: seven adjacent characterizations pass; required-safe mode
+has five passes and two failures (initial receipt usage and paid redirect-policy
+loss). The twelve-poll case changes a copy of the SQL constraint **only in a
+scratch schema** to investigate a hypothetical policy. It is neither an
+implemented twelve-poll proposal nor a recommended/approved production setting.
+
+For a new patch, run unchanged required-safe assertions first, then the actual
+target's billing, purchase-recovery, admission and native concurrency tests.
+Once all critical cases pass, run final Replay and mutation checks against the
+exact independently archived integration tree. Do not run the original unsafe
+characterization expectations on a fixed tree and interpret their expected
+behavioral changes as newly discovered production bugs. Preserve their baseline
+results and continue using the unchanged safe assertions for acceptance.
