@@ -1,0 +1,121 @@
+# PROPOSAL. NOT ACTIVE.
+#
+# This file deliberately lives OUTSIDE .github/workflows/, so GitHub never
+# loads it: no trigger exists, nothing can start it, and no secret is read.
+# tests/infra/testWorkerProposal.test.ts keeps it out and checks the guards
+# below. See docs/launch/test-worker-hosting.md for what must be true before
+# anyone moves it (each step there needs explicit approval).
+#
+# What it would do, once activated: run ONE LeadMission V2 worker for ONE
+# bounded session against a NON-PRODUCTION Supabase project, for ONE allowlisted
+# test workspace, then drain and exit. It claims at most what the queue offers.
+# It never deploys anything, never applies a migration, and never reads a
+# production secret: every secret comes from the `discovery-test` Environment,
+# which must hold the test project's values only.
+
+name: Discovery test worker (non-production, manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project_ref:
+        description: "Type the NON-production Supabase project ref this run targets"
+        required: true
+        type: string
+      session_minutes:
+        description: "Worker session length before it is asked to drain (max 25)"
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+# One worker at a time, ever. A second dispatch waits; it never runs beside one.
+concurrency:
+  group: discovery-test-worker
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    # Holds ONLY the test project's secrets; add a required reviewer if the plan allows.
+    environment: discovery-test
+    # Session (<= 25 min) + drain of one mission (LEAD_WORKER_MAX_RUNTIME_MS, 5 min)
+    # + kill grace (10 min) fits inside this, so GitHub never SIGKILLs a mission mid-run.
+    timeout-minutes: 45
+    env:
+      CONFIRM_REF: ${{ inputs.confirm_project_ref }}
+      SESSION_MINUTES: ${{ inputs.session_minutes }}
+      TEST_PROJECT_REF: ${{ vars.TEST_PROJECT_REF }}
+      # ── Supabase: the TEST project only ──────────────────────────────────
+      SUPABASE_URL: ${{ secrets.TEST_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.TEST_SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.TEST_SUPABASE_ANON_KEY }}
+      # ── The V2 gate: exactly one test workspace ──────────────────────────
+      LEAD_V2_WORKER_WORKSPACES: ${{ vars.TEST_WORKSPACE_ID }}
+      # ── Fail-closed spend controls ───────────────────────────────────────
+      LEAD_CREDIT_ENFORCEMENT: enforce
+      LINEAGE_LEASE_ENFORCED: "true"
+      # #89's smoke limits (tests/replay/evaluation/smoke-mission.proposed.json).
+      LEAD_V2_MISSION_PROVIDER_USD_CAP: "0.20"   # provider USD, checked before every paid call
+      LEAD_V2_MISSION_CREDIT_CAP: "5"            # paid provider calls (1 credit each) = 5 purchases
+      LEAD_MAX_AUTO_CONTINUATIONS: "1"           # at most 2 slices
+      MODEL_SPEND_ENFORCEMENT: enforce
+      MODEL_SPEND_CEILING_USD: "0.05"            # recorded model spend; the last call may overshoot by its own cost
+      MODEL_SPEND_PERIOD_DAYS: "1"
+      MODEL_RUN_MAX_CALLS: "2"                   # per slice, so at most 4 per mission
+      # ── Worker bounds ────────────────────────────────────────────────────
+      LEAD_WORKER_MAX_RUNTIME_MS: "150000"       # per slice; 2 slices fit in #89's 300 s
+      # ── Providers: test-scoped keys; the Apify account carries its own spending limit ──
+      APIFY_API_TOKEN: ${{ secrets.TEST_APIFY_API_TOKEN }}
+      FIRECRAWL_API_KEY: ${{ secrets.TEST_FIRECRAWL_API_KEY }}
+      LOVABLE_API_KEY: ${{ secrets.TEST_LOVABLE_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.TEST_ANTHROPIC_API_KEY }}
+    steps:
+      - name: Refuse anything but the confirmed non-production project
+        run: |
+          set -euo pipefail
+          # The live project and the abandoned former one are never a test target.
+          case "$CONFIRM_REF" in
+            ""|ohsdatpvfdjdemstoiuj|wqnigjhcwjxtmordrwno)
+              echo "refusing: '$CONFIRM_REF' is not a non-production project" >&2; exit 1 ;;
+          esac
+          [ "$CONFIRM_REF" = "$TEST_PROJECT_REF" ] \
+            || { echo "refusing: typed ref does not match the Environment's TEST_PROJECT_REF" >&2; exit 1; }
+          [ "$SUPABASE_URL" = "https://$CONFIRM_REF.supabase.co" ] \
+            || { echo "refusing: TEST_SUPABASE_URL does not name the confirmed project" >&2; exit 1; }
+          # Keys are not checked here: an `sb_secret_` key does not name its
+          # project. The URL above is the guard. A key from another project is
+          # rejected by the test project itself, and the worker exits 1.
+          # Exactly one workspace on the allowlist.
+          [ -n "$LEAD_V2_WORKER_WORKSPACES" ] && [[ "$LEAD_V2_WORKER_WORKSPACES" != *,* ]] \
+            && [ "$LEAD_V2_WORKER_WORKSPACES" != "*" ] \
+            || { echo "refusing: the allowlist must name exactly one test workspace" >&2; exit 1; }
+          [[ "$SESSION_MINUTES" =~ ^[0-9]+$ ]] && [ "$SESSION_MINUTES" -ge 1 ] && [ "$SESSION_MINUTES" -le 25 ] \
+            || { echo "refusing: session_minutes must be 1-25" >&2; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.2   # worker/Dockerfile's version
+
+      - name: One bounded worker session (drains on SIGTERM, then exits)
+        run: |
+          set +e
+          # SIGTERM asks the worker to drain: a mission in flight finishes and
+          # checkpoints on its own terms (worker/README.md "Shutdown").
+          # THIS REPOSITORY IS PUBLIC, and so are its Actions logs. Worker
+          # output (company names, provider payloads) goes to a file on the
+          # runner, never to the log; only the exit status and a line count are
+          # printed. The file is discarded with the runner. Inspect the mission
+          # in the test database instead.
+          timeout -s TERM --kill-after=10m "${SESSION_MINUTES}m" \
+            deno run --allow-env --allow-net --allow-read worker/main.ts \
+            > "$RUNNER_TEMP/worker.log" 2>&1
+          status=$?
+          echo "worker exited $status after $(wc -l < "$RUNNER_TEMP/worker.log") log lines (kept off the public log)"
+          # 124: the session ended on schedule and the worker drained. Anything
+          # else non-zero is a real failure and fails the job.
+          [ $status -eq 0 ] || [ $status -eq 124 ] || exit $status

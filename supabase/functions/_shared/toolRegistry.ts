@@ -30,6 +30,7 @@ import {
   type ExecutionReason, type LedgerDb,
 } from "./executionLedger.ts";
 import { writeMemoryFromToolCall } from "./memoryWriter.ts";
+import { APIFY_START_UNCERTAIN } from "./verifierPurchaseRecovery.ts";
 import { buildLinkedinEngagementInput, buildLinkedinProfilePostsInput } from "./linkedinEngagementInput.ts";
 import { normalizeLinkedinEngagementItem } from "./linkedinEngagementOutput.ts";
 import { normalizeApifyJobRow } from "./apifyJobsNormalizer.ts";
@@ -383,7 +384,7 @@ import {
 } from "./firecrawlCostModel.ts";
 import type { ExecutionCost } from "./executionLedger.ts";
 import {
-  authorizeProviderCall, settleProviderCall, resolveCreditEnforcement,
+  authorizeProviderCall, settleProviderCall, resolveCreditEnforcement, creditSettlementFor,
   CREDIT_REFUSED_ERROR, type CreditDb,
 } from "./creditAuthorization.ts";
 import { priceFor } from "./creditPricing.ts";
@@ -1189,13 +1190,29 @@ async function execSourceWithApify(
     };
   }
   if (!startRes.ok) {
+    // ── A START WHOSE OUTCOME IS UNKNOWN IS NOT A REFUSAL ─────────────────
+    //
+    // Our own 20 s abort, a dropped connection (status 0) or an Apify 5xx can
+    // all land AFTER Apify created — and billed — the run; only the answer
+    // was lost. Reported as `apify_start_failed`, the ledger read it as
+    // "nothing was bought" and a later slice bought the same question again
+    // (verifierPurchaseRecovery D2). So it is UNCERTAIN, and says so. A 4xx
+    // is a definite refusal — no run exists — and keeps its meaning. A
+    // resume is a GET on a run that already exists: nothing it fails to read
+    // is a purchase, so it keeps its meaning too.
+    if (!resumeRunId && (startRes.status === 0 || startRes.status >= 500)) {
+      return { ok: false, error: `${APIFY_START_UNCERTAIN}:${startRes.status}` };
+    }
     return { ok: false, error: `apify_start_failed:${startRes.status}` };
   }
 
   const run = startRes.data?.data ?? startRes.data ?? {};
   const run_id: string | undefined = run.id;
   const dataset_id: string | undefined = run.defaultDatasetId;
-  if (!run_id) return { ok: false, error: "apify_missing_run_id" };
+  // A 2xx start that names no run: the run may well exist — uncertain, as above.
+  if (!run_id) {
+    return { ok: false, error: resumeRunId ? "apify_missing_run_id" : `${APIFY_START_UNCERTAIN}:missing_run_id` };
+  }
 
   // ── PERSIST BEFORE WAITING ───────────────────────────────────────────────
   //
@@ -1887,19 +1904,26 @@ export async function runTool(
 
     // SETTLED ON WHAT ACTUALLY HAPPENED. A call that never reached the
     // provider refunds in full; `credits_release_stale` is the backstop if this
-    // never runs at all.
-    const started = result.ok || typeof (result.data as { run_id?: unknown } | null)
-      ?.run_id === "string";
-    const settled = await settleProviderCall({
-      db: ctx.admin as unknown as CreditDb,
-      transaction_id: auth.transaction_id,
-      started,
-      reason: result.ok ? "provider_call_succeeded" : String(result.error ?? "failed"),
-    });
-    console.log("[credits][settlement]", {
-      transaction_id: auth.transaction_id, started,
-      charged: settled.charged, settled: settled.settled, detail: settled.detail,
-    });
+    // never runs at all. An UNCERTAIN start is neither: its reservation is HELD
+    // (`creditSettlementFor`), because refunding would claim nothing was bought.
+    const settlement = creditSettlementFor(result);
+    if (settlement.action === "hold") {
+      if (auth.transaction_id) console.log("[credits][held]", {
+        transaction_id: auth.transaction_id, reason: settlement.reason,
+        policy: "held until settled or released by credits_release_stale at 30 min",
+      });
+    } else {
+      const settled = await settleProviderCall({
+        db: ctx.admin as unknown as CreditDb,
+        transaction_id: auth.transaction_id,
+        started: settlement.started,
+        reason: result.ok ? "provider_call_succeeded" : String(result.error ?? "failed"),
+      });
+      console.log("[credits][settlement]", {
+        transaction_id: auth.transaction_id, started: settlement.started,
+        charged: settled.charged, settled: settled.settled, detail: settled.detail,
+      });
+    }
   } else {
     try {
       result = await tool.execute(input, ctx);

@@ -55,8 +55,10 @@ Deno.test("WIRING: the Apify wait stops only while the verification phase runs �
   assert(armed > 0 && armed < phase && disarmed > phase, "armed immediately before the phase, disarmed right after");
   assert(between(RUN_AGENT, "console.error(\"[run-agent][claim-verifier][failed]\"", "// ── THE SAME RESULT, ALSO INTO THE CANONICAL LEAD LIBRARY")
     .includes("} finally {\n                verificationWaitStop = null;"), "and disarmed if the phase throws");
-  // The funding screen (inside the engine) keeps its own verifier deps: no gate.
-  assert(RUN_AGENT.includes("call: await verifierCallFor(state),"));
+  // The funding screen (inside the engine) keeps its own verifier deps and never
+  // arms this WAIT hook; it asks its own stop gate before each call instead
+  // (fundingScreenWiring.test.ts).
+  assert(RUN_AGENT.includes("const call = await verifierCallFor(state);"));
   // Nothing else assigns the hook.
   assertEquals(RUN_AGENT.split("verificationWaitStop = ").length - 1, 3);
 });

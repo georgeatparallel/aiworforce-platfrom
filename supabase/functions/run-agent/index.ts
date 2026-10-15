@@ -136,7 +136,8 @@ import {
   assertPaidExecutionAllowed, buildPaidExecutionPreflight,
 } from "../_shared/leadPaidExecutionPreflight.ts";
 import {
-  mergePendingRuns, recoverCompletedRuns, recoverPendingRuns, type LedgerStartedRow,
+  COMPLETED_RUN_STATUSES, mergePendingRuns, readResumableTimeoutRows, recoverCompletedRuns, recoverPendingRuns,
+  resolvedRunIdsFrom, type LedgerStartedRow,
 } from "../_shared/pendingRunRecovery.ts";
 import { LEAD_EXECUTION_CALLS_TABLE } from "../_shared/executionLedger.ts";
 import {
@@ -955,8 +956,25 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // so the guard is given a writer that resolves it at announcement time.
   let guardPlanId: string | null = null;
   const guardDb = supabaseTerminalGuardDb(supabase as never);
+  // THE GUARD'S OWN WRITE IS FENCED TOO, once the slice knows its generation
+  // (`sliceFence`, set below). A stale worker that throws after another
+  // generation took the row over must not stamp its failure over the live
+  // generation's `running` row — the guard read "running", and wrote.
+  let guardFence: SliceFence | null = null;
   const terminalGuard = createRunTerminalGuard({
     ...guardDb,
+    writeTask: async (id, patch) => {
+      if (!guardFence) return guardDb.writeTask(id, patch);
+      const w = await fencedTaskUpdate(supabase as unknown as FencedTaskDb, id, guardFence, { requireOpen: false }, {
+        status: patch.status, error_message: patch.error_message, result: patch.result,
+      });
+      if (w.fenced) {
+        console.error("[run-agent][terminal-guard] refused: a newer generation owns the row", {
+          task_id: id, generation: guardFence.generation,
+        });
+      }
+      if (w.error) throw new Error(`terminal guard write failed: ${String((w.error as { message?: unknown }).message ?? "")}`);
+    },
     announceBlocked: async (message, record) => {
       if (!guardPlanId) return;
       const { data: planMsg } = await supabase.from("messages")
@@ -1535,6 +1553,25 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   // generation's writes change zero rows.
   const sliceFence: SliceFence = {
     generation: await resolveSliceGeneration(supabase as never, task.id, heldClaim?.checkpointVersion ?? null),
+  };
+  guardFence = sliceFence;
+  // ── A SUPERSEDED SLICE STOPS BUYING ──────────────────────────────────────
+  //
+  // A fenced mid-slice write means another generation owns the row now (a
+  // stalled worker woke late). The engine only logs a refused checkpoint and
+  // would go on starting paid calls beside the live generation. The worker's
+  // deadline is revocable (`revocableDeadline`): revoking it makes every paid
+  // boundary in the engine and the verifiers answer "no room" from here on —
+  // the same path a lost queue lease already takes ("lease" → `lease_lost`).
+  // The edge default deadline is not revocable: there this is a no-op.
+  const supersedeOnFence = (w: { fenced: boolean }, where: string) => {
+    if (!w.fenced) return;
+    const d = terminalGuard.deadline as { revoke?: (reason: string) => void; revokedReason?: string | null };
+    if (typeof d.revoke !== "function" || d.revokedReason) return;
+    d.revoke(`lease superseded: a newer generation owns the task row (${where})`);
+    console.error("[run-agent][fence] superseded mid-slice: no further paid work starts", {
+      task_id: task.id, generation: sliceFence.generation, at: where,
+    });
   };
 
   // THE ROW SAYS WHICH LINEAGE IT BELONGS TO. `tasks_one_live_generation_per_lineage`
@@ -3082,7 +3119,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 "status, request_input, started_at, created_at")
               .eq("task_id", leadResumeParentTaskId)
               .eq("workspace_id", workspace_id)
-              .in("status", ["succeeded", "empty"])
+              // `reused` too: a run ADOPTED in an earlier slice is a finished,
+              // paid-for dataset. Without it, an adoption whose checkpoint
+              // write was lost was neither pending nor completed to the next
+              // slice, which bought the question again.
+              .in("status", [...COMPLETED_RUN_STATUSES])
               .not("provider_run_id", "is", null)
               .order("started_at", { ascending: true })
               .limit(200) as unknown as { data: LedgerStartedRow[] | null; error: unknown };
@@ -3115,7 +3156,18 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               console.error("[run-agent][pending-run-recovery] read failed", describeReadError(error));
               return [];
             }
-            return data ?? [];
+            // ── AND A RUN STILL EXECUTING WHEN ITS POLL WINDOW CLOSED ──────
+            //
+            // The transport finalizes that call `timed_out` WITH its run id and
+            // `metadata.resumable: true` (`outcomeFromToolResult`): billed,
+            // unread, pending. Read on its own window, same task + workspace
+            // gate, keeping only the runs still executing
+            // (`isResumableTimeout`). A failure there keeps these `started`
+            // rows: best effort, as above.
+            const resumable = await readResumableTimeoutRows(supabase as never, {
+              table: LEAD_EXECUTION_CALLS_TABLE, parentTaskId: leadResumeParentTaskId, workspaceId: workspace_id,
+            }, (msg, meta) => console.error(`[run-agent]${msg}`, describeReadError(meta)));
+            return [...(data ?? []), ...resumable];
           } catch (e) {
             // RECOVERY MUST NOT BE ABLE TO FAIL A RUN IT ONLY REPAIRS. Same
             // rule the execution ledger follows: observability and repair are
@@ -3140,13 +3192,13 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // deno-lint-ignore no-explicit-any
             const { data, error } = await (supabase as any)
               .from(LEAD_EXECUTION_CALLS_TABLE)
-              .select("provider_run_id, status")
+              .select("provider_run_id, status, metadata")
               .eq("task_id", leadResumeParentTaskId)
               .eq("workspace_id", workspace_id)
               .in("provider_run_id", ids)
               .in("status", ["reused", "succeeded", "failed", "timed_out"])
               .limit(200) as unknown as {
-                data: Array<{ provider_run_id: string | null }> | null; error: unknown;
+                data: LedgerStartedRow[] | null; error: unknown;
               };
             if (error) {
               // BEST EFFORT, LIKE THE READ ABOVE. An unreadable answer means
@@ -3156,9 +3208,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 String(error));
               return new Set<string>();
             }
-            return new Set(
-              (data ?? []).map((r) => r.provider_run_id ?? "").filter((x) => !!x),
-            );
+            // A RESUMABLE `timed_out` row does not resolve its run: the run was
+            // still executing when it was written (`resolvedRunIdsFrom`).
+            return resolvedRunIdsFrom(data ?? []);
           } catch (e) {
             console.error("[run-agent][pending-run-recovery] resolved read threw",
               String(e));
@@ -3359,9 +3411,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   .from("tasks").select("result").eq("id", task.id).maybeSingle();
                 const prior = (cur?.result && typeof cur.result === "object")
                   ? cur.result as Record<string, unknown> : {};
-                await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
+                supersedeOnFence(await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                   result: guardResult("progress_publish", prior as Record<string, unknown> | null, { ...prior, workbench_progress: p }),
-                });
+                }), "progress_publish");
               } catch (e) {
                 console.log("[run-agent][capability-engine][progress-error]", String(e));
               }
@@ -3609,7 +3661,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                         .from("tasks").select("result").eq("id", task.id).maybeSingle();
                       const prior = (cur?.result && typeof cur.result === "object")
                         ? cur.result as Record<string, unknown> : {};
-                      await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
+                      supersedeOnFence(await fencedTaskUpdate(supabase as unknown as FencedTaskDb, task.id, sliceFence, { requireOpen: true }, {
                         result: guardResult("stage_checkpoint", prior as Record<string, unknown> | null, {
                           ...prior,
                           [POOL_EVAL_RESULT_KEY]: buildPoolCheckpoint({
@@ -3619,7 +3671,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                             accounting: poolBinding.accounting,
                           }),
                         }),
-                      });
+                      }), "stage_checkpoint");
                     } catch (e) {
                       console.log("[run-agent][stage2][checkpoint-error]", String(e));
                     }
@@ -3881,6 +3933,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                     console.warn("[run-agent][checkpoint] refused: a newer generation owns the row", {
                       task_id: task.id, generation: sliceFence.generation,
                     });
+                    supersedeOnFence(stageWrite, "stage_boundary");
                     await flushProgress();
                     return { written: false, reason: "fenced_stale_generation" };
                   }
@@ -4313,14 +4366,32 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   plan: fundingScreen.plan,
                   recentlyChecked: recentlyFundingChecked,
                   priorSearches: priorFundingScreenSearches,
-                  screen: async (targets, state) => (await fundingStageVerifier({ fallback: false }).verify(targets, {
-                    call: await verifierCallFor(state),
-                    now: () => new Date().toISOString(),
-                    log: (event, meta) => console.log(`[run-agent][funding-screen][${event}]`, { task_id: task.id, ...(meta ?? {}) }),
-                    ready: (actor) => routeActorReady(actor, "funding_verification", leadReadiness).ready &&
-                      unavailableProvider(state.unavailable_providers, actor,
-                        leadReadiness.decide(actor, "funding_verification").readiness, readEnvSafe) === null,
-                  }, { mission_id: String(task.id), pending: [] })).findings,
+                  // The screen's own reads still owed (`funding_screen.pending`) are
+                  // resumed — adopted by run id, never bought again — and the reads it
+                  // still owes are handed back, so the engine never marks a screen
+                  // complete before its paid read has answered.
+                  screen: async (targets, state, pending) => {
+                    const call = await verifierCallFor(state);
+                    // DEADLINE, CANCELLATION, LOST LEASE: the same gate the
+                    // verification phase asks before every call. A stopped screen
+                    // buys nothing and adopts nothing; its companies stay owed.
+                    const gate = verificationStopGate(terminalGuard.deadline);
+                    const r = await fundingStageVerifier({ fallback: false }).verify(targets, {
+                      call: (c) => {
+                        const stop = gate.check();
+                        return stop
+                          ? Promise.resolve({ status: "deferred" as const, reason: `${stop.reason}: ${stop.detail}` })
+                          : call(c);
+                      },
+                      now: () => new Date().toISOString(),
+                      log: (event, meta) => console.log(`[run-agent][funding-screen][${event}]`, { task_id: task.id, ...(meta ?? {}) }),
+                      ready: (actor) => routeActorReady(actor, "funding_verification", leadReadiness).ready &&
+                        unavailableProvider(state.unavailable_providers, actor,
+                          leadReadiness.decide(actor, "funding_verification").readiness, readEnvSafe) === null,
+                      stop: (op) => gate.check(op ?? null),
+                    }, { mission_id: String(task.id), pending });
+                    return { findings: r.findings, pending: r.pending };
+                  },
                 },
               } : {}),
               runBudget,
@@ -6847,8 +6918,16 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           // D3: a run asked again PENDING_RUN_MAX_POLLS times, or past
           // PENDING_RUN_MAX_WAIT_MS, stops holding the lineage
           // (`awaitedPendingRuns`); it stays listed, so it is still adopted.
+          // The funding screen's own read, and a verifier's run, are bounded the
+          // same way: polled and aged, they stop holding the lineage too (a
+          // carried step a stop deferred is never a run in flight).
           pendingRuns: awaitedPendingRuns(capabilityRun?.state.pending_runs, Date.now()).awaited +
-            (capabilityRun?.state.verifier_pending_runs?.length ?? 0),
+            awaitedPendingRuns(capabilityRun?.state.verifier_pending_runs?.filter((p) => !p.deferred), Date.now()).awaited +
+            awaitedPendingRuns(capabilityRun?.state.funding_screen?.pending?.filter((p) => !!p.run_id), Date.now()).awaited +
+            // A screen a stop deferred has no run yet, but is still owed an answer.
+            (capabilityRun?.state.funding_screen && capabilityRun.state.funding_screen.screened !== true &&
+              (capabilityRun.state.funding_screen.waits ?? 0) > 0 &&
+              !(capabilityRun.state.funding_screen.pending ?? []).some((p) => !!p.run_id) ? 1 : 0),
           // ── CAN ANYTHING STILL WIDEN THE POOL? ──────────────────────────
           //
           // Read from the engine's own record of how discovery ended, never
@@ -7230,10 +7309,24 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           }),
         });
         const sliceResultError = sliceResultWrite.error;
+        // ── SUPERSEDED: ANOTHER GENERATION OWNS THIS MISSION NOW ─────────────
+        //
+        // The fence refused this slice's verdict: a newer claim took the row (a
+        // stalled worker woke late) or something finalized it. Its result is
+        // not the mission's, so neither is anything that follows from it. The
+        // lineage lease is NOT released — the holder is the task id, which the
+        // live generation shares, so this release would clear ITS lease and
+        // write this slice's stale state (or a terminal verdict) over the
+        // lineage — no continuation is dispatched, the plan is not finalized,
+        // no panel is written, and the terminal guard stands down. What this
+        // slice actually bought stays on the execution ledger (below): that
+        // spend happened.
+        const sliceSuperseded = sliceResultWrite.fenced;
         if (sliceResultWrite.fenced) {
           console.error("[run-agent][slice-result] refused: a newer generation owns the row", {
             task_id: task.id, generation: sliceFence.generation,
           });
+          terminalGuard.disarm("fenced_stale_generation");
         }
         if (sliceResultError) {
           console.error("[run-agent][slice-result] persist failed", {
@@ -7289,7 +7382,12 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // job; writing it now costs nothing, exercises the compare-and-swap
         // against real traffic, and accumulates the state that migration will be
         // validated against.
-        if (holdsLease && leaseVersion !== null) {
+        if (sliceSuperseded && holdsLease) {
+          console.error("[run-agent][lineage] release skipped: this slice was superseded", {
+            task_id: task.id, lineage_id: lineageRootId, generation: sliceFence.generation,
+          });
+        }
+        if (holdsLease && leaseVersion !== null && !sliceSuperseded) {
           // PROGRESS IS WHAT THIS GENERATION ADDED, not what the lineage holds.
           // A slice that investigated nobody and verified nobody has not
           // advanced anything, and Phase 8 will use exactly this to stop a
@@ -7565,7 +7663,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             task_id: task.id, reason: autoDecision.reason, detail: autoDecision.detail,
           });
         }
-        if (autoDecision.continue && !deferToSweeper && !singleGeneration && !queueOwnsContinuation) {
+        if (autoDecision.continue && !deferToSweeper && !singleGeneration && !queueOwnsContinuation && !sliceSuperseded) {
           dispatchOutcome = await dispatchContinuation({
             resumeTaskId: task.id,
             workspaceId: workspace_id,
@@ -7807,7 +7905,11 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           console.log("[run-agent][ledger][stage-result-error]", String(e));
         }
 
-        await finalizeCompanyFirstPlan(supabase, plan_id, task.id, agent.id, workspace_id, statuses, cf.terminal_reason);
+        // A superseded slice's verdict is not the mission's: the live
+        // generation finalizes the plan and writes the panel.
+        if (!sliceSuperseded) {
+          await finalizeCompanyFirstPlan(supabase, plan_id, task.id, agent.id, workspace_id, statuses, cf.terminal_reason);
+        }
 
         // THE PANEL HAS TO BE PERSISTED, NOT JUST RETURNED.
         //
@@ -7863,7 +7965,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
         // than deriving a second answer. `panelResult` is re-read from the row
         // below, so it carries it.
 
-        await persistLeadResultsPanel(supabase, plan_id, uiPanel, {
+        if (!sliceSuperseded) await persistLeadResultsPanel(supabase, plan_id, uiPanel, {
           eligible: v2Outcome ? v2Outcome.delivered : cf.quota.eligible_leads,
           requested: v2Outcome ? v2Outcome.requested : cf.quota.requested_leads,
           deliverable: v2Outcome?.deliverable ?? "contact",
