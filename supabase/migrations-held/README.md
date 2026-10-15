@@ -97,6 +97,20 @@ ignored (hold kept). Rollback, verbatim to 20261003120000's function:
 Replayed against real Postgres (PGlite) in
 `tests/infra/leadMissionV2ProductiveContinuationNoBackoff.test.ts`.
 
+## `20261015120000_provider_purchase_claims.sql`
+
+**PROPOSED — NOT APPLIED, NOT WIRED, NOT APPROVED.** One buyer per provider-call
+idempotency key, decided in the database before the start POST, under D1's
+generation token (`tasks.checkpoint_version`). Closes the one purchase race
+nothing else covers: a stalled worker and the worker that reclaimed its mission
+both POSTing the same Actor run (the execution ledger's key index is not
+unique, and `credits_reserve` replays a repeated key). See
+`docs/launch/lead-v2-reliability-proposals.md` §1 for the wiring, which is a
+separate change. Additive and service-role only; a database without it answers
+PGRST202 and every caller keeps today's behaviour. Rollback:
+`rollback/20261015120000_provider_purchase_claims.down.sql`. Replayed against
+real Postgres (PGlite) in `tests/infra/providerPurchaseClaims.test.ts`.
+
 ## Tests
 
 `tests/infra/` still reads these files — the baseline's structure, the V2
