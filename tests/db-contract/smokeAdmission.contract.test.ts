@@ -421,3 +421,56 @@ Deno.test("rollback: refuses while any authorization exists, and changes nothing
   assert(n >= 1, "the audit survives");
   assertEquals((await admit(op(m))).decision, "admitted", "the RPCs still exist");
 });
+
+// ── Codex review R8: ownership is fenced through the admission's commit ──────
+//
+// An admission is paused just before its reservation is written (a trigger
+// waits on an advisory lock this test holds). While it is in flight, a
+// cancellation, a generation bump or a lease change must NOT be able to commit
+// (it waits on the admission's FOR SHARE locks; `lock_timeout` makes the wait
+// observable instead of hanging). Released, the admission commits ordered
+// BEFORE the change; once the change commits, the next admission is refused.
+const R8_CHANGES: Array<[string, (m: SmokeMission) => string, string]> = [
+  ["cancellation", (m) => `update public.lead_mission_queue set status = 'cancelled' where id = '${m.queueId}'`, "stopped"],
+  ["a newer generation", (m) => `update public.tasks set checkpoint_version = checkpoint_version + 1 where id = '${m.taskId}'`, "stale_generation"],
+  ["a moved lineage lease", (m) => `update public.lead_lineages set lease_holder = gen_random_uuid() where lineage_id = '${m.taskId}'`, "lost_ownership"],
+];
+for (const [why, change, refusedAs] of R8_CHANGES) {
+  Deno.test(`R8: ${why} cannot commit while an admission is in flight, and refuses every admission after it`, opts, async () => {
+    const m = await seedSmokeMission({ quotes: cheapModels() });
+    const key = 900_000 + Math.floor(Math.random() * 99_999);
+    await sql.unsafe(`create or replace function public.r8_pause() returns trigger language plpgsql as $f$
+      begin perform pg_advisory_xact_lock(${key}); return new; end $f$`);
+    await sql.unsafe(`create trigger r8_pause before insert on public.discovery_smoke_operations
+      for each row execute function public.r8_pause()`);
+    const holder = await sql.reserve();
+    try {
+      await holder`select pg_advisory_lock(${key})`;
+      const inFlight = admitOperation(await db(), op(m));
+      let waiting = false;
+      for (let i = 0; i < 200 && !waiting; i++) {
+        const r = await sql`select 1 from pg_stat_activity where wait_event_type = 'Lock'
+          and query ilike '%admit_discovery_smoke%' and pid <> pg_backend_pid()`;
+        waiting = r.length > 0;
+        if (!waiting) await new Promise((res) => setTimeout(res, 10));
+      }
+      assert(waiting, "the admission is paused before its reservation commits");
+      await assertRejects(
+        () => sql.begin(async (tx) => {
+          await tx`set local lock_timeout = '300ms'`;
+          await tx.unsafe(change(m));
+        }),
+        Error, "lock timeout", `${why} must wait for the in-flight admission`,
+      );
+      await holder`select pg_advisory_unlock(${key})`;
+      assertEquals((await inFlight).decision, "admitted", "the in-flight admission is ordered before the change");
+      await sql.unsafe(change(m));
+      assertEquals((await admit(op(m))).decision, refusedAs, "after the change commits, nothing is admitted");
+    } finally {
+      await holder`select pg_advisory_unlock_all()`.catch(() => {});
+      holder.release();
+      await sql.unsafe(`drop trigger if exists r8_pause on public.discovery_smoke_operations`);
+      await sql.unsafe(`drop function if exists public.r8_pause()`);
+    }
+  });
+}

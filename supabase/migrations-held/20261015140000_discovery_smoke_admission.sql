@@ -18,9 +18,10 @@
 --   * A leased lineage is `running` (acquire_lineage_lease sets it), so the
 --     ownership check accepts `active` or `running` with this task as the
 --     unexpired lease holder.
---   * The authorization row is locked FIRST and the queue, task and lineage
---     are then read without locks. No existing RPC touches these tables, so
---     admission cannot deadlock against the heartbeat, a claim or a fence.
+--   * The authorization row is locked FIRST, then the queue, task and lineage
+--     rows FOR SHARE, in the heartbeat's own order, held through commit
+--     (Codex review R8): ownership cannot change between the check and the
+--     commit, and no existing RPC locks these rows in another order.
 --
 -- ── WHAT IT GUARANTEES ─────────────────────────────────────────────────────
 --
@@ -237,10 +238,16 @@ begin
   select * into a from public.discovery_smoke_authorizations where queue_id = p_queue for update;
   if not found then return jsonb_build_object('decision', 'not_authorized'); end if;
 
-  -- Ownership, read after the lock (plain reads: no lock-order coupling).
-  select * into q from public.lead_mission_queue where id = p_queue;
-  select * into t from public.tasks where id = p_task;
-  select * into l from public.lead_lineages where lineage_id = q.lineage_id;
+  -- Ownership, FENCED THROUGH COMMIT (Codex review R8). The rows are held FOR
+  -- SHARE until this transaction ends, so a cancellation, a generation bump or
+  -- a lease change cannot commit between this check and this admission's
+  -- commit: it waits, and an admission is either ordered before it or refused
+  -- by it. Order queue -> task -> lineage, the heartbeat's own order; claims,
+  -- fences, cancellation and lease RPCs each lock a single one of these rows
+  -- and none of them touches the authorization, so no cycle can form.
+  select * into q from public.lead_mission_queue where id = p_queue for share;
+  select * into t from public.tasks where id = p_task for share;
+  select * into l from public.lead_lineages where lineage_id = q.lineage_id for share;
   v_now := clock_timestamp();  -- after the lock wait; now() is transaction start
 
   if a.status <> 'active' or a.deadline_at <= v_now

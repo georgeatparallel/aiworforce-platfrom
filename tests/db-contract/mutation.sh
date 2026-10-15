@@ -160,3 +160,10 @@ prove_killed "R6 closure not rechecked" "$gate_ts" \
 prove_killed "R7 start charge dropped" "$gate_ts" \
   'const charge = c.captures === "apify_run" ? apifyCharge(run ?? null) : null;' "const charge = null as number | null;" \
   "$gate_tests" "R7: a charge reported in the START response is recorded, and an over-quote stops the mission"
+# R8: each ownership row is fenced through commit.
+prove_killed "R8 queue row not fenced" "$adm_sql" "where id = p_queue for share;" "where id = p_queue;" \
+  "$adm_tests" "R8: cancellation cannot commit while an admission is in flight, and refuses every admission after it"
+prove_killed "R8 task row not fenced" "$adm_sql" "where id = p_task for share;" "where id = p_task;" \
+  "$adm_tests" "R8: a newer generation cannot commit while an admission is in flight, and refuses every admission after it"
+prove_killed "R8 lineage row not fenced" "$adm_sql" "where lineage_id = q.lineage_id for share;" "where lineage_id = q.lineage_id;" \
+  "$adm_tests" "R8: a moved lineage lease cannot commit while an admission is in flight, and refuses every admission after it"

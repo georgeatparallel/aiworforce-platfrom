@@ -71,3 +71,46 @@ Deno.test("smoke admission: the worker installs the gate only when enforced, bef
   assert(main.includes("global: { fetch: baseFetch }"), "the gate's own client never goes through the gate");
   assert(main.includes("...(admissionEnforced ? { admission: { workerId } } : {})"));
 });
+
+// ── Codex review R4: the gate covers `fetch` only, so the worker's code may use
+// no other HTTP client. The worker's whole local import graph (from
+// worker/main.ts, including the in-process run-agent) is walked; every external
+// module must be on this reviewed list, and no file may open a socket, a TLS
+// stream, a WebSocket or an XHR of its own. A new SDK or raw client fails here
+// until the gate is reviewed for it.
+const REVIEWED_EXTERNAL_MODULES = new Set([
+  "https://esm.sh/@supabase/supabase-js@2", // the project's own API, through fetch
+  "node:async_hooks", // the gate's mission context
+]);
+const NON_FETCH_NETWORK = [
+  /\bnode:(?:http|https|http2|net|tls|dgram)\b/, /\bDeno\.(?:connect|connectTls|startTls|connectQuic)\s*\(/,
+  /\bnew\s+WebSocket\s*\(/, /\bXMLHttpRequest\b/, /\bnpm:(?:openai|@anthropic-ai\/sdk|axios|node-fetch|undici|got|apify-client)\b/,
+];
+const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+const IMPORTS = [/^\s*(?:import|export)\b[^;'"`]*?\bfrom\s*["']([^"']+)["']/gm, /^\s*import\s*["']([^"']+)["']/gm,
+  /\bimport\(\s*["']([^"']+)["']\s*\)/g];
+
+Deno.test("smoke admission: the worker's code reaches the network only through fetch", () => {
+  const seen = new Set<string>();
+  const external = new Map<string, string>();
+  const queue = [new URL("worker/main.ts", ROOT).href];
+  while (queue.length) {
+    const u = queue.pop()!;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    const src = stripComments(Deno.readTextFileSync(new URL(u)));
+    const rel = u.slice(ROOT.href.length);
+    for (const re of NON_FETCH_NETWORK) assert(!re.test(src), `${rel} uses a non-fetch network client (${re})`);
+    for (const re of IMPORTS) {
+      for (const m of src.matchAll(re)) {
+        if (m[1].startsWith(".")) queue.push(new URL(m[1], u).href);
+        else if (!external.has(m[1])) external.set(m[1], rel);
+      }
+    }
+  }
+  assert(seen.size > 100, `the walk reached the in-process run-agent (${seen.size} files)`);
+  assert([...seen].some((u) => u.endsWith("supabase/functions/run-agent/index.ts")));
+  for (const [mod, from] of external) {
+    assert(REVIEWED_EXTERNAL_MODULES.has(mod), `${from} imports ${mod}, which the admission gate has not been reviewed for`);
+  }
+});
