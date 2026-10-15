@@ -50,6 +50,15 @@ Deno.test("unproved durable enforcement and test billing keep activation blocked
   assertEquals(spec.status, "BLOCKED");
   assertEquals(spec.authorizes_execution, false);
   assertEquals(spec.activation_gate.ready, false);
+  assertEquals(spec.activation_gate.native_multisession_tests_executed, false);
+  assertEquals(
+    spec.activation_gate.all_physical_transports_durably_gated,
+    false,
+  );
+  assertEquals(
+    spec.enforcement.durable_proposal,
+    "SQL_TESTED_OFFLINE_NOT_APPLIED_NOT_WIRED",
+  );
   assert(spec.activation_gate.separate_execution_approval_required);
   assert(spec.activation_gate.durable_failure_injection_required);
   assert(spec.activation_gate.worker_proposal_remains_inactive);

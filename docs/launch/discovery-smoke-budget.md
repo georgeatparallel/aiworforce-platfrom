@@ -91,3 +91,24 @@ termination, but do not pass the discovery-efficacy goal of one qualified lead.
 
 No production settings, worker proposal, migration, workflow or existing PR
 branch is changed by this specification. No live mission is authorized.
+
+## Updated integration and durable proposal status
+
+All three feature branches now include the merged Tier 0/1 base `9453b7c5`,
+retaining their original commits. The runtime merge is clean, including funding
+recovery, fencing and credit-uncertainty changes. Its 8,653 edge tests and 270
+Replay tests pass (one existing ignored display-only case).
+
+The independent durable proposal now contains precise two-table/four-RPC SQL, a
+rollback that refuses to discard audit records, and 32 passing offline SQL and
+mutation controls. It is outside migration/bootstrap directories and is **not
+applied or wired into physical transports**. Three real multi-session PostgreSQL
+tests are prepared and type-checked but unrun; embedded PostgreSQL serializes
+requests and is not proof of lock contention. No actual price or provider
+receipt was verified; all proposal controls are synthetic.
+
+Activation therefore remains blocked even after all Tier 0/1 merges and these
+passing tests. Approval is still required for durable schema/admission wiring
+and conservative mission-liability retention; exact test schema/billing checks,
+physical request bounds, verified prices, native contention/crash/transport
+proofs and separate live authorization must precede execution.

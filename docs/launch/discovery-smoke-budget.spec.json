@@ -8,9 +8,12 @@
     "acceptance_pr": 89,
     "acceptance_head": "16fa9e7a",
     "runtime_guards_branch": "codex/smoke-execution-guards",
-    "runtime_guards_head": "9cdb1372"
+    "runtime_guards_head": "528cd317",
+    "integrated_base": "9453b7c5",
+    "durable_proposal_branch": "codex/smoke-durable-admission-proposal",
+    "durable_proposal_head": "45ad48d6"
   },
-  "mission": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+  "mission": "Find 1 US B2B software company with a current declared 11\u201350 employee band and an open Account Executive posting dated within 30 days.",
   "eligibility": {
     "industry": "Verified product, business customers and business activity; broad provider industry categories alone never prove software.",
     "size": "Declared band from a current company record; associated-member counts are not staff counts. Exact counts and partially overlapping bands stay UNKNOWN.",
@@ -21,7 +24,7 @@
   },
   "limits": {
     "total_authorized_usd": 0.25,
-    "provider_committed_max_usd": 0.20,
+    "provider_committed_max_usd": 0.2,
     "model_committed_max_usd": 0.05,
     "provider_purchases": 5,
     "model_attempts": 4,
@@ -63,7 +66,10 @@
     "LEAD_MAX_AUTO_CONTINUATIONS": "1"
   },
   "candidate_request_spec_not_enqueued": {
-    "run_budget": { "provider_usd": 0.20, "max_candidates": 3 },
+    "run_budget": {
+      "provider_usd": 0.2,
+      "max_candidates": 3
+    },
     "requested_lead_count": 1
   },
   "enforcement": {
@@ -77,7 +83,8 @@
     "mission_actor_page_and_poll_limits": "BLOCKED_REQUIRES_APPROVED_DURABLE_ADMISSION",
     "mission_deadline_across_reenqueue": "BLOCKED_REQUIRES_IMMUTABLE_MISSION_AUTHORIZATION",
     "actual_vendor_charge_maximum": "BLOCKED_REQUIRES_VERIFIED_UPPER_QUOTES_AND_EXTERNAL_CONTROLS",
-    "test_target_billing_and_schema": "BLOCKED_REQUIRES_CLAUDE_VALIDATION_AND_SEPARATE_AUTHORIZATION"
+    "test_target_billing_and_schema": "BLOCKED_REQUIRES_CLAUDE_VALIDATION_AND_SEPARATE_AUTHORIZATION",
+    "durable_proposal": "SQL_TESTED_OFFLINE_NOT_APPLIED_NOT_WIRED"
   },
   "accounting": {
     "committed_estimates": "Prospective conservative upper bounds including pending and uncertain operations; never free after checkpoint loss.",
@@ -93,6 +100,8 @@
     "all_required_prices_verified": false,
     "live_receipts_and_credits_reconciled": false,
     "nonproduction_target_verified": false,
-    "worker_proposal_remains_inactive": true
+    "worker_proposal_remains_inactive": true,
+    "native_multisession_tests_executed": false,
+    "all_physical_transports_durably_gated": false
   }
 }
