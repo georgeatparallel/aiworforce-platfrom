@@ -18,7 +18,7 @@ import { generateText } from "../../supabase/functions/_shared/aiProvider.ts";
 import { APIFY_START_UNCERTAIN } from "../../supabase/functions/_shared/verifierPurchaseRecovery.ts";
 import { createLeadMissionRunner } from "../../worker/leadMissionRunner.ts";
 import { mintJwt, REST_URL, sql } from "./lib/harness.ts";
-import { seedSmokeMission, syntheticQuotes, type SmokeMission } from "./lib/smokeMission.ts";
+import { seedSmokeMission, syntheticActorLimits, syntheticQuotes, type SmokeMission } from "./lib/smokeMission.ts";
 
 const opts = { sanitizeResources: false, sanitizeOps: false };
 const HAIKU = "anthropic:claude-haiku-4-5-20251001";
@@ -375,4 +375,24 @@ Deno.test("R7: a charge reported in the START response is recorded, and an over-
   const v2 = fakeVendor(() => json(200, {}));
   await inMission(m, v2, () => runTool("scrape_url", { url: "https://example.com/x", max_pages: 1 }, toolCtx(m)));
   assertEquals(v2.seen.length, 0, "nothing further is admitted after an over-quote charge");
+});
+
+Deno.test("R2 (Codex P2): in the smoke, an uncertain Firecrawl CRAWL start keeps its credit HELD", opts, async () => {
+  const at = new Date(Date.now() - 3600e3).toISOString();
+  const quotes = syntheticQuotes({
+    fc_crawl: { allowed_kinds: ["provider"], allowed_actors: ["firecrawl:crawl"], maximum_microusd: 30000, observed_at: at,
+      source: "synthetic contract control", liability_bound_ref: "tests/db-contract (not a vendor quote)",
+      request_limits: { max_request_bytes: 2048, max_fields: { limit: 5 } } },
+  });
+  for (const [why, script] of [
+    ["a 5xx start", () => json(503, { error: "upstream" })],
+    ["a lost connection", () => { throw new TypeError("connection reset"); }],
+  ] as Array<[string, Script]>) {
+    const m = await fundedMission({ quotes, actorLimits: { ...syntheticActorLimits, "firecrawl:crawl": 1 } });
+    const v = fakeVendor(script);
+    const res = await inMission(m, v, () => runTool("scrape_url", { url: "https://example.com", max_pages: 3 }, toolCtx(m)));
+    assert(String(res.error).startsWith("firecrawl_uncertain:crawl_"), `${why}: ${res.error}`);
+    assertEquals(v.seen.length, 1, `${why}: one physical start`);
+    assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, `${why}: held, not refunded`);
+  }
 });

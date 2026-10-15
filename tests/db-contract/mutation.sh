@@ -167,3 +167,7 @@ prove_killed "R8 task row not fenced" "$adm_sql" "where id = p_task for share;" 
   "$adm_tests" "R8: a newer generation cannot commit while an admission is in flight, and refuses every admission after it"
 prove_killed "R8 lineage row not fenced" "$adm_sql" "where lineage_id = q.lineage_id for share;" "where lineage_id = q.lineage_id;" \
   "$adm_tests" "R8: a moved lineage lease cannot commit while an admission is in flight, and refuses every admission after it"
+prove_killed "R2 uncertain crawl start refunded (Codex P2)" "$tools_ts" \
+  '  if (!startRes.ok && smokeAdmissionActive() && (startRes.status === 0 || startRes.status >= 500)) {' \
+  '  if (false) {' \
+  "$gate_tests" "R2 (Codex P2): in the smoke, an uncertain Firecrawl CRAWL start keeps its credit HELD"

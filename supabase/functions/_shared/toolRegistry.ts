@@ -311,6 +311,11 @@ async function execScrapeUrl(input: unknown): Promise<ToolResult> {
 
   if (startRes.status === 402) return { ok: false, unavailable: true, error: "firecrawl_insufficient_credits" };
   if (startRes.status === 401 || startRes.status === 403) return { ok: false, unavailable: true, error: "firecrawl_unauthorized" };
+  // Smoke admission only: a crawl start that may have been created and billed
+  // (5xx, lost connection, refused replay) is uncertain and keeps its credit.
+  if (!startRes.ok && smokeAdmissionActive() && (startRes.status === 0 || startRes.status >= 500)) {
+    return { ok: false, error: `${FIRECRAWL_UNCERTAIN}:crawl_${startRes.status}` };
+  }
   if (!startRes.ok) return { ok: false, error: `Firecrawl crawl ${startRes.status}` };
 
   const jobId = startRes.data?.id ?? startRes.data?.data?.id;
