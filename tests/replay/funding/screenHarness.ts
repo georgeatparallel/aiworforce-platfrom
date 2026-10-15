@@ -195,7 +195,8 @@ export async function replayScreen(
       plan: priced.plan,
       recentlyChecked: new Set<string>(),
       priorSearches: [],
-      screen: async (targets, state) => {
+      // The screen resumes its own owed reads and hands back what it still owes (#77).
+      screen: async (targets, state, pending) => {
         const ledger = state.spend_ledger!;
         const deps: LedgerCallDeps = {
           ledger,
@@ -225,10 +226,10 @@ export async function replayScreen(
             ready: (actor) =>
               routeActorReady(actor, "funding_verification", readiness).ready,
           },
-          { mission_id: fx.provenance.task_id, pending: [] },
+          { mission_id: fx.provenance.task_id, pending },
         );
         findings.push(...report.findings);
-        return report.findings;
+        return { findings: report.findings, pending: report.pending };
       },
     },
   });
