@@ -51,3 +51,29 @@ this runtime enforce a durable $0.25 authorization. The first live smoke remains
 **BLOCKED** pending approved durable admission, real multi-session/transport
 failure tests, verified prices and exact nonproduction schema/billing
 validation.
+
+## Independent verification: uncovered transport paths
+
+The later safety review found three active mock-only characterizations in
+`tests/edge-functions/_shared/smokeAdmissionCoverageGaps.test.ts`. These tests
+**pass by reproducing unsafe behavior**, not by proving smoke acceptance:
+
+- `leadStrategy/adapters/shared.ts` calls `budget.check()` without passing a
+  model to prospective `reserveAttempt`. A strict local collector therefore
+  still sends one unknown-price strategist request; two concurrent strategist
+  requests can both start under a one-attempt cap before telemetry arrives. This
+  affects both configured OpenAI and Lovable strategist adapters.
+- `toolRegistry.ts` retries a Firecrawl scrape POST inside one logical credit
+  reservation. A mocked 500 followed by success produces two physical POSTs and
+  one credit reservation. Actual vendor billing is unknown; do not infer that
+  the failed attempt was free or that it incurred a second charge.
+
+The existing GPT/generic AI guards do not establish complete model-path
+coverage. Claude's future durable adapter must gate these exact transports,
+including every retry, and status/dataset/receipt reads. No production transport
+or Claude branch was silently changed by this independent verification.
+
+The future worker proposal also currently omits `OPENAI_API_KEY` even though
+`gptProvider` requires it. Test-only credential mapping and exact smoke settings
+must be reconciled separately; no actual secret was inspected or installed. The
+first live mission remains BLOCKED.
