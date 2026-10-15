@@ -1,0 +1,18 @@
+{
+  "pull_request": 90,
+  "head": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+  "base": "9453b7c5f612f6ad8a4ef7da1b554dede27fcc53",
+  "sha256": {
+    "supabase/functions/_shared/smokeAdmission.ts": "9fa56e119e7a6f0342e73d78d558ecbaf0ef0f7db06422446e86b613a4f87fdb",
+    "supabase/functions/_shared/smokeAdmissionRefusal.ts": "cda1ad5000e5c57cadffba5ad74305b8a4b10a5f63fca4e41c713735f30d2d8f",
+    "supabase/migrations-held/20261015140000_discovery_smoke_admission.sql": "d2c66bf84fe12680cc4c5cba523dc981a3cad075b0a6baf266010a3a03d23115",
+    "supabase/functions/_shared/toolRegistry.ts": "d7480af04b5e32d46f2d09cff9cdab751f522bbcc1600b437976b1502239ade2",
+    "supabase/functions/_shared/gptProvider.ts": "27c96a8ce46862d01e39f154732433d74be3a0695770a54bcad904b8d4fceb31",
+    "supabase/functions/_shared/aiProvider.ts": "537a884582d88c11bc903deeb7920fde079ff470cb20baaee1fc648e8d3b9041",
+    "supabase/functions/_shared/creditAuthorization.ts": "255f808c9e60e67add7eafe8d030fb6cd2f65bd8ba80a044b01af29056f6cbc3",
+    "worker/main.ts": "1ef3377f6959faaf541dddc5ad2f448dd049b20654cae105da1e089197083678",
+    "worker/leadMissionRunner.ts": "497c2ca374462059ca1593ed586815e756c4037e2ccc12659c5f94df818096eb",
+    "supabase/functions/run-agent/index.ts": "b2d033f8a9af4e272e2b8cf776b48286fae43e597c5c536bad1d8c923de6d81a",
+    "supabase/functions/_shared/leadStrategy/adapters/shared.ts": "ceed96ac0ea58bf8a8d41602b9ff458dca1b5c680d71fbebbd53e2f578b83f67"
+  }
+}

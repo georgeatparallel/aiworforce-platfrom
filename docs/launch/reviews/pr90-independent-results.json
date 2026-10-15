@@ -1,0 +1,192 @@
+{
+  "schema": "pr90-independent-review-v1",
+  "decision": "NO_GO",
+  "authorizes_execution": false,
+  "reviewed_pr": 90,
+  "reviewed_head": "40d7c0aa67ba470a76b44f79955a3a0b3a8d730f",
+  "integrated_base": "9453b7c5f612f6ad8a4ef7da1b554dede27fcc53",
+  "evidence": {
+    "native_database": "PostgreSQL 17.10, isolated localhost schemas, actual PR SQL with schema qualification",
+    "vendor_responses": "SYNTHETIC",
+    "prices": "SYNTHETIC_NOT_VENDOR_QUOTES",
+    "actual_provider_receipts": [],
+    "actual_provider_spend_usd": null,
+    "external_provider_requests": 0,
+    "full_supabase_postgrest_independently_run": false,
+    "os_worker_kill_independently_run": false
+  },
+  "suites": [
+    {
+      "name": "independent-review",
+      "mode": "characterization-including-mutations",
+      "status": "ok",
+      "passed": 43,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "name": "required-safe-assertions",
+      "mode": "acceptance-reproductions",
+      "status": "FAILED",
+      "passed": 24,
+      "failed": 7,
+      "ignored": 0
+    },
+    {
+      "name": "combined-targeted",
+      "mode": "regression",
+      "status": "ok",
+      "passed": 124,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "name": "combined-replay",
+      "mode": "regression",
+      "status": "ok",
+      "passed": 270,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "name": "combined-specification",
+      "mode": "regression",
+      "status": "ok",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "native_multisession": {
+    "final_dollar_reservations": "PASS",
+    "duplicate_purchase_contention": "PASS",
+    "deadline_expires_while_waiting": "PASS"
+  },
+  "mutations": {
+    "tested": 8,
+    "killed": 8,
+    "source_modified": false,
+    "names": [
+      "authorization_row_lock",
+      "post_lock_clock_timestamp",
+      "task_generation_fence",
+      "model_attempt_cap",
+      "administrative_approval_privilege",
+      "deny_without_mission_context",
+      "uncertain_replay_http_status",
+      "required_approved_output_bound"
+    ]
+  },
+  "findings": [
+    {
+      "id": "R1",
+      "status": "FAIL",
+      "description": "Earlier uncertain Apify credit refunded on RPC outage or stopped replay",
+      "required_safe_failures": 2
+    },
+    {
+      "id": "R2",
+      "status": "FAIL",
+      "description": "Uncertain Firecrawl credit refunded",
+      "required_safe_failures": 1
+    },
+    {
+      "id": "R3",
+      "status": "FAIL",
+      "description": "Remote model media is not bounded by serialized request bytes",
+      "required_safe_failures": 1
+    },
+    {
+      "id": "R4",
+      "status": "FAIL",
+      "description": "Redirect follows to forbidden destination without admission",
+      "required_safe_failures": 1
+    },
+    {
+      "id": "R5",
+      "status": "FAIL",
+      "description": "Malformed admitted deadline fails open",
+      "required_safe_failures": 1
+    },
+    {
+      "id": "R6",
+      "status": "FAIL",
+      "description": "Context closed during admission can still send",
+      "required_safe_failures": 1
+    },
+    {
+      "id": "R7",
+      "status": "FAIL",
+      "description": "Initial Apify start usage is not recorded",
+      "required_safe_failures": 0
+    },
+    {
+      "id": "R8",
+      "status": "STRICT_FENCE_NOT_PROVEN",
+      "description": "Concurrent cancellation/generation update can commit before checked admission commits",
+      "required_safe_failures": 0
+    }
+  ],
+  "polling_controls": [
+    {
+      "synthetic": true,
+      "finish_after_status_reads": 0,
+      "status_reads": 0,
+      "dataset_reads": 1,
+      "physical_polls": 1,
+      "result_ok": true,
+      "error": null,
+      "nominal_status_wait_ms": 0,
+      "actual_vendor_cost": null
+    },
+    {
+      "synthetic": true,
+      "finish_after_status_reads": 2,
+      "status_reads": 2,
+      "dataset_reads": 1,
+      "physical_polls": 3,
+      "result_ok": true,
+      "error": null,
+      "nominal_status_wait_ms": 6000,
+      "actual_vendor_cost": null
+    },
+    {
+      "synthetic": true,
+      "finish_after_status_reads": 5,
+      "status_reads": 5,
+      "dataset_reads": 0,
+      "physical_polls": 5,
+      "result_ok": false,
+      "error": "apify_items_failed:409",
+      "nominal_status_wait_ms": 15000,
+      "actual_vendor_cost": null
+    },
+    {
+      "synthetic": true,
+      "finish_after_status_reads": 8,
+      "status_reads": 5,
+      "dataset_reads": 0,
+      "physical_polls": 5,
+      "result_ok": false,
+      "error": "apify_run_running",
+      "nominal_status_wait_ms": 15000,
+      "actual_vendor_cost": null
+    }
+  ],
+  "qualification_policy_changed": false,
+  "billing_policy_changed": false,
+  "production_migrations_applied": false,
+  "existing_branches_modified": false,
+  "required_limits_not_authorization": {
+    "total_usd": 0.25,
+    "provider_usd": 0.2,
+    "model_usd": 0.05,
+    "provider_purchases": 5,
+    "model_attempts": 4,
+    "mission_seconds": 300,
+    "workspaces": 1,
+    "workers": 1,
+    "provider_polls": 5
+  },
+  "external_billing_ceiling_guaranteed": false
+}
