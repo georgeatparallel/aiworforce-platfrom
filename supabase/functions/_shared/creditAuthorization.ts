@@ -43,6 +43,8 @@
 // therefore reserves nothing further — the RPC returns the original
 // transaction — which is what makes continuation and retry safe here.
 
+import { APIFY_START_UNCERTAIN } from "./verifierPurchaseRecovery.ts";
+
 export const CREDIT_AUTHORIZATION_VERSION = "credit-authorization-v1" as const;
 
 /** The env var that decides whether a refusal stops the call. */
@@ -251,6 +253,42 @@ export async function settleProviderCall(i: {
   } catch (e) {
     return { settled: false, charged: 0, detail: String(e).slice(0, 200) };
   }
+}
+
+/**
+ * What to do with a call's reservation once the call is over.
+ *
+ * `settle` with `started` is the normal case: a call that reached the provider
+ * (it succeeded, or it failed with a run id) is charged; one that never did is
+ * refunded whole.
+ *
+ * `hold` is for an UNCERTAIN START (`APIFY_START_UNCERTAIN`): the POST was
+ * aborted or lost, Apify answered 5xx, or a 2xx named no run. The run may exist
+ * and be billed, so refunding now would assert that nothing was bought, which
+ * nobody knows. The reservation stays `reserved` instead. It resolves by the
+ * explicit policy in force today: `credits_release_stale` releases it once it is
+ * 30 minutes old (refund; the provider cost, if any, is absorbed). A
+ * reconciler that finds the run could settle it as charged before then; none
+ * exists yet. If the same key is ever really bought later, the held re-arm fix
+ * (20261015130000) charges that purchase.
+ *
+ * A definite refusal (`apify_start_failed` on a 4xx) is not uncertain: no run
+ * exists, and it is refunded as before.
+ */
+export type CreditSettlement =
+  | { action: "settle"; started: boolean }
+  | { action: "hold"; reason: string };
+
+export function creditSettlementFor(
+  result: { ok: boolean; error?: unknown; data?: unknown },
+): CreditSettlement {
+  const runId = (result.data as { run_id?: unknown } | null | undefined)?.run_id;
+  const started = result.ok || typeof runId === "string";
+  const error = typeof result.error === "string" ? result.error : "";
+  if (!started && error.startsWith(APIFY_START_UNCERTAIN)) {
+    return { action: "hold", reason: error.slice(0, 80) };
+  }
+  return { action: "settle", started };
 }
 
 /**

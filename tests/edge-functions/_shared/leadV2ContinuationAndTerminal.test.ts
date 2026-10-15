@@ -96,7 +96,8 @@ Deno.test("run-agent and enqueue verify service callers instead of string-compar
 Deno.test("inside the V2 worker the queue owns continuation — no HTTP self-dispatch", () => {
   const ra = Deno.readTextFileSync(new URL("../../../supabase/functions/run-agent/index.ts", import.meta.url));
   assert(ra.includes('const queueOwnsContinuation = inProcess.continuationOwner === "v2_queue";'));
-  assert(/!singleGeneration && !queueOwnsContinuation\) \{\s*dispatchOutcome = await dispatchContinuation/.test(ra),
+  // …and when this slice was superseded (its verdict fenced): see sourceOrder.test.ts.
+  assert(/!singleGeneration && !queueOwnsContinuation && !sliceSuperseded\) \{\s*dispatchOutcome = await dispatchContinuation/.test(ra),
     "the HTTP dispatch is skipped when the queue owns continuation");
   assert(ra.includes("(dispatchOutcome?.dispatched === true || queueOwnsContinuation)"),
     "and the lineage still reads as continuing");

@@ -89,12 +89,16 @@ export function readFacets(text: unknown): ModelFacets {
   const f: ModelFacets = { audience: null, delivery: null, ai: false, other: [] };
   for (const t of tokens(normalise(text))) {
     if (AUDIENCE[t]) f.audience = f.audience ?? AUDIENCE[t];
-    else if (DELIVERY[t]) {
+    // Delivery and AI in an explicit buyer phrase describe the customer.
+    else if (!DELIVERY[t] && !AI.has(t) && !f.other.includes(t)) f.other.push(t);
+  }
+  for (const t of tokens(ownOfferingText(normalise(text)))) {
+    if (DELIVERY[t]) {
       // "saas software" is SaaS: the narrower delivery wins.
       const d = DELIVERY[t];
       f.delivery = f.delivery === null || d === "saas" ? d : f.delivery;
-    } else if (AI.has(t)) f.ai = true;
-    else if (!f.other.includes(t)) f.other.push(t);
+    }
+    if (AI.has(t)) f.ai = true;
   }
   return f;
 }
@@ -178,8 +182,9 @@ export function canonicalBusinessModel(raw: unknown): BusinessModelCode {
   const words = tokens(normalise(raw));
   if (words.length === 0 || words.some((w) => NEGATION.has(w))) return "unknown";
   const audiences = new Set(words.map((w) => AUDIENCE[w]).filter(Boolean));
-  const deliveries = new Set(words.map((w) => DELIVERY[w]).filter(Boolean));
-  const ai = words.some((w) => AI.has(w));
+  const offeringWords = tokens(ownOfferingText(normalise(raw)));
+  const deliveries = new Set(offeringWords.map((w) => DELIVERY[w]).filter(Boolean));
+  const ai = offeringWords.some((w) => AI.has(w));
   if (audiences.size > 1) return "unknown";
   if (deliveries.has("service") && (deliveries.has("saas") || deliveries.has("software"))) return "unknown";
   const audience = [...audiences][0] ?? null;
@@ -235,6 +240,8 @@ export function excerptInconsistency(
     if (words.length === 0 || words.some((w) => NEGATION.has(w))) continue;
     for (const w of words) {
       if (AUDIENCE[w]) audiences.add(AUDIENCE[w]);
+    }
+    for (const w of tokens(ownOfferingText(normalise(e)))) {
       if (DELIVERY[w]) deliveries.add(DELIVERY[w]);
     }
   }
@@ -294,6 +301,17 @@ const BUSINESS_BUYER =
   "manufacturers|distributors|operators|employers|recruiters|marketers|sales\\s+teams|finance\\s+teams)";
 const BUYER_VERB = "(?:for|serving|serves|serve|helps?|help|used\\s+by|trusted\\s+by|built\\s+for|designed\\s+for|sells?\\s+to|sold\\s+to)";
 const BUSINESS_CUSTOMER_RE = new RegExp(`\\b${BUYER_VERB}\\b(?:\\s+[\\w&',-]+){0,6}?\\s+${BUSINESS_BUYER}\\b`);
+/**
+ * An explicit buyer relation ("SaaS for staffing agencies", "consulting for
+ * software companies") says who buys, not what the vendor delivers. Keep the
+ * original text for audience/negation checks and quoted provenance; mask only
+ * this bounded relation when reading offering facets. The marker prevents
+ * accidentally joining words on opposite sides of the customer phrase.
+ */
+function ownOfferingText(text: string): string {
+  return text.replace(new RegExp(BUSINESS_CUSTOMER_RE.source, "g"), " __buyer_context__ ");
+}
+
 const CONSUMER_CUSTOMER_RE =
   /\b(?:for|serving|serves|helps?|used\s+by|built\s+for|designed\s+for)\b(?:\s+[\w&',-]+){0,4}?\s+(?:individuals|families|parents|shoppers|consumers|everyday\s+people|households)\b/;
 const SOFTWARE_WORDS = new Set([
@@ -327,13 +345,15 @@ export function statedFacets(excerpts: readonly string[]): Set<BusinessModelFace
     const words = tokens(text);
     if (words.length === 0 || words.some((w) => NEGATION.has(w))) continue;
     const plain = ` ${text.replace(/\s+/g, " ")} `;
+    const offering = ownOfferingText(plain);
+    const offeringWords = tokens(offering);
     if (words.some((w) => AUDIENCE[w] === "b2b") || BUSINESS_CUSTOMER_RE.test(plain)) out.add("business_customer");
     if (words.some((w) => AUDIENCE[w] === "consumer") || CONSUMER_CUSTOMER_RE.test(plain)) out.add("consumer_customer");
-    if (words.some((w) => SOFTWARE_WORDS.has(w))) out.add("software_product");
-    if (words.includes("saas") || SAAS_PHRASE_RE.test(plain) || SEAT_PRICING_RE.test(plain)) out.add("saas_delivery");
-    if (SUBSCRIPTION_RE.test(plain)) subscription = true;
-    if (words.some((w) => SERVICE_WORDS.has(w))) out.add("service_primary");
-    if (words.some((w) => AI_WORDS.has(w))) out.add("ai");
+    if (offeringWords.some((w) => SOFTWARE_WORDS.has(w))) out.add("software_product");
+    if (offeringWords.includes("saas") || SAAS_PHRASE_RE.test(offering) || SEAT_PRICING_RE.test(offering)) out.add("saas_delivery");
+    if (SUBSCRIPTION_RE.test(offering)) subscription = true;
+    if (offeringWords.some((w) => SERVICE_WORDS.has(w))) out.add("service_primary");
+    if (offeringWords.some((w) => AI_WORDS.has(w))) out.add("ai");
   }
   if (out.has("saas_delivery")) out.add("software_product");
   if (subscription && out.has("software_product")) out.add("saas_delivery");
