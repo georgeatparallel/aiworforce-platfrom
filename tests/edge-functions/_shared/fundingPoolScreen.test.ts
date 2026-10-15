@@ -27,7 +27,9 @@ import {
 import { buildCapabilityGraph } from "../../../supabase/functions/_shared/leadCapabilityGraph.ts";
 import { evaluateEligibility } from "../../../supabase/functions/_shared/candidateEligibility.ts";
 import { CLAIM_REGISTRY, evidenceGapsFor } from "../../../supabase/functions/_shared/evidenceGapRouter.ts";
-import { attemptedRoutes, type VerificationTarget, type VerifierCallOutcome } from "../../../supabase/functions/_shared/claimVerifier.ts";
+import {
+  attemptedRoutes, type PendingVerifierRun, type VerificationTarget, type VerifierCall, type VerifierCallOutcome,
+} from "../../../supabase/functions/_shared/claimVerifier.ts";
 import type { CompiledActorCall } from "../../../supabase/functions/_shared/hiringActorInputs.ts";
 import { stubMissionEvaluator } from "./missionEvaluatorFixture.ts";
 import { decideAutoContinuation } from "../../../supabase/functions/_shared/leadAutoContinuation.ts";
@@ -171,10 +173,18 @@ async function run(o: {
   resume?: { state: Record<string, unknown>; records: unknown[] };
   /** The continuation asked for a wider pool (`replenishment_required`), from these pages. */
   replenish?: Record<string, number>;
+  /**
+   * What an Atomus call answers instead of reading the rows: `running` (the
+   * run outlives the slice), `deferred` (a stop), `failed`. Null/absent → ok.
+   * `n` counts this slice's Atomus calls from 0.
+   */
+  atomusOutcome?: (c: VerifierCall, n: number) => VerifierCallOutcome | null;
 } = {}) {
   const calls: Array<{ actorKey: string; input: Record<string, unknown> }> = [];
   const screened: string[][] = [];
   const pvalyouBought: string[][] = [];
+  /** Every Atomus call: the pages asked, and the run it adopted (null = a new read). */
+  const atomusCalls: Array<{ companies: string[]; resume_run_id: string | null }> = [];
   const says = o.atomus ?? ATOMUS_SAYS;
   const result = await runCapabilityPlan({
     invoke: (call: CompiledActorCall<unknown>) => {
@@ -242,21 +252,25 @@ async function run(o: {
         plan: o.plan ?? PLAN,
         recentlyChecked: new Set(o.recentlyChecked ?? []),
         priorSearches: o.priorSearches ?? [],
-        screen: async (targets: VerificationTarget[], _state: unknown) => {
+        screen: async (targets: VerificationTarget[], _state: unknown, pending: PendingVerifierRun[]) => {
           screened.push(targets.map((t) => t.company_key));
           const r = await fundingStageVerifier({ fallback: false }).verify(targets, {
             now: () => NOW.toISOString(), log: () => {}, ready: () => true,
             call: (c) => {
               if (c.actor_key === PVALYOU) pvalyouBought.push(c.candidate_keys);
               if (c.actor_key !== ATOMUS) return Promise.resolve({ status: "refused", reason: "not in this test" } as VerifierCallOutcome);
+              const n = atomusCalls.length;
+              atomusCalls.push({ companies: c.input.companies as string[], resume_run_id: c.resume_run_id ?? null });
+              const forced = o.atomusOutcome?.(c, n) ?? null;
+              if (forced) return Promise.resolve(forced);
               const rows = (c.input.companies as string[]).map((u) => {
                 const slug = u.split("/company/")[1];
                 return (says[slug] ?? atomusEmpty)(slug);
               });
               return Promise.resolve({ status: "ok", rows, provider_call_id: "pc_screen_atomus" } as VerifierCallOutcome);
             },
-          }, { mission_id: "task-screen", pending: [] });
-          return r.findings;
+          }, { mission_id: "task-screen", pending });
+          return { findings: r.findings, pending: r.pending };
         },
       },
     }),
@@ -264,7 +278,7 @@ async function run(o: {
   const run_ = result as unknown as { companies: EngineCompany[]; state: Record<string, unknown>; resume_records: unknown[] };
   const companies = run_.companies;
   return {
-    calls, screened, pvalyouBought, companies, state: run_.state, resume_records: run_.resume_records,
+    calls, screened, pvalyouBought, atomusCalls, companies, state: run_.state, resume_records: run_.resume_records,
     search: calls.filter((c) => c.actorKey === "apify_linkedin_company_search"),
     detailsFor: calls.filter((c) => c.actorKey === "apify_linkedin_company_details").flatMap((c) => c.input.companies as string[]),
     byKey: (slug: string) => companies.find((c) => c.key === page(slug))!,
@@ -523,4 +537,120 @@ Deno.test("ONE READ: after the screen read its pool, an unscreened open company 
   const s2 = await run({ resume: { state: state as Record<string, unknown>, records }, atomus: DORMANT });
   assertEquals(s2.screened, [], "the one priced read is already spent");
   assertEquals(s2.byKey("loyyal").investigation_state, "excluded_permanently");
+});
+
+// ══════════════════════════ INTERRUPTED SCREEN: the paid read is awaited, adopted, never re-bought ══
+//
+// Codex PR #74 (G5) measured it: an Atomus read still executing when the slice
+// ended was read as "unavailable" — every company answered PENDING, the screen
+// marked complete, the paid run never read again. The read is now carried with
+// its run id and input, the screen holds (nothing admitted, nothing discovered),
+// and the next slice ADOPTS it by run id: a free re-read, never a second buy.
+
+type ScreenState = {
+  screened?: boolean; pending?: PendingVerifierRun[]; waits?: number; wait_exhausted?: boolean;
+  verdicts?: Record<string, string>;
+};
+const screenOf = (r: { state: Record<string, unknown> }) => (r.state.funding_screen ?? {}) as ScreenState;
+const RUNNING: VerifierCallOutcome = { status: "running", run_id: "run-screen-1", provider_call_id: "pc_screen_atomus" };
+const POOL_PAGES = ["alpha", "bravo", "charlie", "delta"].map(page);
+
+Deno.test("INTERRUPTED SCREEN: a read still running is carried, the screen holds, and the next slice ADOPTS it — same outcome as the clean run", async () => {
+  const clean = await run();
+  const s1 = await run({ atomusOutcome: () => RUNNING });
+  assertEquals(s1.atomusCalls.length, 1, "one read bought");
+  assertEquals(s1.atomusCalls[0].resume_run_id, null);
+  const fs1 = screenOf(s1);
+  assertFalse(fs1.screened === true, "a screen whose read has not answered is NOT complete");
+  assertEquals(fs1.pending?.map((p) => [p.stage, p.run_id, p.candidate_keys.length]), [["atomus", "run-screen-1", 4]]);
+  assertEquals((fs1.pending?.[0].input as { companies: string[] }).companies, s1.atomusCalls[0].companies,
+    "carried with the exact input it was bought with (the same idempotency key)");
+  assertEquals(fs1.waits, 1);
+  assertEquals(s1.detailsFor, [], "nothing is admitted before the screen answers");
+  assertEquals(s1.companies.filter((c) => c.investigation_state === "in_flight" || c.investigation_state === "investigated").length, 0);
+  assertEquals(s1.search.length, clean.search.length, "no extra discovery while the screen waits");
+  for (const slug of ["alpha", "bravo", "charlie", "delta"]) {
+    assertFalse(s1.byKey(slug).completed_operations.some((o) => o.endsWith(ATOMUS)), `${slug} is not marked screened`);
+    assertEquals(s1.byKey(slug).investigation_state, "pending_investigation");
+  }
+
+  const s2 = await run({ resume: { state: s1.state, records: s1.resume_records } });
+  assertEquals(s2.atomusCalls, [{ companies: s1.atomusCalls[0].companies, resume_run_id: "run-screen-1" }],
+    "ADOPTED by run id with the same input — no second Atomus read");
+  assertEquals(s2.search.length, 0, "no page bought again");
+  const fs2 = screenOf(s2);
+  assertEquals(fs2.screened, true);
+  assertEquals(fs2.pending, []);
+  assertEquals(s2.byKey("bravo").shortlist_exclusion, "funding_screen_fail", "the FAIL Atomus reported is closed");
+  assertEquals([...s2.detailsFor].sort(), [...clean.detailsFor].sort(), "the same two PASSES are admitted as in the clean run");
+  assertEquals(fs2.verdicts, screenOf(clean).verdicts, "and every verdict is the clean run's");
+});
+
+Deno.test("INTERRUPTED SCREEN, NEVER FINISHES: the wait is BOUNDED, the run is handed to verification, never re-bought", async () => {
+  let r = await run({ atomusOutcome: () => RUNNING });
+  const slices = [r];
+  for (let i = 0; i < 8 && screenOf(r).screened !== true; i++) {
+    r = await run({ resume: { state: r.state, records: r.resume_records }, atomusOutcome: () => RUNNING });
+    slices.push(r);
+  }
+  const fs = screenOf(r);
+  assertEquals(fs.screened, true, "the screen stops waiting");
+  assertEquals(fs.wait_exhausted, true, "and says why");
+  assertEquals(slices.length, 6, "after PENDING_RUN_MAX_POLLS slices — never an unbounded loop");
+  const all = slices.flatMap((s) => s.atomusCalls);
+  assertEquals(all.filter((c) => c.resume_run_id === null).length, 1, "ONE purchase over the whole wait");
+  assert(all.slice(1).every((c) => c.resume_run_id === "run-screen-1"), "every later ask is an adoption of that run");
+  const handed = ((r.state.verifier_pending_runs ?? []) as PendingVerifierRun[]).filter((p) => p.run_id === "run-screen-1");
+  assertEquals(handed.length, 1, "the run is handed to the verification phase, which adopts it instead of buying Atomus again");
+  // Unanswered companies are released PENDING — exactly what an unanswered read always meant.
+  assertEquals(Object.values(fs.verdicts ?? {}).every((v) => v === "pending"), true);
+});
+
+Deno.test("INTERRUPTED SCREEN, STOPPED: a deferred read buys nothing, the screen holds, and the next slice asks with the SAME input", async () => {
+  const s1 = await run({ atomusOutcome: () => ({ status: "deferred", reason: "deadline: checkpoint reserve reached" }) });
+  const fs1 = screenOf(s1);
+  assertFalse(fs1.screened === true);
+  assertEquals(fs1.pending, [], "no run was started, none is carried");
+  assertEquals(fs1.waits, 1);
+  assertEquals(s1.detailsFor, []);
+  const s2 = await run({ resume: { state: s1.state, records: s1.resume_records } });
+  assertEquals(s2.atomusCalls.map((c) => [c.companies, c.resume_run_id]), [[s1.atomusCalls[0].companies, null]],
+    "asked again with the same pages: the same idempotency key, so the ledger replays rather than buys twice");
+  assertEquals(screenOf(s2).screened, true);
+});
+
+Deno.test("UNCHANGED: a read that FAILED or was REFUSED still settles the screen at once, every company PENDING", async () => {
+  for (const out of [{ status: "failed", reason: "actor run failed" }, { status: "refused", reason: "budget" }] as VerifierCallOutcome[]) {
+    const r = await run({ atomusOutcome: () => out });
+    const fs = screenOf(r);
+    assertEquals(fs.screened, true, out.status);
+    assertEquals(fs.pending ?? [], []);
+    assertEquals(Object.values(fs.verdicts ?? {}).every((v) => v === "pending"), true, out.status);
+  }
+});
+
+Deno.test("VERIFICATION PHASE adopts a screen read it was handed: no second Atomus call for that company", async () => {
+  const t: VerificationTarget = {
+    company_key: page("charlie"), name: "charlie", domain: "charlie.com", linkedin_url: page("charlie"), graph: null as never,
+    criterion: { criterion_id: "funding", dimension: "funding", value: null, window_days: 365 * 2 },
+  };
+  const carried: PendingVerifierRun = {
+    verifier: "funding_stage_corroboration", stage: "atomus", actor_key: ATOMUS, run_id: "run-screen-1",
+    input: { companies: [page("charlie"), page("delta")] }, candidate_keys: [page("charlie"), page("delta")],
+    started_at: NOW.toISOString(), polls: 5, carry: { targets: [t] },
+  };
+  const asked: Array<{ actor: string; resume: string | null; input: unknown }> = [];
+  const r = await fundingStageVerifier().verify([t], {
+    now: () => NOW.toISOString(), log: () => {}, ready: () => true,
+    call: (c) => {
+      asked.push({ actor: c.actor_key, resume: c.resume_run_id ?? null, input: c.input });
+      if (c.actor_key !== ATOMUS) return Promise.resolve({ status: "refused", reason: "not in this test" } as VerifierCallOutcome);
+      const rows = (c.input.companies as string[]).map((u) => (ATOMUS_SAYS[u.split("/company/")[1]] ?? atomusEmpty)(u.split("/company/")[1]));
+      return Promise.resolve({ status: "ok", rows, provider_call_id: "pc_adopted" } as VerifierCallOutcome);
+    },
+  }, { mission_id: "m", pending: [carried] });
+  assertEquals(asked.filter((a) => a.actor === ATOMUS), [{ actor: ATOMUS, resume: "run-screen-1", input: carried.input }],
+    "the carried run is adopted with its own input; no new Atomus read");
+  assertEquals(r.findings.find((f) => f.company_key === page("charlie"))?.answered, true);
+  assertEquals(r.pending, []);
 });

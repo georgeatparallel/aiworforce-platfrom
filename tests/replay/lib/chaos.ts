@@ -39,7 +39,8 @@ import {
 } from "../../../supabase/functions/_shared/continuationClaim.ts";
 import { acquireLineageLease, releaseLineageLease } from "../../../supabase/functions/_shared/lineageLease.ts";
 import {
-  type LedgerStartedRow, mergePendingRuns, recoverCompletedRuns, recoverPendingRuns,
+  COMPLETED_RUN_STATUSES, isResumableTimeout, type LedgerStartedRow, mergePendingRuns, recoverCompletedRuns,
+  recoverPendingRuns, resolvedRunIdsFrom,
 } from "../../../supabase/functions/_shared/pendingRunRecovery.ts";
 import { guardProgressWrite, resolveLineageProgress } from "../../../supabase/functions/_shared/lineageProgressGuard.ts";
 import {
@@ -154,6 +155,8 @@ export class ChaosLab {
   private killed = false;
   /** Set by `stalledWorker`: the next slice to reach its end-of-slice write waits here. */
   private hold: { reached: () => void; gate: Promise<void> } | null = null;
+  /** A hold right after the lineage lease is taken, before anything is restored or bought. */
+  private leaseHold: { reached: () => void; gate: Promise<void> } | null = null;
   private readonly deps: Record<string, unknown>;
   readonly taskId: string;
   queueId = "";
@@ -171,12 +174,35 @@ export class ChaosLab {
     this.taskId = fx.provenance.task_id;
   }
 
+  /**
+   * How the transport finalizes a call whose run is still executing.
+   * `started` (default): the process died mid-call and no `finally` ran.
+   * `timed_out`: the poll window closed cleanly — `outcomeFromToolResult`
+   * records `timed_out` WITH the run id and `metadata.resumable: true`.
+   */
+  pendingAs: "started" | "timed_out" = "started";
+  /**
+   * What an adoption settles the run's open `started` row to. `reused` is what
+   * run-agent's `onRunAdopted` writes. The default, `succeeded`/`empty`, is the
+   * lab's long-standing simplification, kept because `spendFloorFromRows`
+   * skips `reused` rows — the accounting check in the failure suite compares
+   * the floor against every purchase.
+   */
+  settleAdoptedAs: "succeeded" | "reused" = "succeeded";
+
   /** `deps`: the mission's recorded model answers, when the fixture's own (re-planner, grounder) do not apply. */
-  static async open(fx: LineageFixture, faults: readonly Fault[] = [], o: { deps?: Record<string, unknown> } = {}): Promise<ChaosLab> {
+  static async open(
+    fx: LineageFixture, faults: readonly Fault[] = [],
+    o: {
+      deps?: Record<string, unknown>; pendingAs?: "started" | "timed_out"; settleAdoptedAs?: "succeeded" | "reused";
+    } = {},
+  ): Promise<ChaosLab> {
     const lab = await QueueLab.open({
       extraSql: [CHAOS_COLUMNS, ...CHAOS_FUNCTIONS.map(([f, n]) => functionSql(f, n))],
     });
     const c = new ChaosLab(lab, fx, faults, o.deps);
+    if (o.pendingAs) c.pendingAs = o.pendingAs;
+    if (o.settleAdoptedAs) c.settleAdoptedAs = o.settleAdoptedAs;
     c.queueId = await lab.enqueue({ plan_id: crypto.randomUUID(), tool_input: {} });
     return c;
   }
@@ -243,30 +269,42 @@ export class ChaosLab {
         const rows = await invoke({ ...call, onProviderRun: (r) => { row.provider_run_id = r.run_id; call.onProviderRun?.(r); } });
         row.status = call.resumeRunId ? "reused" : rows.length > 0 ? "succeeded" : "empty";
         // ADOPTION SETTLES THE STARTED ROW IN PLACE (pendingRunRecovery: task e01ad74f).
+        // `settleAdoptedAs: "reused"` is what run-agent's `onRunAdopted` writes.
         if (call.resumeRunId) {
           for (const r of this.ledger) {
-            if (r !== row && r.provider_run_id === call.resumeRunId && r.status === "started") r.status = rows.length > 0 ? "succeeded" : "empty";
+            if (r !== row && r.provider_run_id === call.resumeRunId && r.status === "started") {
+              r.status = this.settleAdoptedAs === "reused" ? "reused" : rows.length > 0 ? "succeeded" : "empty";
+            }
           }
         }
         return rows;
       } catch (e) {
         const pending = (e as { toolResult?: { pending?: unknown } }).toolResult?.pending === true;
-        row.status = pending ? "started" : "failed";
+        row.status = !pending ? "failed" : this.pendingAs;
+        if (pending && this.pendingAs === "timed_out") row.metadata = { resumable: true, status: "RUNNING" };
         throw e;
       }
     };
     return p;
   }
 
-  /** What run-agent reads back on resume (`completedRunRows`, `startedRunRows`, `resolvedRunIds`). */
+  /**
+   * What run-agent reads back on resume (`completedRunRows` — finished and
+   * adopted runs; `startedRunRows` — `started` rows plus resumable `timed_out`
+   * ones; `resolvedRunIds`).
+   */
   private recovery() {
     const mine = this.ledger.filter((r) => r.task_id === this.taskId);
-    const completed = mine.filter((r) => (r.status === "succeeded" || r.status === "empty") && r.provider_run_id)
+    const completed = mine.filter((r) => COMPLETED_RUN_STATUSES.includes(String(r.status)) && r.provider_run_id)
       .sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)));
-    const started = mine.filter((r) => r.status === "started" && r.provider_run_id);
+    const started = [
+      ...mine.filter((r) => r.status === "started" && r.provider_run_id),
+      ...mine.filter((r) => r.status === "timed_out" && r.provider_run_id && isResumableTimeout(r))
+        .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at))),
+    ];
     const ids = new Set(started.map((r) => r.provider_run_id!));
-    const resolved = new Set(mine.filter((r) => ids.has(r.provider_run_id ?? "") &&
-      ["reused", "succeeded", "failed", "timed_out"].includes(String(r.status))).map((r) => r.provider_run_id!));
+    const resolved = resolvedRunIdsFrom(mine.filter((r) => ids.has(r.provider_run_id ?? "") &&
+      ["reused", "succeeded", "failed", "timed_out"].includes(String(r.status))));
     return { completed: recoverCompletedRuns(completed), pending: recoverPendingRuns(started, resolved), resolved };
   }
 
@@ -404,6 +442,13 @@ export class ChaosLab {
 
     // THIS SLICE'S GENERATION (run-agent `sliceFence`, D1).
     const fence: SliceFence = { generation: await resolveSliceGeneration(this.generationDb as never, this.taskId, claimedVersion) };
+    if (this.leaseHold) {
+      const h = this.leaseHold;
+      this.leaseHold = null;
+      this.note(attempt, "stalled_after_lease");
+      h.reached();
+      await h.gate;
+    }
 
     // 3. RESTORE: the checkpoint, plus what the ledger knows that it does not.
     const prior = (await this.taskRow())?.result ?? null;
@@ -475,6 +520,8 @@ export class ChaosLab {
       await h.gate;
     }
     // 6. THE END-OF-SLICE WRITE.
+    /** run-agent `sliceSuperseded`: the fence refused this slice's verdict. */
+    let superseded = false;
     if (this.fault(attempt, "end_write_lost")) {
       this.note(attempt, "end_write_lost");
     } else {
@@ -487,6 +534,7 @@ export class ChaosLab {
         company_first_state: { terminal_status: terminal },
       }), terminal ? "complete" : "ready", fence, true);
       if (w.fenced) this.note(attempt, "end_write_fenced", { generation: fence.generation });
+      superseded = w.fenced;
     }
 
     // 7. RELEASE THE CLAIM — retried on a transient failure, exactly as run-agent.
@@ -504,7 +552,13 @@ export class ChaosLab {
     }
     // 8. RELEASE THE LINEAGE — the completion barrier. Retried only on
     // `release_unavailable`; terminal only for an ending that leaves nothing to
-    // resume (`lineageIsFinished`), exactly as run-agent.
+    // resume (`lineageIsFinished`), exactly as run-agent. NOT by a superseded
+    // slice: the holder is the task id the live generation shares, so its
+    // release would clear that generation's lease and write stale state.
+    if (superseded) {
+      this.note(attempt, "lineage_release_skipped", { reason: "superseded" });
+      return respond(200, { success: true, superseded: true, terminal, decision: String(f.decision.reason) });
+    }
     const failingLease = this.fault(attempt, "lineage_release_fails");
     const { result: rel } = await retryTransient(
       () => releaseLineageLease({
@@ -658,6 +712,28 @@ export class ChaosLab {
     const done = this.tick();
     await Promise.race([atEnd, done.then(() => { throw new Error("the stalled worker never reached its end-of-slice write"); })]);
     return { resume: async () => { open(); await done; } };
+  }
+
+  /**
+   * A worker that takes the mission over and STALLS right after its lineage
+   * lease, before restoring or buying anything — so a stale worker can wake
+   * while this generation holds the lineage. Ticks until a claim reaches the
+   * hold; `resume()` lets the slice run on.
+   */
+  async stalledAfterLease(maxTicks = 8): Promise<{ resume: () => Promise<void> }> {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    let reached!: () => void;
+    const atLease = new Promise<void>((r) => { reached = r; });
+    this.leaseHold = { reached, gate };
+    for (let i = 0; i < maxTicks; i++) {
+      const done = this.tick();
+      const r = await Promise.race([atLease.then(() => "held" as const), done.then((t) => (t.claimed ? "ran" as const : "idle" as const))]);
+      if (r === "held") return { resume: async () => { open(); await done; } };
+      if (r === "ran") throw new Error("a slice ran without reaching the lease hold");
+      await this.advance(60);
+    }
+    throw new Error("no worker took the mission over");
   }
 
   // ── WHAT A TEST ASSERTS ON ─────────────────────────────────────────────────

@@ -1,0 +1,5 @@
+{
+  "schema": "discovery-quality-verifier-outputs-v1",
+  "provenance": "RECORDED OUTPUTS ONLY. No captured grounded-verifier outputs were found for the independently labeled cohort. Missing output is not a prediction of UNKNOWN.",
+  "rows": []
+}

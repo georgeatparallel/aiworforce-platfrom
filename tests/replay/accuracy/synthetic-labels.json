@@ -1,0 +1,60 @@
+{
+  "target": "B2B software (SaaS included)",
+  "provenance": {
+    "kind": "synthetic_expectations",
+    "annotator": "Codex",
+    "method": "Assigned from offering/customer evidence independently of executing the classifier; single annotator, not externally adjudicated."
+  },
+  "rows": [
+    {
+      "id": "agency-buyers",
+      "label": "MATCH",
+      "rationale": "Explicit SaaS offering; agencies are buyers."
+    },
+    {
+      "id": "consultant-buyers",
+      "label": "MATCH",
+      "rationale": "Explicit software offering; firms are buyers."
+    },
+    {
+      "id": "provider-buyers",
+      "label": "MATCH",
+      "rationale": "Explicit SaaS application; providers are buyers."
+    },
+    {
+      "id": "plain-software",
+      "label": "MATCH",
+      "rationale": "Explicit B2B software offering."
+    },
+    {
+      "id": "consultant-vendor",
+      "label": "NON_MATCH",
+      "rationale": "Consulting is the offering; software companies are buyers."
+    },
+    {
+      "id": "consumer-vendor",
+      "label": "NON_MATCH",
+      "rationale": "Explicit consumer audience contradicts the business audience."
+    },
+    {
+      "id": "platform-only",
+      "label": "UNKNOWN",
+      "rationale": "Platform alone does not establish software."
+    },
+    {
+      "id": "mixed-delivery",
+      "label": "UNKNOWN",
+      "rationale": "The primary delivery of the mixed offering is unresolved."
+    },
+    {
+      "id": "negated",
+      "label": "UNKNOWN",
+      "rationale": "Current conservative whole-quote negation scope; label remains unresolved."
+    },
+    {
+      "id": "mixed-audience",
+      "label": "UNKNOWN",
+      "rationale": "Mixed audiences; SaaS delivery also missing."
+    }
+  ]
+}

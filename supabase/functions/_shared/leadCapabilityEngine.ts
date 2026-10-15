@@ -281,6 +281,7 @@ import { hashInput as p2HashInput } from "./hiringActorInputs.ts";
 import { toRepoKey } from "./actorIdentity.ts";
 import { canonicalJson } from "./planHash.ts";
 import { sha256Hex } from "./providerInputFingerprint.ts";
+import { PENDING_RUN_MAX_POLLS, PENDING_RUN_MAX_WAIT_MS } from "./leadAutoContinuation.ts";
 import { tightenCeilings, type RunBudget } from "./runBudget.ts";
 import {
   nextUnreadPage, screenAdmissionOrder, type FundingScreenPlan, type ScreenVerdict,
@@ -1104,6 +1105,23 @@ export interface CapabilityExecutionState {
      * which only a second, unpriced Atomus read could have screened.
      */
     screened?: boolean;
+    /**
+     * THE SCREEN'S READ HAS NOT ANSWERED YET. An Atomus read still executing
+     * when its slice ended (carried with its run id and input, adopted next
+     * slice — never re-bought), or a read a stop deferred. While set, the
+     * screen is NOT complete: nothing is admitted and nothing more is
+     * discovered, and the lineage continues as awaiting a provider run.
+     */
+    pending?: PendingVerifierRun[];
+    /** When the screen first ended a slice unanswered, and how many slices it has: its wait bound. */
+    awaiting_since?: string;
+    waits?: number;
+    /**
+     * The screen stopped waiting (`PENDING_RUN_MAX_POLLS` / `_MAX_WAIT_MS`):
+     * its unanswered companies were released as PENDING, exactly as an
+     * unanswered read always was. Recorded, never silent.
+     */
+    wait_exhausted?: boolean;
   };
   /** One entry per slice taken. "Why only ten?" is answerable from this. */
   investigation_slices: Array<{
@@ -2330,7 +2348,13 @@ export interface CapabilityEngineOpts {
    */
   fundingScreen?: {
     plan: FundingScreenPlan;
-    screen: (targets: VerificationTarget[], state: CapabilityExecutionState) => Promise<VerifierFinding[]>;
+    /**
+     * The funding verifier over `targets`, resuming the screen's own `pending`
+     * reads. Returns its findings and the reads still owed (`pending`).
+     */
+    screen: (
+      targets: VerificationTarget[], state: CapabilityExecutionState, pending: PendingVerifierRun[],
+    ) => Promise<{ findings: VerifierFinding[]; pending: PendingVerifierRun[] }>;
     /** LinkedIn company URLs this workspace funding-checked within `plan.recently_checked_days`. */
     recentlyChecked?: ReadonlySet<string>;
     /**
@@ -2892,11 +2916,15 @@ export async function runCapabilityPlan(
    * $0.0019 of model on a second slice whose only discovery call was then
    * refused.
    */
+  /** The funding screen's read has not answered yet: admit nothing, discover nothing (see `funding_screen.pending`). */
+  const screenAwaiting = (): boolean =>
+    !!opts.fundingScreen && state.funding_screen?.screened !== true && (state.funding_screen?.waits ?? 0) > 0;
   const candidateBudgetSpent = (): boolean => {
     // UNDER THE FUNDING SCREEN, SPENT ADMISSIONS SPEND THE BUDGET TOO: rows left
     // in the allowance could only find companies no slot remains for.
     if (opts.fundingScreen &&
-      (state.funding_screen?.admissions_spent === true || state.funding_screen?.screened === true)) return true;
+      (state.funding_screen?.admissions_spent === true || state.funding_screen?.screened === true ||
+        screenAwaiting())) return true;
     const limit = discoveryRowAllowance();
     return limit !== null && (state.discovery_rows_bought ?? 0) >= limit;
   };
@@ -3284,7 +3312,13 @@ export async function runCapabilityPlan(
       c.shortlisted = false;
       recentlyChecked.push(c.key);
     }
-    const openPool = companies.filter((c) => open(c) && pageOf(c))
+    // A READ STILL OWED from an earlier slice: its companies ARE the pool.
+    // Nothing else is read — the plan prices one Atomus read — so the open
+    // pool cannot grow a second read while the first is answered.
+    const awaitingRuns = state.funding_screen?.pending ?? [];
+    const awaitingKeys = new Set(awaitingRuns.flatMap((p) => p.candidate_keys));
+    const openPool = companies.filter((c) => open(c) && pageOf(c) &&
+      (awaitingKeys.size === 0 || awaitingKeys.has(c.key)))
       .sort((a, b) => a.investigation_rank - b.investigation_rank);
     const pool = openPool.slice(0, fs.plan.screen_max);
     // BEYOND ONE ATOMUS READ, CLOSED. A company the screen did not read would be
@@ -3304,13 +3338,57 @@ export async function runCapabilityPlan(
           // The screen judges the claim's own kind of round (Wave 3): a grant is not venture funding.
           value: fs.plan.funding_kind ? { funding_kind: fs.plan.funding_kind } : null, window_days: fs.plan.window_days },
       }));
-      const findings = await fs.screen(targets, state);
-      // THE ONE PRICED READ IS SPENT: discovery is over for this mission. Recorded
-      // on the state the checkpoint carries, so the next slice's continuation
-      // reads "no discovery routes remain".
-      state.funding_screen = { ...state.funding_screen, verdicts: state.funding_screen?.verdicts ?? {}, screened: true };
-      if (state.discovery_source_state) {
-        state.discovery_source_state = { ...state.discovery_source_state, exhausted: true, stop_reason: "screen_complete" };
+      const result = await fs.screen(targets, state, awaitingRuns);
+      const findings = result.findings;
+      const answered = new Set(findings.map((f) => f.company_key));
+      // ── IS THE SCREEN ANSWERED? ─────────────────────────────────────────
+      //
+      // A company with no finding was not answered: its read is still running
+      // (`result.pending`, carried with its run id) or a stop deferred it. The
+      // screen used to be marked done regardless — the paid read was never read
+      // again and its companies were admitted as if Atomus had nothing to say.
+      // It now waits, bounded like a pending discovery run (D3): no admission,
+      // no discovery, the lineage continues as awaiting a provider run.
+      const unanswered = pool.filter((c) => !answered.has(c.key));
+      const waits = (state.funding_screen?.waits ?? 0) + (unanswered.length > 0 ? 1 : 0);
+      const since = state.funding_screen?.awaiting_since ?? (unanswered.length > 0 ? new Date().toISOString() : undefined);
+      const sinceMs = since ? Date.parse(since) : NaN;
+      const waitedOut = unanswered.length > 0 && (waits > PENDING_RUN_MAX_POLLS ||
+        (Number.isFinite(sinceMs) && Date.now() - sinceMs > PENDING_RUN_MAX_WAIT_MS));
+      if (unanswered.length > 0 && !waitedOut) {
+        state.funding_screen = {
+          ...state.funding_screen, verdicts: state.funding_screen?.verdicts ?? {},
+          pending: result.pending, awaiting_since: since, waits,
+        };
+        // NOT exhausted: the run's own discovery stops (`candidateBudgetSpent`)
+        // because the screen is awaited, not because it is complete.
+        log("funding_screen_awaiting", {
+          unanswered: unanswered.length, runs: result.pending.map((p) => p.run_id).filter(Boolean),
+          waits, awaiting_since: since,
+        });
+      } else {
+        // THE ONE PRICED READ IS SPENT: discovery is over for this mission. Recorded
+        // on the state the checkpoint carries, so the next slice's continuation
+        // reads "no discovery routes remain".
+        state.funding_screen = {
+          ...state.funding_screen, verdicts: state.funding_screen?.verdicts ?? {}, screened: true,
+          pending: [], ...(waitedOut ? { wait_exhausted: true } : {}),
+        };
+        if (state.discovery_source_state) {
+          state.discovery_source_state = { ...state.discovery_source_state, exhausted: true, stop_reason: "screen_complete" };
+        }
+        if (waitedOut) {
+          // STILL NEVER RE-BOUGHT: a read that is still executing is handed to
+          // the verification phase, which ADOPTS it by run id for any company it
+          // admits (`fundingStageVerifier`, ATOMUS_PENDING_STAGE) instead of
+          // buying Atomus again.
+          const handed = result.pending.filter((p) => !!p.run_id);
+          if (handed.length > 0) state.verifier_pending_runs = [...(state.verifier_pending_runs ?? []), ...handed];
+          log("funding_screen_wait_exhausted", {
+            unanswered: unanswered.length, waits, awaiting_since: since,
+            handed_to_verification: handed.map((p) => p.run_id),
+          });
+        }
       }
       for (const f of findings) {
         const c = pool.find((x) => x.key === f.company_key);
@@ -3320,7 +3398,10 @@ export async function runCapabilityPlan(
         verdicts.set(c.key, v === "pass" || v === "fail" ? v : "pending");
       }
       // Screened but unanswered (no row, or the read was refused): still open.
-      for (const c of pool) if (!verdicts.has(c.key)) verdicts.set(c.key, "pending");
+      // While the screen still waits, an unanswered company has no verdict yet.
+      if (state.funding_screen?.screened === true) {
+        for (const c of pool) if (!verdicts.has(c.key)) verdicts.set(c.key, "pending");
+      }
     }
     // A FAIL is a hard claim disproved from Atomus's complete history: closed.
     for (const c of pool) {
@@ -3709,7 +3790,9 @@ export async function runCapabilityPlan(
       ? Math.max(0, opts.fundingScreen.plan.admit -
         companies.filter((c) => wasInvestigated(c.investigation_state)).length)
       : Number.MAX_SAFE_INTEGER;
-    const allowance = Math.min(Math.max(0, budget.budget - carried), admitLeft);
+    // THE SCREEN IS STILL WAITING ON ITS READ: nothing is admitted until it
+    // has answered — admission order is the screen's whole purpose.
+    const allowance = screenAwaiting() ? 0 : Math.min(Math.max(0, budget.budget - carried), admitLeft);
     const slice = selectInvestigationSlice(
       companies.map((c) => ({
         company_key: c.key,
@@ -3805,6 +3888,8 @@ export async function runCapabilityPlan(
    * Reset at the start of every call, read immediately after.
    */
   let lastCallBlock: "deferred" | "provider_error" | null = null;
+  /** A successful read, including adoption. A guard skip is not an empty answer. */
+  let lastCallAnswered = false;
   /**
    * D3: set while a pending discovery run's own question is being asked again.
    * Such a call may ADOPT that run and nothing else: if the question no longer
@@ -3877,6 +3962,7 @@ export async function runCapabilityPlan(
     // CLEARED PER CALL. A stale block from an earlier batch would mark a
     // perfectly answered one as deferred.
     lastCallBlock = null;
+    lastCallAnswered = false;
     lastCallRef = { route_id: null, plan_version: currentPlan()?.version ?? null, provider_call_id: null };
     const spec = CAPABILITY_REGISTRY[capability];
     // COUNTED AT RECORD TIME, not before the await. The resolution stage runs two
@@ -4277,6 +4363,7 @@ export async function runCapabilityPlan(
         Date.now() - startedAt, deadlineOperationFor(capability, provider));
       deps.onCallComplete?.(call.batchIdentity);
       record(rows.length > 0 ? "ok" : "empty", rows.length, null);
+      lastCallAnswered = true;
       // THE LEDGER OF WHAT WAS BOUGHT, written only after the answer arrived.
       //
       // An errored or still-pending call records nothing, so a retry is never
@@ -7575,7 +7662,11 @@ export async function runCapabilityPlan(
       // not assign it. That gap re-bought this batch once per continuation for
       // the life of any lineage that rediscovered; see the note there.
       const actionable = companies.filter((c) =>
-        c.identity && identityIsActionable(c.identity) && !c.enriched);
+        c.identity && identityIsActionable(c.identity) && !c.enriched &&
+        // An answered-empty read is terminal for this mission. A stage reopened
+        // for another company owes only errors, deferrals and first attempts.
+        // Empty is still no qualification evidence, never a negative fact.
+        c.enrichment_outcome !== "empty");
       // DEDUPED. Two YC rows can resolve to one LinkedIn company; enriching it
       // twice pays twice for the same record.
       const byUrl = new Map<string, EngineCompany[]>();
@@ -7700,8 +7791,11 @@ export async function runCapabilityPlan(
           // and qualification holds on it rather than deciding.
           for (const url of batch) {
             for (const c of byUrl.get(url) ?? []) {
-              if (c.enriched || c.enrichment_outcome !== "not_attempted") continue;
+              if (c.enriched || !lastCallAnswered) continue;
               c.enrichment_outcome = "empty";
+              // This call answered; an earlier error/deferral is no longer owed.
+              // Failed/deferred calls continue above and never reach this branch.
+              if (c.stage_block?.capability === cap) c.stage_block = null;
             }
           }
         }

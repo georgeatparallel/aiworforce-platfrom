@@ -1,0 +1,618 @@
+{
+  "fixture": "g5.funding-screen",
+  "schema": "lead-v2-replay-fixture-v1",
+  "provenance": {
+    "environment": "test",
+    "task_id": "g5-funding-screen",
+    "sources": [
+      "Mission shape adapted from committed sanitized canary-5bfa76db/result.json; funding row schema from p6-funding-probes.json. No new production reads."
+    ],
+    "sanitization": [
+      "All provider rows and model outputs are synthetic; reserved .example domains; no people, credentials or email addresses."
+    ],
+    "synthetic_rows": [
+      "g5-seed",
+      "g5-stale",
+      "g5-partial",
+      "g5-grant"
+    ],
+    "clock": "2026-10-01T12:00:00.000Z",
+    "recorded_production_rows": 0
+  },
+  "mission": {
+    "version": "lead-mission-v1",
+    "criteria": [
+      {
+        "id": "geography:united_states",
+        "kind": "hard",
+        "label": "Geography: United States",
+        "value": "United States",
+        "source": "user_explicit",
+        "status": "ok",
+        "dimension": "geography",
+        "rationale": "stated in the request",
+        "user_phrase": ""
+      },
+      {
+        "id": "company_size:_min_11_max_50_",
+        "kind": "hard",
+        "label": "Company size: 11\u201350 employees",
+        "value": {
+          "max": 50,
+          "min": 11
+        },
+        "source": "user_explicit",
+        "status": "ok",
+        "dimension": "company_size",
+        "rationale": "stated in the request",
+        "user_phrase": ""
+      },
+      {
+        "id": "funding:_event_funding_subject_company_qualifier_",
+        "kind": "hard",
+        "label": "Funding",
+        "value": {
+          "event": "funding",
+          "subject": "company",
+          "qualifier": {}
+        },
+        "source": "user_explicit",
+        "status": "ok",
+        "dimension": "funding",
+        "rationale": "an observable signal the request asks for",
+        "elevated_by": "must",
+        "time_window": {
+          "days": 365,
+          "rule": "recently funded / raised",
+          "basis": "announced",
+          "source": "user_explicit",
+          "enforced": false
+        },
+        "user_phrase": "Find 1 company that must be based in the US, must have a LinkedIn-declared company size of 11\u201350, must be B2B SaaS, must have raised funding within the last 12 months,"
+      },
+      {
+        "id": "hiring:_event_hiring_subject_company_qualifier_role_families_growth",
+        "kind": "hard",
+        "label": "Hiring: growth role",
+        "value": {
+          "event": "hiring",
+          "subject": "company",
+          "qualifier": {
+            "role_terms": [
+              "growth role"
+            ],
+            "role_families": [
+              "growth"
+            ]
+          }
+        },
+        "source": "user_explicit",
+        "status": "ok",
+        "dimension": "hiring",
+        "rationale": "an observable signal the request asks for",
+        "elevated_by": "must",
+        "time_window": {
+          "days": 30,
+          "rule": "currently / actively hiring",
+          "basis": "posted",
+          "source": "system_default",
+          "enforced": false
+        },
+        "user_phrase": "must currently be hiring a growth role."
+      },
+      {
+        "id": "company_stage:seed",
+        "kind": "target",
+        "label": "Company kind: seed",
+        "value": "seed",
+        "source": "company_brain_preference",
+        "status": "ok",
+        "dimension": "company_stage",
+        "rationale": "your Company Brain's ICP",
+        "user_phrase": ""
+      },
+      {
+        "id": "company_stage:series_a",
+        "kind": "target",
+        "label": "Company kind: series_a",
+        "value": "series_a",
+        "source": "company_brain_preference",
+        "status": "ok",
+        "dimension": "company_stage",
+        "rationale": "your Company Brain's ICP",
+        "user_phrase": ""
+      }
+    ],
+    "confidence": 0.99,
+    "directives": {
+      "source_strategy": [],
+      "adjacent_signals": [],
+      "excluded_signals": [],
+      "preferred_signals": [
+        "funding",
+        "hiring"
+      ],
+      "required_evidence": [],
+      "allowed_broadening": {
+        "geographies": [],
+        "company_types": [],
+        "role_families": [],
+        "employee_range": {
+          "max": null,
+          "min": null
+        }
+      },
+      "execution_preference": "balanced",
+      "disallowed_broadening": [],
+      "evaluation_instructions": "",
+      "founder_unlock_recommended": false,
+      "requested_contact_ready_count": null
+    },
+    "mission_type": "company_research",
+    "target_entity": "company",
+    "company_profile": {
+      "stages": [
+        "seed",
+        "series_a"
+      ],
+      "locations": [
+        "United States"
+      ],
+      "verticals": [
+        "software"
+      ],
+      "employee_range": {
+        "max": 50,
+        "min": 11
+      },
+      "business_models": []
+    },
+    "decision_makers": {
+      "roles": [],
+      "current_employment_required": false
+    },
+    "requested_count": 1,
+    "hard_constraints": {
+      "company_profile.locations": {
+        "value": [
+          "United States"
+        ],
+        "reason": "stated explicitly in the user's query",
+        "operator": "in"
+      }
+    },
+    "requested_output": "qualified_companies",
+    "required_signals": [
+      {
+        "type": "funding",
+        "event": "funding",
+        "phrase": "funding",
+        "subject": "company",
+        "qualifier": {},
+        "timeframe_days": 365
+      },
+      {
+        "type": "hiring",
+        "event": "hiring",
+        "phrase": "hiring growth role",
+        "subject": "company",
+        "qualifier": {
+          "role_terms": [
+            "growth role"
+          ],
+          "role_families": [
+            "growth"
+          ]
+        },
+        "role_families": [
+          "growth"
+        ],
+        "timeframe_days": 30
+      }
+    ],
+    "soft_preferences": {},
+    "brain_refinements": [],
+    "mission_semantics": {
+      "goal": "Find 1 company that must be based in the US, must have a LinkedIn-declared company size of 11\u201350, must be B2B SaaS, must have raised funding within the last 12 months, and must currently be hiring a growth role.",
+      "stage": null,
+      "version": "mission-semantics-v1",
+      "hypotheses": [],
+      "corrections": [
+        "window_belongs_to_another_signal:hiring:30d"
+      ],
+      "window_sources": {
+        "hiring": {
+          "rule": "currently / actively hiring",
+          "source": "system_default"
+        },
+        "funding": {
+          "source": "user_explicit"
+        }
+      },
+      "requested_count": 1,
+      "canonical_signals": [
+        {
+          "kind": "funding",
+          "alias": "reader",
+          "phrase": "Find 1 company that must be based in the US, must have a LinkedIn-declared company size of 11\u201350, must be B2B SaaS, must have raised funding within the last 12 months,",
+          "source": "user_explicit",
+          "subject": "company",
+          "legacy_event": "funding"
+        },
+        {
+          "kind": "hiring",
+          "alias": "reader",
+          "phrase": "must currently be hiring a growth role.",
+          "source": "user_explicit",
+          "subject": "company",
+          "legacy_event": "hiring"
+        }
+      ],
+      "unmapped_signal_language": []
+    },
+    "original_user_query": "Find 1 company that must be based in the US, must have a LinkedIn-declared company size of 11\u201350, must have raised funding within the last 12 months, and must currently be hiring a growth role.",
+    "required_capabilities": [],
+    "required_signal_terms": [
+      "growth role"
+    ],
+    "prohibited_capabilities": [
+      "founder_discovery",
+      "employer_verification",
+      "contact_enrichment"
+    ],
+    "lead_intelligence_contract_version": "v1",
+    "field_provenance": {
+      "target_entity": "explicit_user_request",
+      "requested_count": "explicit_user_request",
+      "requested_output": "explicit_user_request",
+      "required_signals": "explicit_user_request",
+      "decision_makers.roles": "gpt_inference",
+      "company_profile.stages": "company_brain",
+      "company_profile.locations": "explicit_user_request",
+      "company_profile.verticals": "company_brain",
+      "company_profile.business_models": "gpt_inference"
+    }
+  },
+  "ceilings": {
+    "per_call_usd": {
+      "people": 0.1,
+      "identity": 0.03,
+      "enrichment": 0.05,
+      "web_evidence": 0.01,
+      "news_evidence": 0.05,
+      "hiring_evidence": 0.05,
+      "funding_evidence": 0.05,
+      "team_composition": 0.03,
+      "technology_evidence": 0.05
+    },
+    "per_route_usd": {
+      "hiring": 0.5,
+      "funding": 0.8,
+      "company_profile": 0.4
+    },
+    "mission_credits": 40,
+    "mission_model_usd": 0.4,
+    "adaptive_reserve_usd": 0.3,
+    "mission_provider_usd": 0.8,
+    "per_candidate_evidence_usd": 0.06
+  },
+  "ledger_reservations": [],
+  "checkpoints": {},
+  "anchors": {},
+  "expected": {
+    "pass": [
+      "g5-seed"
+    ],
+    "fail": [
+      "g5-stale",
+      "g5-grant"
+    ],
+    "pending": [
+      "g5-partial"
+    ]
+  },
+  "provider_responses": [
+    {
+      "actor": "apify_linkedin_company_search",
+      "input_match": {
+        "startPage": 1
+      },
+      "rows": [
+        {
+          "name": "g5-seed",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-seed",
+          "website": "https://g5-seed.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ]
+        },
+        {
+          "name": "g5-stale",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-stale",
+          "website": "https://g5-stale.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ]
+        },
+        {
+          "name": "g5-partial",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-partial",
+          "website": "https://g5-partial.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ]
+        },
+        {
+          "name": "g5-grant",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-grant",
+          "website": "https://g5-grant.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ]
+        }
+      ],
+      "provenance": "SYNTHETIC short-mode search pool; no declared employee band."
+    },
+    {
+      "actor": "apify_linkedin_company_details",
+      "select": {
+        "input_field": "companies",
+        "row_field": "linkedinUrl"
+      },
+      "rows": [
+        {
+          "name": "g5-seed",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-seed",
+          "website": "https://g5-seed.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ],
+          "employeeCountRange": {
+            "start": 11,
+            "end": 50
+          },
+          "employeeCount": 30,
+          "description": "Subscription software for operations teams."
+        },
+        {
+          "name": "g5-stale",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-stale",
+          "website": "https://g5-stale.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ],
+          "employeeCountRange": {
+            "start": 11,
+            "end": 50
+          },
+          "employeeCount": 30,
+          "description": "Subscription software for operations teams."
+        },
+        {
+          "name": "g5-partial",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-partial",
+          "website": "https://g5-partial.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ],
+          "employeeCountRange": {
+            "start": 11,
+            "end": 50
+          },
+          "employeeCount": 30,
+          "description": "Subscription software for operations teams."
+        },
+        {
+          "name": "g5-grant",
+          "linkedinUrl": "https://www.linkedin.com/company/g5-grant",
+          "website": "https://g5-grant.example",
+          "locations": [
+            {
+              "country": "US",
+              "city": "Austin",
+              "headquarter": true,
+              "parsed": {
+                "text": "Austin, TX, United States",
+                "countryFull": "United States"
+              }
+            }
+          ],
+          "employeeCountRange": {
+            "start": 11,
+            "end": 50
+          },
+          "employeeCount": 30,
+          "description": "Subscription software for operations teams."
+        }
+      ],
+      "provenance": "SYNTHETIC declared band and location controls."
+    },
+    {
+      "actor": "apify_funding_atomus",
+      "select": {
+        "input_field": "companies",
+        "row_field": "input"
+      },
+      "rows": [
+        {
+          "input": "https://www.linkedin.com/company/g5-seed",
+          "status": "success",
+          "summary": {
+            "name": "g5-seed",
+            "linkedin_url": "https://www.linkedin.com/company/g5-seed",
+            "domain": "g5-seed.example"
+          },
+          "company": {
+            "financial": {
+              "funding": {
+                "type": "SEED_ROUND",
+                "num_funding_rounds": 1,
+                "rounds": [
+                  {
+                    "type": "SEED_ROUND",
+                    "announced_at": "2026-09-01",
+                    "raised_amount": 1000000
+                  }
+                ],
+                "date": "2026-09-01"
+              }
+            }
+          }
+        },
+        {
+          "input": "https://www.linkedin.com/company/g5-stale",
+          "status": "success",
+          "summary": {
+            "name": "g5-stale",
+            "linkedin_url": "https://www.linkedin.com/company/g5-stale",
+            "domain": "g5-stale.example"
+          },
+          "company": {
+            "financial": {
+              "funding": {
+                "type": "SEED_ROUND",
+                "num_funding_rounds": 1,
+                "rounds": [
+                  {
+                    "type": "SEED_ROUND",
+                    "announced_at": "2024-01-01",
+                    "raised_amount": 1000000
+                  }
+                ],
+                "date": "2024-01-01"
+              }
+            }
+          }
+        },
+        {
+          "input": "https://www.linkedin.com/company/g5-partial",
+          "status": "success",
+          "summary": {
+            "name": "g5-partial",
+            "linkedin_url": "https://www.linkedin.com/company/g5-partial",
+            "domain": "g5-partial.example"
+          },
+          "company": {
+            "financial": {
+              "funding": {
+                "type": "SEED_ROUND",
+                "num_funding_rounds": 4,
+                "rounds": [
+                  {
+                    "type": "SEED_ROUND",
+                    "announced_at": "2024-01-01",
+                    "raised_amount": 1000000
+                  }
+                ],
+                "date": "2024-01-01"
+              }
+            }
+          }
+        },
+        {
+          "input": "https://www.linkedin.com/company/g5-grant",
+          "status": "success",
+          "summary": {
+            "name": "g5-grant",
+            "linkedin_url": "https://www.linkedin.com/company/g5-grant",
+            "domain": "g5-grant.example"
+          },
+          "company": {
+            "financial": {
+              "funding": {
+                "type": "NON_EQUITY_ASSISTANCE",
+                "num_funding_rounds": 1,
+                "rounds": [
+                  {
+                    "type": "NON_EQUITY_ASSISTANCE",
+                    "announced_at": "2026-09-01",
+                    "raised_amount": 1000000
+                  }
+                ],
+                "date": "2026-09-01"
+              }
+            }
+          }
+        }
+      ],
+      "provenance": "SYNTHETIC dated Seed, stale complete history, partial stale history and non-equity grant."
+    },
+    {
+      "actor": "apify_linkedin_job_search",
+      "rows": [
+        {
+          "id": "g5-growth",
+          "title": "Growth Manager",
+          "company": {
+            "name": "g5-seed",
+            "linkedinUrl": "https://www.linkedin.com/company/g5-seed",
+            "universalName": "g5-seed"
+          },
+          "location": {
+            "linkedinText": "Austin, TX"
+          },
+          "postedDate": "2026-09-25",
+          "linkedinUrl": "https://jobs.example/g5-growth",
+          "descriptionText": "Own growth acquisition for our software product."
+        }
+      ],
+      "provenance": "SYNTHETIC open growth role; not a recorded posting."
+    }
+  ]
+}
