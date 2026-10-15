@@ -182,10 +182,14 @@ loopback-only network permission:
 deno test --cached-only --allow-read --allow-env --allow-net=127.0.0.1,localhost tests/proposals/smokeBudget.postgres.test.ts
 ```
 
-No native server was provided for this sprint. The native tests are prepared and
-type-checked, **not executed**. No live guarantee follows from ignored tests.
+The independent verification follow-up ran all three tests on an isolated native
+PostgreSQL 17.10 database: **three passed, zero ignored**. The initial native
+harness double-encoded JSONB parameters; it now uses postgres.js `sql.json()`.
+Eight additional reference-contract/mock-provider failure cases and two native
+mutation controls also passed. No Claude database implementation is claimed
+verified by these reference tests; no production schema was changed.
 
-## Validation recorded for this revision
+## Initial proposal validation (before independent native verification)
 
 On the `9453b7c5` base, the complete proposal suite reports **33 passed, zero
 failed, three ignored**: 21 SQL/state/permissions/rollback controls and 12
@@ -198,3 +202,38 @@ The separate runtime branch on the same base reports 8,653 edge tests passed,
 seven runtime guard mutations killed. Funding-screen interrupted-run adoption
 passes. These runtime tests exercise the existing qualification/recovery code;
 they do not wire this proposed admission gateway into any physical transport.
+
+## Independent native verification follow-up
+
+Base remains `9453b7c5`. The complete reference suite now reports **46 passed,
+zero failed, zero ignored** when the isolated native URL is supplied: the
+original 33 embedded controls, three native contention tests, eight native
+failure-injection cases and two native mutation controls. Removing the admission
+row lock admits a second 30000-microdollar model reservation after the first
+consumes the same 50000 limit. A foreign-key lock can delay insertion without
+protecting the earlier budget check. Replacing the post-lock clock with
+transaction-start `now()` also fails its native deadline invariant.
+
+Failure cases exercise durable admission followed by a simulated worker crash
+before or after a mock POST, checkpoint loss after run attachment, new task and
+generation, stale/expired lease, cancellation, duplicate/re-keyed provider
+questions, uncertain credit disposition and model retries/unknown quote. Mock
+credit reaping is explicitly synthetic; no customer ledger is changed. These are
+controlled exception/checkpoint-loss injections, not OS SIGKILL, power-loss or
+fsync proofs and not execution of a production adapter.
+
+The local server was initialized only in a new `/tmp` cluster, bound to
+127.0.0.1 and stopped after validation. No Docker/hosted database, production
+credential, live model/provider or environment migration was used. Native
+binaries came from checksum-verified `@embedded-postgres/linux-x64` version
+`17.10.0-beta.17`; the underlying server reports PostgreSQL 17.10. This is a
+local verification dependency only, not a runtime or package manifest change.
+Run all proposal tests with an existing isolated scratch database and:
+
+```sh
+deno test --cached-only --allow-read --allow-write --allow-env --allow-net=127.0.0.1 tests/proposals/
+```
+
+Claude's durable implementation was not present among visible remote branches at
+verification time. Physical billable-path coverage and compatibility remain
+**UNVERIFIED**, so the first live mission stays BLOCKED despite these results.

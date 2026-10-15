@@ -139,9 +139,11 @@ refusal and immutable same-queue deadline. An active test also proves a new
 collector has no durable counter, so those passing tests cannot be mistaken for
 restart-safe model USD authorization. The separate proposal suite now executes
 the SQL against an embedded PostgreSQL database with synthetic controls; native
-multi-session tests are prepared separately and require an existing approved
-localhost scratch database. Existing ChaosLab tests cover recovery mechanics;
-they are not proof of this unimplemented shared admission transaction.
+multi-session tests now pass on an isolated local PostgreSQL 17.10 database.
+Eight native failure-injection controls and two native mutation controls pass as
+well; see the linked proposal README for scope and limitations. Existing
+ChaosLab tests cover recovery mechanics; they are not proof of this
+unimplemented shared admission transaction.
 
 ## Decisions and gates
 
