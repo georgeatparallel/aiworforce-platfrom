@@ -1,10 +1,9 @@
-// No fetch, migration, checkout or runtime edit: archive one already-fetched SHA.
+// Detached worktree of one already-fetched SHA; no implementation branch edit.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cpSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   symlinkSync,
@@ -31,12 +30,9 @@ const repository = execFileSync("git", ["rev-parse", "--show-toplevel"], {
 const directory = mkdtempSync("/tmp/agentory-pr90-retest-");
 const sourceRoot = join(directory, "source");
 const testRoot = join(directory, "tests");
-mkdirSync(sourceRoot);
-// Node's buffer is bounded; tar only receives a trusted Git archive, not a URL.
-const archive = execFileSync("git", ["archive", sha], {
-  maxBuffer: 256 * 1024 * 1024,
+execFileSync("git", ["worktree", "add", "--detach", sourceRoot, sha], {
+  stdio: "pipe",
 });
-execFileSync("tar", ["-x", "-C", sourceRoot], { input: archive });
 cpSync(fileURLToPath(new URL(".", import.meta.url)), testRoot, {
   recursive: true,
 });
@@ -81,6 +77,7 @@ const preparation = {
   schema: "pr90-retest-preparation-v1",
   ...preserved,
   reviewedSha: sha,
+  sourceKind: "detached-git-worktree",
   sourceRoot,
   testRoot,
   pins,

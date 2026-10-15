@@ -117,14 +117,17 @@ printer. It ignores only test names and comments/formatting; changing an
 assertion, fixture or conditional fails the check. It also requires the original
 source fingerprint JSON to remain unchanged.
 
-Preparation creates a separate temporary archive of an already fetched commit.
-It copies the identical test code into that temporary directory and changes only
+Preparation creates a separate temporary detached worktree of an already fetched
+commit, as explicitly authorized in the autonomous safety-testing request. It
+copies the identical test code into that temporary directory and changes only
 the copy's source fingerprints to the exact target SHA. The branch's original
 pins are never overwritten. Execution verifies source/test hashes, runs all 31
 required-safe tests and writes fresh JUnit, logs and per-ID JSON. Missing,
 duplicate or skipped IDs cannot be PASS; nonzero exits and type-check failures
 remain failures. No script fetches a vendor, changes Claude's branch or applies
-SQL to an application database.
+SQL to an application database. After testing, remove the clean detached source
+with `git worktree remove <printed-sourceRoot>`; retain the separate result
+files.
 
 Use `--filter SAF-001` through the normal Deno command for a single
 counterexample. All seven cases use controlled responses/callback boundaries and
