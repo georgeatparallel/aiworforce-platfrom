@@ -384,7 +384,7 @@ import {
 } from "./firecrawlCostModel.ts";
 import type { ExecutionCost } from "./executionLedger.ts";
 import {
-  authorizeProviderCall, settleProviderCall, resolveCreditEnforcement,
+  authorizeProviderCall, settleProviderCall, resolveCreditEnforcement, creditSettlementFor,
   CREDIT_REFUSED_ERROR, type CreditDb,
 } from "./creditAuthorization.ts";
 import { priceFor } from "./creditPricing.ts";
@@ -1904,19 +1904,26 @@ export async function runTool(
 
     // SETTLED ON WHAT ACTUALLY HAPPENED. A call that never reached the
     // provider refunds in full; `credits_release_stale` is the backstop if this
-    // never runs at all.
-    const started = result.ok || typeof (result.data as { run_id?: unknown } | null)
-      ?.run_id === "string";
-    const settled = await settleProviderCall({
-      db: ctx.admin as unknown as CreditDb,
-      transaction_id: auth.transaction_id,
-      started,
-      reason: result.ok ? "provider_call_succeeded" : String(result.error ?? "failed"),
-    });
-    console.log("[credits][settlement]", {
-      transaction_id: auth.transaction_id, started,
-      charged: settled.charged, settled: settled.settled, detail: settled.detail,
-    });
+    // never runs at all. An UNCERTAIN start is neither: its reservation is HELD
+    // (`creditSettlementFor`), because refunding would claim nothing was bought.
+    const settlement = creditSettlementFor(result);
+    if (settlement.action === "hold") {
+      if (auth.transaction_id) console.log("[credits][held]", {
+        transaction_id: auth.transaction_id, reason: settlement.reason,
+        policy: "held until settled or released by credits_release_stale at 30 min",
+      });
+    } else {
+      const settled = await settleProviderCall({
+        db: ctx.admin as unknown as CreditDb,
+        transaction_id: auth.transaction_id,
+        started: settlement.started,
+        reason: result.ok ? "provider_call_succeeded" : String(result.error ?? "failed"),
+      });
+      console.log("[credits][settlement]", {
+        transaction_id: auth.transaction_id, started: settlement.started,
+        charged: settled.charged, settled: settled.settled, detail: settled.detail,
+      });
+    }
   } else {
     try {
       result = await tool.execute(input, ctx);
