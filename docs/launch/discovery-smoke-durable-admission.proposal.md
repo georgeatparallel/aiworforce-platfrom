@@ -1,11 +1,11 @@
-# Durable smoke admission — proposal only; implementation stopped
+# Durable smoke admission — SQL and rollback proposal only
 
-**No executable migration, database change or new runtime gateway is included.**
-The first $0.25 mission remains blocked. This document identifies the part of
-the approved sprint that cannot safely be implemented with the current
-checkpoint and observation-ledger interfaces. Claude owns billing/database
-integration; review this contract with that work before authorizing a migration
-or admission wiring.
+**Proposed SQL is outside all migration directories; no database change or
+runtime gateway is activated.** The first $0.25 mission remains blocked. This
+document identifies the part of the approved sprint that cannot safely be
+implemented with the current checkpoint and observation-ledger interfaces.
+Claude owns billing/database integration; review this contract with that work
+before authorizing a migration or admission wiring.
 
 ## Why existing storage is insufficient for the hard guarantee
 
@@ -44,8 +44,10 @@ separate immutable **mission authorization** and transactional **operation
 reservation** are needed, either as a reviewed extension of #82 or an isolated
 held migration. Do not put the counters only in `tasks.result` or
 `lead_lineages.current_state`: checkpoint failure and existing state replacement
-can lose them. Final table/RPC names and deployment order remain a database
-review decision; no DDL is invented or applied here.
+can lose them. The precise two-table/four-RPC draft and guarded rollback are now
+in [`proposals/smoke-budget/`](proposals/smoke-budget/README.md). DDL is tested
+only in disposable offline databases, never applied to an environment. Object
+names and deployment order remain review decisions.
 
 Authorization must pin: one workspace, logical mission/authorization identity,
 compiled criteria hash, original absolute deadline, provider USD ceiling $0.20,
@@ -135,9 +137,11 @@ Existing local runtime tests prove request-local admission,
 strict-rate/uncertainty stops, retained drain usage, malformed provider-quote
 refusal and immutable same-queue deadline. An active test also proves a new
 collector has no durable counter, so those passing tests cannot be mistaken for
-restart-safe model USD authorization. Existing ChaosLab tests cover recovery
-mechanics; they are not proof of this unimplemented shared admission
-transaction.
+restart-safe model USD authorization. The separate proposal suite now executes
+the SQL against an embedded PostgreSQL database with synthetic controls; native
+multi-session tests are prepared separately and require an existing approved
+localhost scratch database. Existing ChaosLab tests cover recovery mechanics;
+they are not proof of this unimplemented shared admission transaction.
 
 ## Decisions and gates
 
