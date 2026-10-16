@@ -290,3 +290,40 @@ Deno.test("17. every requirement can state itself in a sentence a person can rea
     'a company leader published a post about "us expansion"',
   );
 });
+
+// ═══════════ 18. a JOB posting is an opening, a person posting is a post ═════
+//
+// The discovery smoke's own request compiled "an open Account Executive
+// posting" into a leadership POST: the noun for an opening read as social
+// content, so the mission carried a requirement nothing it bought could
+// answer, and no company could qualify.
+
+Deno.test("18a. the noun 'posting' after 'job' or 'open <role>' is hiring, never a post", () => {
+  const smoke = readSignalsFromQuery(
+    "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.");
+  assertEquals(smoke.map((d) => d.event), ["hiring"], "the smoke request asks for one opening and nothing social");
+  for (const q of [
+    "companies with an open Account Executive posting",
+    "companies with open SDR postings",
+    "companies with a job posting for SDRs",
+    "companies with recent job postings",
+  ]) {
+    const events = readSignalsFromQuery(q).map((d) => d.event);
+    assert(events.includes("hiring"), `${q}: ${events}`);
+    assertFalse(events.includes("post"), `${q} read as a social post`);
+  }
+});
+
+Deno.test("18b. a PERSON posting is unchanged: still a post, with its subject and topic", () => {
+  assertEquals(one("companies whose CEO is posting about AI").event, "post");
+  assertEquals(one("companies whose CEO is posting about AI").subject, "leadership");
+  const founders = one("founders posting on LinkedIn about fundraising");
+  assertEquals([founders.event, founders.subject], ["post", "leadership"]);
+  // "open" followed by a preposition is not an opening.
+  assertEquals(one("founders who are open to posting about hiring").event, "post");
+  // "open source" is software, never an opening.
+  assertEquals(one("open source maintainers posting about Rust").event, "post");
+  assertEquals(one("companies whose leadership posted about US expansion").event, "post");
+  // A posted JOB was already hiring; it stays hiring.
+  assertEquals(one("companies that posted SDR jobs").event, "hiring");
+});
