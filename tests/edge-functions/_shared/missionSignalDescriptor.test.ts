@@ -327,3 +327,14 @@ Deno.test("18b. a PERSON posting is unchanged: still a post, with its subject an
   // A posted JOB was already hiring; it stays hiring.
   assertEquals(one("companies that posted SDR jobs").event, "hiring");
 });
+
+Deno.test("18c. the canonical reader agrees: an open-role posting is a REAL hiring cue (the P5 hiring check stays hard)", async () => {
+  const { readCanonicalSignals } = await import("../../../supabase/functions/_shared/signalKinds.ts");
+  const kinds = (q: string) => readCanonicalSignals(q).map((r) => r.kind);
+  assertEquals(kinds(
+    "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days."),
+    ["hiring"]);
+  assertEquals(kinds("companies with a job posting for SDRs"), ["hiring"]);
+  assertEquals(kinds("companies whose CEO is posting about AI"), ["social_activity"]);
+  assertEquals(kinds("open source maintainers posting about Rust"), ["social_activity"]);
+});

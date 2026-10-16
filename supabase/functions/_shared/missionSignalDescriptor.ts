@@ -298,7 +298,7 @@ export const POSTED_JOBS_RE = new RegExp(String.raw`\bpost(?:ed|s|ing)?\s+${JOB_
  * mission bought could answer — because the social reading is tried first.
  */
 const ROLE_WORDS = String.raw`(?:(?!(?:source|to|about|on|regarding|that|for|and|in|with|of|up)\b)[a-z][a-z/&-]*\s+){0,3}`;
-const JOB_POSTING_RE = new RegExp(String.raw`\b(?:job\s+|open\s+${ROLE_WORDS})postings?\b`, "i");
+export const JOB_POSTING_RE = new RegExp(String.raw`\b(?:job\s+|open\s+${ROLE_WORDS})postings?\b`, "i");
 const POST_MARKER_RE = new RegExp(
   String.raw`\bpost(?:ed|s)?\b(?!\s+${JOB_OBJECT})|(?<!\b(?:job\s+|open\s+${ROLE_WORDS}))\bposting\b(?!\s+${JOB_OBJECT})|\bshar(?:ed|ing) (?:a|an|their)\b|\bwrote about\b|\bdiscuss(?:ed|ing|es)\b|\btalking about\b|\bannounc(?:ed|ing)\b`);
 const HIRING_MARKER_RE = new RegExp(
