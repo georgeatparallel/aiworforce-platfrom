@@ -21,6 +21,7 @@ import type {
 } from "../supabase/functions/_shared/leadMissionWorkerCore.ts";
 import type { ExecutionDeadline } from "../supabase/functions/_shared/leadExecutionFinalizer.ts";
 import { revocableDeadline } from "../supabase/functions/_shared/revocableDeadline.ts";
+import { missionExpiry, withMissionExpiry } from "../supabase/functions/_shared/missionWallClock.ts";
 import {
   type LineageOutcomeRow, prepareV2LeadCount, mapRefusal, mapTaskOutcome, withResume, type TaskOutcomeRow,
 } from "../supabase/functions/_shared/leadMissionV2Request.ts";
@@ -33,6 +34,8 @@ export interface LeadMissionRunner {
 }
 
 export interface LeadMissionRunnerDeps {
+  enforceMissionWallClock?: boolean;
+  now?: () => number;
   handler: (req: Request, inProcess: RunAgentRunOptions) => Promise<Response>;
   /** Sent as the bearer: the handler's service-role path, as orchestrate and the sweeper use. */
   serviceRoleKey: string;
@@ -62,7 +65,14 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
     ready: true,
     async run(mission, ctl) {
       const body = withResume(prepareV2LeadCount(mission.request), mission.taskId);
-      const deadline = revocableDeadline(d.createDeadline(ctl.executionBudgetMs));
+      const now = d.now ?? Date.now;
+      const expiry = d.enforceMissionWallClock ? missionExpiry(mission.enqueuedAt, now()) : null;
+      if (d.enforceMissionWallClock && (expiry === null || now() >= expiry)) {
+        return { status: "failed", terminal: true, taskId: mission.taskId,
+          error: expiry === null ? "mission_deadline_unreadable" : "mission_deadline_expired" };
+      }
+      const base = d.createDeadline(expiry === null ? ctl.executionBudgetMs : Math.min(ctl.executionBudgetMs, expiry - now()));
+      const deadline = revocableDeadline(expiry === null ? base : withMissionExpiry(base, expiry, now));
       // `worker:<heartbeat reason>` — what `verificationStop.classifyRevocation`
       // reads to tell a cancellation from a lost lease.
       const onAbort = () => deadline.revoke(

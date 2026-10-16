@@ -72,7 +72,7 @@ Deno.test("[failure] source order: both releases retry exactly as the lab does (
 Deno.test("[failure] source order: the worker reads the queue's continuations at claim, reads the outcome from the task ROW, and reconciles only a terminal release", () => {
   const main = "worker/main.ts";
   const src = read(main);
-  assert(src.includes('select("continuations")'), `${main}: the continuations read at claim is gone`);
+  assert(src.includes('select("continuations,created_at")'), `${main}: the continuations read at claim is gone`);
   assertInOrder(src, main, ["readTaskOutcome: async (taskId) =>", 'from("tasks").select(TASK_OUTCOME_COLUMNS)']);
   // D4: the lineage's status and verdict, as the lab's `readLineageOutcome` reads them.
   assertInOrder(src, main, ["readLineageOutcome: async (lineageId) =>", 'from("lead_lineages")',

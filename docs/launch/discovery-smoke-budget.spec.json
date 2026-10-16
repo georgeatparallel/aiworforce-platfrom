@@ -1,0 +1,96 @@
+{
+  "schema": "discovery-smoke-budget-spec-v2",
+  "status": "BLOCKED",
+  "authorizes_execution": false,
+  "derived_from": {
+    "codex_spec_v1": "codex/smoke-budget-spec@ae0fa524",
+    "durable_admission_merged": "PR #90 at b4ffcd20 (verified head 4c094d2f)",
+    "wall_clock_from": "codex/smoke-execution-guards@9cdb1372",
+    "durable_proposal_superseded": "codex/smoke-durable-admission-proposal@a64aa848"
+  },
+  "mission": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+  "eligibility": {
+    "industry": "Verified product, business customers and business activity; broad provider industry categories alone never prove software.",
+    "size": "Declared band from a current company record; associated-member counts are not staff counts. Exact counts and partially overlapping bands stay UNKNOWN.",
+    "geography": "Verified US company headquarters, not just a US job location.",
+    "hiring": "Dated, currently open Account Executive posting for this same employer, not recruitment on behalf of a client.",
+    "unknown": "Never MATCH; missing evidence alone never proves NON_MATCH.",
+    "funding": "No funding requirement or purchases. No broadening or skipped mandatory verification."
+  },
+  "limits": {
+    "total_authorized_usd": 0.25,
+    "provider_committed_max_usd": 0.2,
+    "model_committed_max_usd": 0.05,
+    "provider_purchases": 5,
+    "model_attempts": 4,
+    "customer_credits": 5,
+    "runtime_ms": 300000,
+    "workspaces": 1,
+    "workers": 1,
+    "requested_companies": 1,
+    "discovered_companies": 3,
+    "discovery_rows": 3,
+    "company_detail_urls": 3,
+    "discovery_pages": 1,
+    "provider_polls": 5,
+    "slices": 2,
+    "provider_actor_purchases": {
+      "apify:curious_coder~linkedin-jobs-scraper": 2,
+      "apify:harvestapi~linkedin-company": 1,
+      "firecrawl:map": 1,
+      "firecrawl:scrape": 1
+    },
+    "other_actors": 0
+  },
+  "candidate_environment_spec_not_applied": {
+    "DISCOVERY_SMOKE_ADMISSION": "enforce",
+    "LEAD_V2_SMOKE_WALL_CLOCK": "enforce",
+    "LEAD_STRATEGIST_PROVIDER": "openai",
+    "LEAD_V2_MISSION_PROVIDER_USD_CAP": "0.20",
+    "LEAD_V2_MISSION_CREDIT_CAP": "5",
+    "LEAD_CREDIT_ENFORCEMENT": "enforce",
+    "LINEAGE_LEASE_ENFORCED": "true",
+    "MODEL_SPEND_ENFORCEMENT": "enforce",
+    "MODEL_SPEND_CEILING_USD": "0.05",
+    "MODEL_SPEND_PERIOD_DAYS": "1",
+    "MODEL_RUN_MAX_CALLS": "2",
+    "LEAD_WORKER_MAX_RUNTIME_MS": "150000",
+    "LEAD_MAX_AUTO_CONTINUATIONS": "1"
+  },
+  "enforcement": {
+    "combined_provider_model_usd": "DURABLE_ADMISSION_HELD_MIGRATION",
+    "provider_purchases_and_actor_limits": "DURABLE_ADMISSION_HELD_MIGRATION",
+    "model_attempts_including_retries_fallbacks_strategist": "DURABLE_ADMISSION_TRANSPORT_GATE",
+    "discovery_page_independent_of_polls": "DURABLE_ADMISSION_HELD_MIGRATION",
+    "status_dataset_and_receipt_reads": "DURABLE_ADMISSION_POLLS_WITH_ADMITTED_PARENT",
+    "unknown_provider_or_model_price": "REFUSED_NO_APPROVED_TEMPLATE",
+    "mandatory_request_bounds": "REFUSED_BEFORE_ADMISSION",
+    "uncertain_purchase_holds": "DURABLE_NO_REFUND_AND_CREDIT_HELD",
+    "cancellation_and_ownership_fencing": "DURABLE_FOR_SHARE_THROUGH_COMMIT",
+    "mission_deadline": "DURABLE_FROM_QUEUE_CREATED_AT_AND_OPT_IN_WORKER_WALL_CLOCK",
+    "non_fetch_transports": "INFRA_TEST_IMPORT_GRAPH_SCAN",
+    "actual_vendor_charge_maximum": "BLOCKED_REQUIRES_VERIFIED_UPPER_QUOTES_AND_EXTERNAL_CONTROLS",
+    "test_target_billing_and_schema": "BLOCKED_REQUIRES_ISOLATED_TARGET_AND_SEPARATE_AUTHORIZATION",
+    "lovable_ai_gateway": "REFUSED_HOST_NOT_ALLOWED"
+  },
+  "accounting": {
+    "committed_estimates": "Approved template maxima, including pending and uncertain operations; never refunded, never free after checkpoint loss.",
+    "actual_costs": "Separate, nullable until an auditable provider receipt. The largest reported charge is kept; an over-quote charge stops the authorization.",
+    "adoption": "No new purchase; every status/dataset/receipt transport read is its own poll admission with an admitted parent.",
+    "refusal": "No transport, no automatic re-buy, no fallback that bypasses the refused authorization.",
+    "counts": "Failed/uncertain starts retain their slots. A new worker, new slice or telemetry drain does not reset the authorization; only an administrator can authorize a new queue row."
+  },
+  "activation_gate": {
+    "ready": false,
+    "separate_execution_approval_required": true,
+    "durable_admission_merged": true,
+    "durable_admission_independently_verified_sha": "4c094d2f6673df346c92389e124cd00694cf6c3f",
+    "held_migration_applied_anywhere": false,
+    "isolated_test_target_provisioned": false,
+    "all_required_prices_verified": false,
+    "approved_quote_catalog_reviewed": false,
+    "live_receipts_and_credits_reconciled": false,
+    "strategist_provider_is_openai": true,
+    "worker_proposal_remains_inactive": true
+  }
+}

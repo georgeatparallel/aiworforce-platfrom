@@ -189,7 +189,9 @@ The races run on real concurrent sessions:
    (50 files).
 2. Dispatch the inactive worker proposal first, so the worker is idle and
    waiting. It sets `DISCOVERY_SMOKE_ADMISSION: enforce`,
-   `LINEAGE_LEASE_ENFORCED: "true"` and role `worker`.
+   `LEAD_V2_SMOKE_WALL_CLOCK: enforce`, `LEAD_STRATEGIST_PROVIDER: openai`,
+   `LINEAGE_LEASE_ENFORCED: "true"` and role `worker`
+   (`discovery-smoke-integration.md`).
 3. In one reviewed transaction, as an administrator:
    - insert the queue row;
    - `select public.authorize_discovery_smoke(<queue_id>, '<pricing version>', '<catalog>'::jsonb, '<actor limits>'::jsonb, 300);`
