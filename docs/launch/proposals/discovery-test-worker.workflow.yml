@@ -57,6 +57,9 @@ jobs:
       # ── Fail-closed spend controls ───────────────────────────────────────
       LEAD_CREDIT_ENFORCEMENT: enforce
       LINEAGE_LEASE_ENFORCED: "true"
+      # Durable admission (supabase/migrations-held/20261015140000_…): every paid
+      # request needs a committed admission against the queue row's authorization.
+      DISCOVERY_SMOKE_ADMISSION: enforce
       # #89's smoke limits (tests/replay/evaluation/smoke-mission.proposed.json).
       LEAD_V2_MISSION_PROVIDER_USD_CAP: "0.20"   # provider USD, checked before every paid call
       LEAD_V2_MISSION_CREDIT_CAP: "5"            # paid provider calls (1 credit each) = 5 purchases

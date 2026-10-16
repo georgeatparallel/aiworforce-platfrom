@@ -5,11 +5,11 @@
 #
 # Applies, in order: the Supabase platform shim (sql/00_supabase_shim.sql),
 # the held schema baseline, every migration in supabase/migrations/, the held
-# Lead V2 queue migrations, then the held billing fix. The held files are
-# applied HERE ONLY — to a throwaway database this lane creates and destroys.
-# They are not approved for production (supabase/migrations-held/README.md)
-# and nothing in this lane can reach production: the URL must point at
-# localhost, which is checked below.
+# Lead V2 queue migrations, the held billing fix, then the held smoke
+# admission. The held files are applied HERE ONLY — to a throwaway database
+# this lane creates and destroys. They are not approved for production
+# (supabase/migrations-held/README.md) and nothing in this lane can reach
+# production: the URL must point at localhost, which is checked below.
 set -euo pipefail
 url="${1:?usage: bootstrap.sh <postgres-url>}"
 case "$url" in
@@ -29,9 +29,14 @@ held_v2=(
 held_billing=(
   20261015130000_credits_rearm_settled_key.sql
 )
+# The held smoke admission: one durable authorization per queue row. Depends on
+# the V2 chain above.
+held_admission=(
+  20261015140000_discovery_smoke_admission.sql
+)
 # DB_CONTRACT_OMIT_HELD names ONE held file to leave out. It is for
-# tests/db-contract/mutation.sh, which proves the credit tests fail without the
-# fix; nothing else sets it.
+# tests/db-contract/mutation.sh, which proves the credit and admission tests
+# fail without their migrations; nothing else sets it.
 omit="${DB_CONTRACT_OMIT_HELD:-}"
 apply() {
   psql "$url" -X -q -v ON_ERROR_STOP=1 --single-transaction -f "$1" >/dev/null \
@@ -41,7 +46,7 @@ apply() {
 apply "$root/tests/db-contract/sql/00_supabase_shim.sql"
 apply "$held/20260816120000_baseline_schema.sql"
 for f in $(ls "$root/supabase/migrations/"*.sql | sort); do apply "$f"; done
-for f in "${held_v2[@]}" "${held_billing[@]}"; do
+for f in "${held_v2[@]}" "${held_billing[@]}" "${held_admission[@]}"; do
   if [ "$f" = "$omit" ]; then echo "omitted $f (mutation proof)"; continue; fi
   apply "$held/$f"
 done
