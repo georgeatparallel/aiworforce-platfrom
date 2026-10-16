@@ -161,7 +161,7 @@ prove_killed "receipt read skipped" "$tools_ts" \
   $'      receipt = "unsettled";\n      if (plan.ok) {' $'      receipt = "unsettled";\n      if (plan.ok && plan.waitMs < 0) {' \
   "$gate_tests" "read lifecycle: a run finishing in its first long poll uses exactly three reads, and its receipt is settled"
 prove_killed "settled receipt not labelled" "$gate_ts" \
-  'source: apifyRunSettled(j?.data ?? null, now()) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",' 'source: "apify_run(status).receipt",' \
+  'source: apifyRunSettled(j?.data ?? null, sentAt) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",' 'source: "apify_run(status).receipt",' \
   "$gate_tests" "read lifecycle: a run finishing in its first long poll uses exactly three reads, and its receipt is settled"
 prove_killed "vendor cap above the quote kept" "$gate_ts" \
   "asked >= 0 && asked < quote ? asked : quote" "asked >= 0 ? asked : quote" \

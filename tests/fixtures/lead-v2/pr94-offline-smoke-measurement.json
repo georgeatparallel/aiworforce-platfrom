@@ -1,0 +1,99 @@
+{
+  "schema": "agentory-offline-mission-proof-v1",
+  "implementation_sha": "b557ff6e1d025afca9f9b59ab00d31245664c0b0",
+  "proposed_spec_sha": "0fb6312c1b78bf0282401140e62e903b31567930",
+  "mission": "Find 1 US B2B software company with a current declared 11\u201350 employee band and an open Account Executive posting dated within 30 days.",
+  "verdict": "NO_GO: execution_plan.request_too_large",
+  "synthetic_vendor_data": true,
+  "authorizes_live_execution": false,
+  "limits": {
+    "total_usd": 0.25,
+    "provider_usd": 0.2,
+    "model_usd": 0.05,
+    "provider_purchases": 5,
+    "model_attempts": 4,
+    "provider_reads": 5,
+    "deadline_ms": 300000,
+    "max_model_request_bytes": 32768
+  },
+  "stage_measurements": [
+    {
+      "stage": "mission_compilation",
+      "request_bytes": 26245,
+      "physical_model_sends": 1,
+      "admitted": true
+    },
+    {
+      "stage": "execution_plan",
+      "request_bytes": 53922,
+      "physical_model_sends": 0,
+      "admitted": false,
+      "refusal": "request_limits:request_too_large",
+      "minimum_bytes_to_remove": 21154
+    },
+    {
+      "stage": "actor_purchase_research_qualification",
+      "reached": false
+    }
+  ],
+  "physical_model_attempts": 1,
+  "durable_model_admissions": 1,
+  "model_telemetry_rows": 2,
+  "provider_purchase_admissions": 0,
+  "apify_status_reads": 0,
+  "apify_dataset_reads": 0,
+  "apify_receipt_reads": 0,
+  "worker_binding": {
+    "bound": true,
+    "reason": "bound"
+  },
+  "qualified_leads": 0,
+  "committed_usd": {
+    "provider": 0,
+    "model": 0.0114,
+    "combined": 0.0114
+  },
+  "synthetic_usage_priced_usd": 0.00068,
+  "settled_actual_model_usd": null,
+  "unpriced_model_telemetry_rows": 1,
+  "provider_credit_transactions": 0,
+  "observed_local_elapsed_ms": 333,
+  "resume_handler_response": {
+    "status": 409,
+    "body": {
+      "success": false,
+      "error": "continuation_refused",
+      "reason": "no_checkpoint",
+      "message": "That run has no saved checkpoint to continue from."
+    }
+  },
+  "expired_restart": {
+    "status": "failed",
+    "terminal": true,
+    "taskId": null,
+    "error": "mission_deadline_expired"
+  },
+  "operator_stop_response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "type": "mission_admission_refused",
+        "decision": "stopped",
+        "detail": {
+          "decision": "stopped",
+          "deadline_at": "2026-10-16T16:01:27.733242+00:00"
+        },
+        "purchase_may_exist": false,
+        "message": "mission admission refused: stopped"
+      }
+    }
+  },
+  "durable_operations_after_controls": 1,
+  "evidence_provenance": {
+    "mission": "production GPT compiler, scripted text response",
+    "provider_rows": null,
+    "qualification": null,
+    "dashboard": "real local PostgREST lead_candidates query, zero rows"
+  },
+  "coverage_limit": "Production compiler binding, runner, run-agent handler, real worker bind RPC, admission and migrated database. Does not exercise pilot-chat UI, HTTP intake, claim/heartbeat/release loop, or downstream research/qualification because execution planning refuses first. Existing native controls cover ownership/claims separately."
+}
