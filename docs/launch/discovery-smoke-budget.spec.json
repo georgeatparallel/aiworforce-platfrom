@@ -71,7 +71,8 @@
     "non_fetch_transports": "INFRA_TEST_IMPORT_GRAPH_SCAN",
     "actual_vendor_charge_maximum": "BLOCKED_REQUIRES_VERIFIED_UPPER_QUOTES_AND_EXTERNAL_CONTROLS",
     "test_target_billing_and_schema": "BLOCKED_REQUIRES_ISOLATED_TARGET_AND_SEPARATE_AUTHORIZATION",
-    "lovable_ai_gateway": "REFUSED_HOST_NOT_ALLOWED"
+    "lovable_ai_gateway": "REFUSED_HOST_NOT_ALLOWED",
+    "firecrawl_without_account_rate": "REFUSED_UNPRICED_UNDER_USD_CAP"
   },
   "accounting": {
     "committed_estimates": "Approved template maxima, including pending and uncertain operations; never refunded, never free after checkpoint loss.",
@@ -91,6 +92,7 @@
     "approved_quote_catalog_reviewed": false,
     "live_receipts_and_credits_reconciled": false,
     "strategist_provider_is_openai": true,
-    "worker_proposal_remains_inactive": true
+    "worker_proposal_remains_inactive": true,
+    "firecrawl_account_rate_approved": false
   }
 }

@@ -41,8 +41,12 @@ schema in this order. Not `supabase db push`, which this repository refuses
 
 ```sh
 TEST_PROJECT_REF=<new-ref> TEST_DB_URL='<the NEW project's postgres URL>' \
-  scripts/test-project/build-test-schema.sh --confirm <new-ref> [--with-held-billing-fix]
+  scripts/test-project/build-test-schema.sh --confirm <new-ref> --with-held-billing-fix --with-held-admission
 ```
+
+**The smoke needs both flags** (50 files): the billing fix (Step D) and the
+durable admission (Step E). Without `--with-held-admission`, every admission
+call fails and the gate refuses every paid request.
 
 **It refuses before connecting** when:
 - the ref is empty, `ohsdatpvfdjdemstoiuj` or `wqnigjhcwjxtmordrwno`;
@@ -54,11 +58,14 @@ TEST_PROJECT_REF=<new-ref> TEST_DB_URL='<the NEW project's postgres URL>' \
 - the database is not empty;
 - `pg_cron` and `pg_net` aren't enabled.
 
-It then applies Steps A to D (D only with the flag) and Step E's detach (see
-below). It ends by proving no cron job calls a hosted project.
+It then applies Steps A to C, Step D with `--with-held-billing-fix` and
+Step D2 with `--with-held-admission`. Step E, the cron detach, runs in the same
+transaction as each cron-scheduling migration (see below). (The script's own
+header letters the admission migration "E"; the content is the same.) It ends by proving no cron job calls a hosted project.
 
 **Tested locally:** a disposable Postgres with the contract lane's platform
-shim, which stands in for Supabase's platform objects. All 49 files applied,
+shim, which stands in for Supabase's platform objects. All 49 files applied
+before the admission migration existed; the DB contract lane now builds all 50,
 leaving only the two in-database jobs. `tests/infra/testWorkerProposal.test.ts`
 checks the refusals with a stub `psql`.
 
@@ -130,6 +137,12 @@ checks the refusals with a stub `psql`.
 | # | File (`supabase/migrations-held/`) |
 |---|---|
 | D1 | `20261015130000_credits_rearm_settled_key.sql`: refunded credit keys are re-armed, not replayed |
+
+**Step D2: the held smoke admission (required for the smoke)**
+
+| # | File (`supabase/migrations-held/`) |
+|---|---|
+| D2 | `20261015140000_discovery_smoke_admission.sql`: the durable admission tables and RPCs (PR #90) |
 
 **Not applied:**
 - `20260912160000_content_format_model.sql`: unrelated to Discovery.
@@ -203,8 +216,10 @@ It's only needed if a session must outlive a GitHub job.
 company, 11 to 50 employees, an open Account Executive posting. The table maps
 each of its limits to the control that enforces it.
 
-With `DISCOVERY_SMOKE_ADMISSION=enforce`, every limit below is checked in the
-database before any request leaves the worker (PR #90, held migration
+With `DISCOVERY_SMOKE_ADMISSION=enforce`, the money, purchase, model-attempt,
+actor, page, read and deadline limits below are checked in the database before
+any request leaves the worker. Slices and discovery rows are bounded by the
+worker's configuration and the request templates, not by a database counter (PR #90, held migration
 `20261015140000_discovery_smoke_admission.sql`; see
 `discovery-smoke-admission.md`). The configuration knobs stay set as a second
 layer. The spec is `discovery-smoke-budget.spec.json`; `tests/infra/smokeBudgetSpec.test.ts`

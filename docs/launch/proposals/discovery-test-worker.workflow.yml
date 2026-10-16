@@ -79,6 +79,11 @@ jobs:
       # ── Providers: test-scoped keys; the Apify account carries its own spending limit ──
       APIFY_API_TOKEN: ${{ secrets.TEST_APIFY_API_TOKEN }}
       FIRECRAWL_API_KEY: ${{ secrets.TEST_FIRECRAWL_API_KEY }}
+      # The ACCOUNT's USD per credit, from its invoice, approved before dispatch.
+      # Unset (empty), webEvidenceCreditRate prices Firecrawl as `unpriced` under
+      # the run's USD cap and every map and scrape is refused before transport.
+      FIRECRAWL_USD_PER_CREDIT: ${{ vars.TEST_FIRECRAWL_USD_PER_CREDIT }}
+      FIRECRAWL_PRICE_TIER: ${{ vars.TEST_FIRECRAWL_PRICE_TIER }}
       ANTHROPIC_API_KEY: ${{ secrets.TEST_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.TEST_OPENAI_API_KEY }}     # gptProvider and the OpenAI strategist require it
     steps:

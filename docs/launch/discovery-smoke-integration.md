@@ -3,6 +3,10 @@
 **Status: BLOCKED.** Nothing here applies a migration, deploys, creates a
 credential or starts a mission. Every new switch is off unless set.
 
+**Next:** `discovery-smoke-readiness.md` covers what remains before a live
+test: the reads plan, the pricing evidence, model routing, #90's decisions,
+and the test-project checklist.
+
 PR #90 (durable smoke admission) merged into `launch/hardening` at
 `b4ffcd20`. Its tree is identical to the head Codex verified,
 `4c094d2f`. This document compares Codex's three smoke branches with that
