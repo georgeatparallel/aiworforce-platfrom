@@ -203,19 +203,26 @@ It's only needed if a session must outlive a GitHub job.
 company, 11 to 50 employees, an open Account Executive posting. The table maps
 each of its limits to the control that enforces it.
 
+With `DISCOVERY_SMOKE_ADMISSION=enforce`, every limit below is checked in the
+database before any request leaves the worker (PR #90, held migration
+`20261015140000_discovery_smoke_admission.sql`; see
+`discovery-smoke-admission.md`). The configuration knobs stay set as a second
+layer. The spec is `discovery-smoke-budget.spec.json`; `tests/infra/smokeBudgetSpec.test.ts`
+fails if it, the held migration's caps and the worker proposal disagree.
+
 | #89 limit | Enforced by | How firm |
 |---|---|---|
-| provider $0.20 | `LEAD_V2_MISSION_PROVIDER_USD_CAP=0.20` | **hard**: checked before every paid call, lineage-wide |
-| 5 provider purchases / 20 credits | `LEAD_V2_MISSION_CREDIT_CAP=5`; the workspace grant (10 credits) under `LEAD_CREDIT_ENFORCEMENT=enforce` | **hard**: one credit per paid call |
+| $0.25 total: provider $0.20, model $0.05 | durable admission: approved template maxima, pending and uncertain included, never refunded; plus `LEAD_V2_MISSION_PROVIDER_USD_CAP=0.20` and `MODEL_SPEND_CEILING_USD=0.05` | **hard** (database `CHECK` ceilings) |
+| 5 provider purchases | durable admission; plus `LEAD_V2_MISSION_CREDIT_CAP=5` under `LEAD_CREDIT_ENFORCEMENT=enforce` | **hard** |
+| 4 model attempts (retries, fallbacks and the strategist included) | durable admission, per physical attempt; plus `MODEL_RUN_MAX_CALLS=2` per slice | **hard** |
+| per-provider caps (job search 2, company details 1, Firecrawl map 1, scrape 1) | durable admission: the authorization's `actor_limits`; any other actor or host is refused | **hard** |
+| 1 discovery page | durable admission: its own counter, independent of polls | **hard** |
+| ≤5 status, dataset and receipt reads | durable admission: each read is a poll with an admitted parent; `PENDING_RUN_MAX_POLLS = 5` in code | **hard** |
+| unknown price | no approved template, so refused before transport | **hard** |
+| 300 s | durable admission: `deadline_at` ≤ queue `created_at` + 300 s, database clock; `LEAD_V2_SMOKE_WALL_CLOCK=enforce` ends the mission at the same deadline across slices and restarts | **hard for paid work**. A vendor run already started continues until its own pinned `timeout` |
 | 2 slices | `LEAD_MAX_AUTO_CONTINUATIONS=1` | **hard**. Never `0`: a value below 1 is ignored and falls back to 10 |
-| 3 discovered companies / rows | `run_budget.max_candidates: 3` in the enqueued mission | **hard** for the discovery pool. One discovery page is not a separate knob |
-| ≤5 adoption polls | `PENDING_RUN_MAX_POLLS = 5` (code) | **hard** |
-| 4 model calls | `MODEL_RUN_MAX_CALLS=2` per slice × 2 slices | **hard** |
-| model $0.05 | `MODEL_SPEND_CEILING_USD=0.05`, period 1 day, in the isolated project | **soft**: checked against *recorded* spend, so the last call can overshoot by its own cost |
-| 300 s | `LEAD_WORKER_MAX_RUNTIME_MS=150000` per slice; session `5` min; job timeout | **soft**: a slice drains past SIGTERM; worst case is about 10 minutes of wall clock |
-| per-provider caps (job search 2, company details 1, Firecrawl map 1, scrape 1) | **nothing in configuration** | **not enforceable** without code. Bounded only by the 5-purchase and $0.20 totals. Omit the keys of providers outside the set |
-| funding providers 0 | the mission requests no funding criterion | by mission shape, not by a gate |
-| unknown price blocks the call | the Firecrawl estimate needs `FIRECRAWL_USD_PER_CREDIT` | **set it from current pricing**, or leave Firecrawl out of the first mission |
+| 3 discovered companies / rows | `run_budget.max_candidates: 3` in the enqueued mission, and the jobs template's `maxItems` | **hard** for the discovery pool |
+| funding providers 0 | the mission requests no funding criterion; no funding actor has a template | **hard** |
 
 ## 4. Activation (each step needs explicit approval, in this order)
 
@@ -227,7 +234,7 @@ each of its limits to the control that enforces it.
 4. Create the GitHub Environment `discovery-test`:
    - variables `TEST_PROJECT_REF` and `TEST_WORKSPACE_ID`;
    - secrets `TEST_SUPABASE_URL`, `TEST_SUPABASE_SERVICE_ROLE_KEY` (the
-     `sb_secret_…` key), `TEST_SUPABASE_ANON_KEY` and the four provider keys.
+     `sb_secret_…` key), `TEST_SUPABASE_ANON_KEY` and the four provider keys (`TEST_APIFY_API_TOKEN`, `TEST_FIRECRAWL_API_KEY`, `TEST_OPENAI_API_KEY`, `TEST_ANTHROPIC_API_KEY`). No Lovable key: the smoke gate refuses that host.
    Test-scoped keys only. Add a required reviewer if the plan allows it.
 5. Move the workflow into `.github/workflows/` through a reviewed PR to the
    **default branch, which is `launch/hardening`**, because GitHub only offers

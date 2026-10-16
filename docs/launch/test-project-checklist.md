@@ -9,8 +9,8 @@
 - [ ] A free project slot exists. If not, pause one abandoned project. Pausing is reversible.
 - [ ] Create the project, empty, with no production data. Record its ref.
 - [ ] Enable `pg_cron` and `pg_net`.
-- [ ] `TEST_PROJECT_REF=<ref> TEST_DB_URL=<url> scripts/test-project/build-test-schema.sh --confirm <ref> --with-held-billing-fix`
-      (49 files; each cron-scheduling migration is detached in the same transaction).
+- [ ] `TEST_PROJECT_REF=<ref> TEST_DB_URL=<url> scripts/test-project/build-test-schema.sh --confirm <ref> --with-held-billing-fix --with-held-admission`
+      (50 files; each cron-scheduling migration is detached in the same transaction).
 - [ ] `select jobname from cron.job` lists only `sweep-stuck-runs` and
       `release-stale-credit-reservations`.
 - [ ] Seed one internal workspace; `credits_grant` it **10** credits.
@@ -20,9 +20,12 @@
   - an Apify account spending limit;
   - Firecrawl excluded unless `FIRECRAWL_USD_PER_CREDIT` is set from current pricing.
 - [ ] Workflow moved into `.github/workflows/` by a CI-only PR to `launch/hardening`.
-- [ ] Codex's budget-enforcement PR is merged, and CI is green on the exact
-      commit to be dispatched.
-- [ ] One mission enqueued (reviewed SQL) with `run_budget {provider_usd: 0.20, max_candidates: 3}`.
+- [ ] The durable admission (PR #90) and the smoke integration PR are merged, and
+      CI is green on the exact commit to be dispatched.
+- [ ] The approved quote catalog and actor limits are reviewed, each price observed
+      within 24 h (`discovery-smoke-admission.md`, policy decision 6).
+- [ ] One mission enqueued (reviewed SQL) with `run_budget {provider_usd: 0.20, max_candidates: 3}`, and
+      `authorize_discovery_smoke` run for its queue row in the same reviewed transaction.
 - [ ] One dispatch, after a separate approval.
 
 ## B. Rollback

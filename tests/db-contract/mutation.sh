@@ -60,14 +60,17 @@ adm_sql="$root/supabase/migrations-held/20261015140000_discovery_smoke_admission
 gate_ts="$root/supabase/functions/_shared/smokeAdmission.ts"
 tools_ts="$root/supabase/functions/_shared/toolRegistry.ts"
 credit_ts="$root/supabase/functions/_shared/creditAuthorization.ts"
+runner_ts="$root/worker/leadMissionRunner.ts"
+clock_ts="$root/supabase/functions/_shared/missionWallClock.ts"
 restore_list=()
-for f in "$adm_sql" "$gate_ts" "$tools_ts" "$credit_ts"; do
+for f in "$adm_sql" "$gate_ts" "$tools_ts" "$credit_ts" "$runner_ts" "$clock_ts"; do
   cp "$f" "$f.mutation-backup"; restore_list+=("$f")
 done
 trap 'cp "$backup" "$real"; for f in "${restore_list[@]}"; do mv -f "$f.mutation-backup" "$f"; done; rm -f "$backup" "$out"' EXIT
 adm_tests="$root/tests/db-contract/smokeAdmission.contract.test.ts"
 gate_tests="$root/tests/db-contract/smokeAdmissionRuntime.contract.test.ts"
 unit_tests="$root/tests/edge-functions/_shared/smokeAdmission.test.ts"
+clock_tests="$root/tests/edge-functions/_shared/missionWallClock.test.ts"
 
 # prove_killed <label> <file> <literal to find> <replacement> <test file> <test name that must FAIL>
 prove_killed() {
@@ -174,3 +177,13 @@ prove_killed "R2 uncertain crawl start refunded (Codex P2)" "$tools_ts" \
 prove_killed "SAF-008 bodyless purchase skips mandatory fields" "$gate_ts" \
   "  if (hasBody || limits.pin_body || mandatory) {" "  if (hasBody || limits.pin_body) {" \
   "$gate_tests" "SAF-008: an absent or empty body never bypasses the quote's mandatory fields"
+# The opt-in mission wall clock (from codex/smoke-execution-guards).
+prove_killed "wall clock: expired mission still reaches the handler" "$runner_ts" \
+  "if (d.enforceMissionWallClock && (expiry === null || now() >= expiry)) {" "if (false) {" \
+  "$clock_tests" "wall clock: a worker restart with a lost checkpoint never resets the persisted queue deadline"
+prove_killed "wall clock: deadline extended past 300 s" "$clock_ts" \
+  "  return at + SMOKE_MISSION_RUNTIME_MS;" "  return at + 10 * SMOKE_MISSION_RUNTIME_MS;" \
+  "$clock_tests" "wall clock: a worker restart with a lost checkpoint never resets the persisted queue deadline"
+prove_killed "wall clock: far-future queue timestamp accepted" "$clock_ts" \
+  "at > now + QUEUE_CLOCK_SKEW_MS) return null;" "false) return null;" \
+  "$clock_tests" "wall clock: unreadable or future queue timestamp 2026-10-14T00:00:30.001Z refuses before the handler"

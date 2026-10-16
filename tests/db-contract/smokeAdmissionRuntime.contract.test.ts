@@ -17,6 +17,9 @@ import { gptStructured } from "../../supabase/functions/_shared/gptProvider.ts";
 import { generateText } from "../../supabase/functions/_shared/aiProvider.ts";
 import { APIFY_START_UNCERTAIN } from "../../supabase/functions/_shared/verifierPurchaseRecovery.ts";
 import { createLeadMissionRunner } from "../../worker/leadMissionRunner.ts";
+import { completeOpenAiCompatible } from "../../supabase/functions/_shared/leadStrategy/adapters/shared.ts";
+import { OPENAI_CHAT_URL } from "../../supabase/functions/_shared/leadStrategy/adapters/openai.ts";
+import { LOVABLE_GATEWAY_URL } from "../../supabase/functions/_shared/leadStrategy/adapters/lovableAi.ts";
 import { mintJwt, REST_URL, sql } from "./lib/harness.ts";
 import { seedSmokeMission, syntheticActorLimits, syntheticQuotes, type SmokeMission } from "./lib/smokeMission.ts";
 
@@ -422,4 +425,46 @@ Deno.test("SAF-008: an absent or empty body never bypasses the quote's mandatory
   assertEquals(ok.status, 201, "the bounded request is still bought");
   assertEquals(v.seen.length, 1);
   assertEquals((await ops(m)).length, 1);
+});
+
+// ── the strategist transport (Codex's codex/smoke-execution-guards gaps) ────
+//
+// Codex characterized two strategist gaps against the request-local collector:
+// an unknown-price model still started, and two concurrent calls both started
+// under a one-attempt cap. The strategist adapter calls the PROCESS fetch at
+// call time (no production caller injects `fetchImpl`), so in the smoke every
+// strategist attempt goes through the durable gate. These pin that.
+const strategist = (model: string, endpoint = OPENAI_CHAT_URL, provider: "openai" | "lovable_ai" = "openai") =>
+  completeOpenAiCompatible(
+    { model, systemPrompt: "synthetic control", userMessage: "return {}", maxCompletionTokens: 500 },
+    { provider, endpoint, headers: { Authorization: "Bearer test" } },
+  );
+const chat = () => json(200, { choices: [{ message: { content: "{}" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+
+Deno.test("strategist: an unpriced model, or the Lovable gateway, is refused before transport", opts, async () => {
+  const m = await fundedMission();
+  const v = fakeVendor(chat);
+  const [unpriced, lovable] = await inMission(m, v, () =>
+    Promise.all([strategist("unpriced-smoke-control"), strategist(GPT.slice("openai:".length), LOVABLE_GATEWAY_URL, "lovable_ai")]));
+  assertEquals(unpriced.ok, false, JSON.stringify(unpriced));
+  assertEquals(lovable.ok, false, JSON.stringify(lovable));
+  assertEquals(v.seen.length, 0, "nothing reaches a vendor");
+  assertEquals((await ops(m)).length, 0, "nothing is admitted");
+});
+
+Deno.test("strategist: concurrent attempts in flight never exceed the mission's four model attempts", opts, async () => {
+  const m = await fundedMission();
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => release = r);
+  const v = fakeVendor(() => held.then(chat));
+  const results = await inMission(m, v, async () => {
+    const calls = Array.from({ length: 6 }, () => strategist(GPT.slice("openai:".length)));
+    // Every admission is decided while all six are still in flight.
+    for (let i = 0; i < 100 && (await ops(m)).length < 4; i++) await new Promise((r) => setTimeout(r, 20));
+    release();
+    return await Promise.all(calls);
+  });
+  assertEquals(v.seen.length, 4, "four physical starts, never more");
+  assertEquals(results.filter((r) => r.ok).length, 4);
+  assertEquals((await ops(m)).map((o) => o.kind), ["model", "model", "model", "model"]);
 });

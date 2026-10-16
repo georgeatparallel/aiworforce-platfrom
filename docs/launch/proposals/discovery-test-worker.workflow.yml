@@ -60,6 +60,12 @@ jobs:
       # Durable admission (supabase/migrations-held/20261015140000_…): every paid
       # request needs a committed admission against the queue row's authorization.
       DISCOVERY_SMOKE_ADMISSION: enforce
+      # One fixed 300 s mission deadline from the queue row's created_at, across
+      # slices and restarts (worker/leadMissionRunner.ts, missionWallClock.ts).
+      LEAD_V2_SMOKE_WALL_CLOCK: enforce
+      # The gate refuses the Lovable AI gateway (no approved template), and the
+      # strategist defaults to it. OpenAI is the strategist the smoke can price.
+      LEAD_STRATEGIST_PROVIDER: openai
       # #89's smoke limits (tests/replay/evaluation/smoke-mission.proposed.json).
       LEAD_V2_MISSION_PROVIDER_USD_CAP: "0.20"   # provider USD, checked before every paid call
       LEAD_V2_MISSION_CREDIT_CAP: "5"            # paid provider calls (1 credit each) = 5 purchases
@@ -73,8 +79,8 @@ jobs:
       # ── Providers: test-scoped keys; the Apify account carries its own spending limit ──
       APIFY_API_TOKEN: ${{ secrets.TEST_APIFY_API_TOKEN }}
       FIRECRAWL_API_KEY: ${{ secrets.TEST_FIRECRAWL_API_KEY }}
-      LOVABLE_API_KEY: ${{ secrets.TEST_LOVABLE_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.TEST_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.TEST_OPENAI_API_KEY }}     # gptProvider and the OpenAI strategist require it
     steps:
       - name: Refuse anything but the confirmed non-production project
         run: |

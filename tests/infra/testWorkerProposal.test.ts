@@ -54,6 +54,9 @@ Deno.test("test worker: spend controls are set, fail-closed, and never from prod
   assertEquals(env.LINEAGE_LEASE_ENFORCED, "true");
   assertEquals(env.MODEL_SPEND_ENFORCEMENT, "enforce");
   assertEquals(env.DISCOVERY_SMOKE_ADMISSION, "enforce", "every paid request is durably admitted");
+  assertEquals(env.LEAD_V2_SMOKE_WALL_CLOCK, "enforce", "one fixed 300 s deadline from the queue row");
+  assertEquals(env.LEAD_STRATEGIST_PROVIDER, "openai", "the gate refuses the Lovable gateway, the strategist's default");
+  assert(!("LOVABLE_API_KEY" in env), "no key for a host the gate refuses");
   assert(Number(env.LEAD_V2_MISSION_PROVIDER_USD_CAP) > 0 && Number(env.LEAD_V2_MISSION_PROVIDER_USD_CAP) <= 0.25);
   assert(Number(env.LEAD_V2_MISSION_CREDIT_CAP) > 0 && Number(env.LEAD_V2_MISSION_CREDIT_CAP) <= 10);
   assert(Number(env.LEAD_WORKER_MAX_RUNTIME_MS) > 0 && Number(env.LEAD_WORKER_MAX_RUNTIME_MS) <= 300000);
