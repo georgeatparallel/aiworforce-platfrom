@@ -11,10 +11,11 @@
 import {
   assert,
   assertEquals,
+  assertRejects,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { mintJwt, REST_URL, sql, uuid } from "./lib/harness.ts";
-import { seedSmokeMission } from "./lib/smokeMission.ts";
+import { authorizeSmoke, seedSmokeMission } from "./lib/smokeMission.ts";
 import {
   createAdmissionFetch,
   missionAdmission,
@@ -137,7 +138,7 @@ const cite = (ev: Ev[], test: (e: Ev) => boolean, phrase: string) => {
 };
 function citations(ev: Ev[]) {
   return {
-    business: cite(ev, (e) => e.evidence_type === "company_description", "sales software for revenue teams at mid-size companies"),
+    business: cite(ev, (e) => e.evidence_type === "company_description", selfDescription),
     location: cite(ev, (e) => /location|headquarter/.test(e.evidence_type ?? ""), "United States"),
     size: cite(ev, (e) => e.evidence_type === "company_size_band", "11-50 employees"),
     hiring: cite(ev, (e) => /job|posting|hiring/.test(e.evidence_type ?? ""), "Account Executive"),
@@ -163,7 +164,7 @@ function groundedResult(company_key: string, ev: Ev[]) {
   const claim = (claim: string, claim_type: string, x: { evidence_id: string; excerpt: string }) =>
     ({ claim, claim_type, evidence_ids: [x.evidence_id], evidence_excerpts: [x] });
   const supporting = [
-    ...(c.business ? [claim("builds sales software for revenue teams", "business_model", c.business)] : []),
+    ...(c.business ? [claim(`sells ${selfDescription}`, "business_model", c.business)] : []),
     ...(c.hiring ? [claim("has an open Account Executive posting", "commercial_signal", c.hiring)] : []),
   ];
   return {
@@ -184,14 +185,26 @@ function batchAnswer(input: { companies?: Array<{ company_key: string; evidence?
 interface Variant {
   /** LEAD_V2_SMOKE_ORCHESTRATION; absent = the customer orchestration. */
   orchestration?: "minimal";
-  /** Add the company-details actor to the rehearsal catalog (NOT in the approved first-smoke profile). */
+  /** The proposed two-actor catalog (job search + company details) instead of the job search alone. */
   companyDetails?: boolean;
+  /** The negative control: a company description that names no buyer ("to business customers"). */
+  weakEvidence?: boolean;
   label: string;
 }
+
+const PROPOSAL = JSON.parse(Deno.readTextFileSync(
+  new URL("../../docs/launch/proposals/smoke-catalog-two-actor.json", import.meta.url)));
+/** NOT A VENDOR PRICE: the proposal's company-details maximum is unobserved (null); offline only. */
+const SYNTHETIC_DETAILS_MAXIMUM = 5000;
+/** What the company's own description says it sells, and to whom (cited verbatim by the stand-in model). */
+const STRONG_SELF_DESCRIPTION = "sales software for revenue teams at mid-size companies";
+const WEAK_SELF_DESCRIPTION = "business software platform to business customers";
+let selfDescription = STRONG_SELF_DESCRIPTION;
 // deno-lint-ignore no-explicit-any
 type Rehearsal = Record<string, any>;
 
 async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void>) {
+  selfDescription = v.weakEvidence ? WEAK_SELF_DESCRIPTION : STRONG_SELF_DESCRIPTION;
   {
     const originalFetch = globalThis.fetch;
     const key = await mintJwt("service_role");
@@ -249,47 +262,16 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
       source: "synthetic offline fixture; not an approved vendor quote",
       liability_bound_ref: "offline rehearsal",
     };
-    const quotes = {
-      jobs: {
-        allowed_kinds: ["provider"],
-        allowed_actors: [JOBS],
-        maximum_microusd: 5000,
-        discovery_page: true,
-        ...evidence,
-        request_limits: {
-          max_request_bytes: 4096,
-          max_fields: { maxItems: 3 },
-          max_array_items: { jobTitles: 1, locations: 1, geoIds: 0 },
-          pin_query: { timeout: "120", memory: "256" },
-        },
-      },
-      model: {
-        allowed_kinds: ["model"],
-        allowed_actors: [LUNA],
-        maximum_microusd: 11400,
-        ...evidence,
-        request_limits: { max_request_bytes: 32768, max_output_tokens: 4000 },
-      },
-      ...(v.companyDetails ? {
-        details: {
-          allowed_kinds: ["provider"],
-          allowed_actors: [DETAILS],
-          maximum_microusd: 5000,
-          ...evidence,
-          request_limits: {
-            max_request_bytes: 4096,
-            max_array_items: { companies: 1 },
-            pin_query: { timeout: "120", memory: "256" },
-          },
-        },
-      } : {}),
-      reads: {
-        allowed_kinds: ["poll"],
-        allowed_actors: v.companyDetails ? [JOBS, DETAILS] : [JOBS],
-        maximum_microusd: 0,
-        ...evidence,
-        request_limits: {},
-      },
+    // THE PROPOSED CATALOG, as written (docs/launch/proposals/smoke-catalog-two-actor.json):
+    // its templates and request bounds, with the evidence fields synthetic and
+    // the ONE unobserved price filled for this offline rehearsal only.
+    const p = PROPOSAL.approved_quotes as Record<string, Record<string, unknown>>;
+    const fill = (t: Record<string, unknown>) => ({ ...t, ...evidence });
+    const quotes: Record<string, unknown> = {
+      jobs: fill(p.jobs),
+      model: fill(p.luna),
+      reads: { ...fill(p.reads), allowed_actors: v.companyDetails ? p.reads.allowed_actors : [JOBS] },
+      ...(v.companyDetails ? { details: { ...fill(p.details), maximum_microusd: SYNTHETIC_DETAILS_MAXIMUM } } : {}),
     };
     const m = await seedSmokeMission({ quotes, actorLimits: { [JOBS]: 1, ...(v.companyDetails ? { [DETAILS]: 1 } : {}) } });
     const user = uuid(), plan = uuid();
@@ -357,7 +339,7 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
         // The company's own words name its buyers and its product, as the
         // business-model rule requires (a plural buyer noun; "business
         // customers" names none and correctly stays unverified).
-        "Example Software builds sales software for revenue teams at mid-size companies.",
+        v.weakEvidence ? `We sell a ${WEAK_SELF_DESCRIPTION}.` : `Example Software builds ${STRONG_SELF_DESCRIPTION}.`,
       employeeCountRange: { start: 11, end: 50 },
       locations: [{
         country: "United States",
@@ -640,7 +622,7 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
       trace.candidates = (dashboard.data ?? []).map((c: Record<string, unknown>) => ({
         company_name: c.company_name, status: c.status, qualification_status: c.qualification_status,
       }));
-      await check({ trace, operations, dashboard, credits, compiledOffline, sentByGate, refused, of });
+      await check({ trace, operations, dashboard, credits, compiledOffline, sentByGate, refused, of, m, runner, queued, client });
     } catch (e) {
       trace.errors.push(String(e));
       throw e;
@@ -684,63 +666,109 @@ const opts = { sanitizeOps: false, sanitizeResources: false };
 const SKIPPED_STAGES = ["research_route_control", "discovery_actor_strategy", "You triage companies", "You compare prospect companies"];
 const stageRan = (r: Rehearsal, prefix: string) => (r.trace.model_stages as string[]).some((s) => s.startsWith(prefix.slice(0, 40)));
 const taskJson = (r: Rehearsal) => JSON.stringify(r.trace.tasks);
+const PLANNER_BOUND = 32768;
+// The full mission's planner request, with no Company Brain configured (the
+// smoke workspace's brain must be measured before a live run; it adds bytes).
+// The smaller unit mission keeps 4 KiB (smokePlannerRequestSize.test.ts).
+const PLANNER_MARGIN = 3072;
+const reconciliation = Deno.readTextFileSync(new URL("../../scripts/test-project/smoke-reconciliation.sql", import.meta.url));
+const unreconciled = (queueId: string) => sql.unsafe(reconciliation.replace(":'queue_id'", `'${queueId}'`));
 
-/** Minimal orchestration: plan + qualification only; the skipped stages never call a model. */
+/** Minimal orchestration: the real planner once, the real evaluators; the skipped stages never call a model. */
 function minimalShape(r: Rehearsal) {
   for (const s of SKIPPED_STAGES) assert(!stageRan(r, s), `${s} ran under the minimal orchestration`);
   assertEquals((r.trace.model_stages as string[]).filter((s) => s === "lead_execution_plan").length, 1, "the real planner, once");
   assert(stageRan(r, "You assess several companies") && stageRan(r, "Decide whether this company satisfies"),
     "qualification uses the real evaluators");
-  assertEquals(r.of("model").length, 3, "plan, batch evaluation, mission evaluation");
-  // No terminal receipt re-reads: every Apify read is one of the run's own.
+  // No terminal receipt re-reads: every Apify read is one of the runs' own.
   const apifyReads = r.trace.requests.filter((q: Rehearsal) => q.method === "GET" && q.url.includes("api.apify.com")).length;
   assertEquals(apifyReads, r.of("poll").length);
+  // The planner fits the template with margin.
+  const plan = r.trace.attempted_requests.find((q: Rehearsal) =>
+    (q.body as Rehearsal)?.response_format?.json_schema?.name === "lead_execution_plan");
+  r.trace.planner_bytes = plan.bytes;
+  assert(plan.bytes <= PLANNER_BOUND - PLANNER_MARGIN, `planner ${plan.bytes} bytes: margin ${PLANNER_BOUND - plan.bytes} < ${PLANNER_MARGIN}`);
 }
 
-/**
- * WHERE THE MISSION STOPS TODAY, and why — each must be lifted by an approved
- * change, never by loosening a rule (docs: the PR #94 rehearsal report):
- *   1. enrichment is a precondition of qualifying, and the job row "can suggest
- *      but not prove" size, country and industry: the company record
- *      (apify:harvestapi~linkedin-company) is required, and the approved
- *      first-smoke catalog does not include it;
- *   2. with it, two runs need 3 + 3 reads against the cap of five;
- *   3. the compiler reads "an open Account Executive posting" as a leadership
- *      POST, a signal the smoke can never answer.
- */
-function blockersRecorded(r: Rehearsal) {
-  const signals = ((r.trace.stages as Rehearsal[])[0].mission.required_signals as Rehearsal[]).map((x) => x.event);
-  assert(signals.includes("post"), `blocker 3 lifted (${signals}): extend the rehearsal to persistence`);
-  assert(taskJson(r).includes('"enrichment_outcome": "provider_error"') || taskJson(r).includes('"enrichment_outcome":"provider_error"'),
-    "held: no company record");
-  assert(taskJson(r).includes("insufficient_evidence"), "held as insufficient evidence, never passed");
-  assertEquals(r.dashboard.error, null);
-  assertEquals(r.dashboard.data?.length, 0, "nothing qualified is persisted without the company record");
-}
+const compiledEvents = (r: Rehearsal) =>
+  ((r.trace.stages as Rehearsal[])[0].mission.required_signals as Rehearsal[]).map((x) => x.event);
 
-Deno.test("offline smoke, minimal orchestration, approved catalog: qualification is reached; held without the company record", opts, () =>
-  rehearse({ orchestration: "minimal", label: "minimal-approved" }, (r) => {
+Deno.test("offline smoke, two actors: one evidence-backed lead is qualified and persisted within every limit", opts, () =>
+  rehearse({ orchestration: "minimal", companyDetails: true, label: "two-actor" }, async (r) => {
     limitsHeld(r);
     minimalShape(r);
-    assertEquals(r.of("provider").length, 1);
-    assertEquals(r.of("provider")[0].report_source, "apify_run(settled).receipt");
-    assertEquals(r.of("poll").length, 3, "status, settled receipt, dataset");
-    assert(r.refused.includes("unknown_quote"), "company details is outside the approved catalog");
-    blockersRecorded(r);
-    assertEquals(r.credits.filter((c: Rehearsal) => c.status === "charged").length, 1);
-    r.trace.verdict = "BLOCKED: company record not approved (1); reads (2); compiled post signal (3)";
+    assertEquals(compiledEvents(r), ["hiring"], "the request asks for one opening, nothing social");
+    // ── MODEL: four attempts, each reserved at the template's maximum ──
+    assertEquals(r.of("model").length, 4, "plan, batch evaluation, mission evaluation, opportunity reasoning");
+    assertEquals(r.of("model").map((o: Rehearsal) => Number(o.committed_microusd)), [11400, 11400, 11400, 11400]);
+    assertEquals((r.trace.model_stages as string[]).slice(1),
+      ["lead_execution_plan", "You assess several companies in one requ", "Decide whether this company satisfies th", "opportunity_reasoning"]);
+    // ── PROVIDERS: two purchases, vendor-capped, one settled and one deferred ──
+    const [jobs, details] = r.of("provider");
+    assertEquals([jobs.actor, details.actor], [JOBS, DETAILS]);
+    assertEquals([jobs.committed_microusd, jobs.reported_microusd, jobs.report_source], ["5000", "2000", "apify_run(settled).receipt"]);
+    assertEquals([details.committed_microusd, details.reported_microusd, details.report_source],
+      [String(SYNTHETIC_DETAILS_MAXIMUM), "4000", "apify_run(status).receipt"], "held at its maximum; the preliminary figure is labelled");
+    const posts = r.trace.requests.filter((q: Rehearsal) => q.method === "POST" && q.url.includes("api.apify.com"));
+    assertEquals(posts.map((q: Rehearsal) => new URL(q.url).searchParams.get("maxTotalChargeUsd")), ["0.005", "0.005"]);
+    assertEquals(posts[1].body, { companies: ["https://www.linkedin.com/company/offline-software"] }, "one company, bounded");
+    // ── READS: exactly five, 3 + 2 ──
+    const reads = r.trace.requests.filter((q: Rehearsal) => q.method === "GET" && q.url.includes("api.apify.com"))
+      .map((q: Rehearsal) => new URL(q.url).pathname.replace(/^\/v2\//, "") + (new URL(q.url).searchParams.has("waitForFinish") ? " (long poll)" : ""));
+    assertEquals(reads, [
+      "actor-runs/run-jobs (long poll)", "actor-runs/run-jobs", "datasets/dataset-jobs/items",
+      "actor-runs/run-details (long poll)", "datasets/dataset-details/items",
+    ]);
+    // ── MONEY ──
+    const sum = (k: string) => r.of(k).reduce((a: number, o: Rehearsal) => a + Number(o.committed_microusd), 0);
+    assertEquals([sum("model"), sum("provider"), sum("model") + sum("provider")], [45600, 10000, 55600]);
+    // ── THE LEAD ──
+    assertEquals(r.dashboard.error, null);
+    assertEquals(r.dashboard.data?.length, 1, "one lead persisted");
+    const raw = r.dashboard.data[0].raw as Rehearsal;
+    assertEquals(raw.qualification_basis, "p5_canonical_eligibility");
+    assertEquals(raw.canonical_decision.qualified, true);
+    assertEquals(raw.canonical_decision.hard_checks, { hiring: "pass", industry: "pass", geography: "pass", company_size: "pass" });
+    assertEquals(raw.company_resolution_status, "verified");
+    assertEquals(raw.job_evidence.url, "https://www.linkedin.com/jobs/view/offline-ae");
+    assertEquals(r.credits.filter((c: Rehearsal) => c.status === "charged").length, 2, "one credit per purchase, none refunded");
+    // ── THE DEFERRED RECEIPT IS LIABILITY UNTIL A PERSON CLOSES IT ──
+    assertEquals((await unreconciled(r.m.queueId)).map((o) => o.actor), [DETAILS]);
+    const next = await seedSmokeMission({ authorize: false });
+    await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+    // ── RECOVERY CONTROLS (Codex's harness): no restart renews the mission; a stop is final ──
+    const expired = await r.runner.run({ ...r.queued, enqueuedAt: new Date(Date.now() - 300_001).toISOString() },
+      { executionBudgetMs: 150000, signal: new AbortController().signal });
+    assertEquals(expired.error, "mission_deadline_expired");
+    const before = r.trace.requests.length;
+    await sql`select public.stop_discovery_smoke(${r.m.queueId}, 'offline operator stop')`;
+    const refused = await missionAdmission.run({ queueId: r.m.queueId, workerId: r.m.workerId, taskId: r.m.taskId, generation: r.m.generation },
+      () => globalThis.fetch("https://api.openai.com/v1/chat/completions", { method: "POST",
+        body: JSON.stringify({ model: "gpt-5.6-luna", messages: [{ role: "user", content: "post-stop" }], max_completion_tokens: 16 }) }));
+    assertEquals(refused.status, 409);
+    await refused.body?.cancel();
+    assertEquals(r.trace.requests.length, before, "nothing is sent after the stop");
+    r.trace.verdict = "PASS: 1 qualified, 1 persisted";
   }));
 
-Deno.test("offline smoke, minimal orchestration, + company details: the second run is refused its start on reads", opts, () =>
-  rehearse({ orchestration: "minimal", companyDetails: true, label: "minimal-details" }, (r) => {
+Deno.test("offline smoke, negative control: a description naming no buyer is not qualified, whatever the evaluator says", opts, () =>
+  rehearse({ orchestration: "minimal", companyDetails: true, weakEvidence: true, label: "weak-evidence" }, (r) => {
     limitsHeld(r);
     minimalShape(r);
-    assertEquals(r.of("provider").length, 1, "the company-details start is refused before admission");
-    assertEquals(r.of("poll").length, 3);
-    assert(r.trace.admissions.some((a: Rehearsal) => a.data?.decision === "read_plan" && a.data?.detail === "reads_exhausted"),
-      JSON.stringify(r.refused));
-    blockersRecorded(r);
-    r.trace.verdict = "BLOCKED: 3 + 3 reads against five (2)";
+    assert(taskJson(r).includes("does not state business customer"), "the business-model rule refuses the quote");
+    assertEquals(r.dashboard.data?.length, 0, "nothing persisted");
+  }));
+
+Deno.test("offline smoke, approved one-actor catalog: held without the company record, never passed", opts, () =>
+  rehearse({ orchestration: "minimal", label: "one-actor" }, (r) => {
+    limitsHeld(r);
+    minimalShape(r);
+    assertEquals(r.of("model").length, 3, "plan, batch evaluation, mission evaluation");
+    assertEquals(r.of("provider").length, 1);
+    assertEquals(r.of("poll").length, 3, "status, settled receipt, dataset");
+    assert(r.refused.includes("unknown_quote"), "company details is outside the one-actor catalog");
+    assert(/"enrichment_outcome": ?"provider_error"/.test(taskJson(r)), "held: no company record");
+    assertEquals(r.dashboard.data?.length, 0);
   }));
 
 Deno.test("offline smoke, customer orchestration: the stages the smoke skips still run outside it", opts, () =>

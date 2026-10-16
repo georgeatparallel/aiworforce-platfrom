@@ -192,8 +192,24 @@ export interface GptPlanExecutionInput {
 function systemPromptFor(
   brain: CompanyBrainBriefing | null, results?: DiscoveryResultsSummary | null,
   actorKeys?: readonly string[] | null, compact = false,
+  restatedActors?: ReadonlyMap<string, Record<string, unknown>> | null,
 ): string {
-  return [buildAgentoryBriefing({ brain, results, actorKeys, ...(compact ? { compact } : {}) }), "", STAGE_RULES].join("\n");
+  return [buildAgentoryBriefing({
+    brain, results, actorKeys, ...(compact ? { compact, restatedActors: restatedActors ?? null } : {}),
+  }), "", STAGE_RULES].join("\n");
+}
+
+/** The first entry the payload gives each actor (what the playbook need not repeat). */
+export function firstActorEntries(payload: Record<string, unknown>): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>();
+  const caps = (payload.authorised_capabilities ?? []) as Array<{ actors?: Array<Record<string, unknown>> }>;
+  for (const c of caps) {
+    for (const a of c.actors ?? []) {
+      const k = String(a.actor_key ?? "");
+      if (k && !out.has(k) && !("same_as" in a)) out.set(k, a);
+    }
+  }
+  return out;
 }
 
 /**
@@ -208,11 +224,29 @@ export function smokePlannerPayload(payload: Record<string, unknown>, approved: 
     return !!card && approved.includes(apifyGateActor(card.actor_id));
   };
   const caps = (payload.authorised_capabilities ?? []) as Array<Record<string, unknown> & { actors?: Array<{ actor_key?: string }> }>;
+  // SAID ONCE. An actor offered under a second capability keeps only the
+  // fields that differ there; the rest point at its first description.
+  const first = new Map<string, { capability: string; entry: Record<string, unknown> }>();
+  const once = (capability: string, a: Record<string, unknown>) => {
+    const key = String(a.actor_key ?? "");
+    const prior = first.get(key);
+    if (!prior) {
+      first.set(key, { capability, entry: a });
+      return a;
+    }
+    const differs = Object.entries(a).filter(([f, v]) =>
+      f !== "actor_key" && JSON.stringify(v) !== JSON.stringify(prior.entry[f]));
+    return { actor_key: key, same_as: `the ${key} entry under ${prior.capability}`, ...Object.fromEntries(differs) };
+  };
   return {
     ...payload,
     authorised_capabilities: caps
       .map((c) => ({ ...c, actors: (c.actors ?? []).filter((a) => ok(String(a.actor_key ?? ""))) }))
-      .filter((c) => c.actors.length > 0),
+      .filter((c) => c.actors.length > 0)
+      .map((c) => ({
+        ...c,
+        actors: c.actors.map((a) => once(String((c as Record<string, unknown>).capability ?? ""), a as Record<string, unknown>)),
+      })),
   };
 }
 
@@ -338,7 +372,8 @@ export function makeGptExecutionPlanner(
     const r: GptResult<GptExecutionProposal> = await gptStructured<GptExecutionProposal>({
       purpose: route.stage,
       system: systemPromptFor(ctx.brain ?? null, i.results ?? null,
-          ctx.playbookSubset || smoke ? authorisedActorKeys(payload) : null, smoke) +
+          ctx.playbookSubset || smoke ? authorisedActorKeys(payload) : null, smoke,
+          smoke ? firstActorEntries(payload) : null) +
         feedbackSection(feedback),
       user: smoke ? JSON.stringify(payload) : JSON.stringify(payload, null, 2),
       schema: RESPONSE_SCHEMA as unknown as { name: string; schema: Record<string, unknown> },

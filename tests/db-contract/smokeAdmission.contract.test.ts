@@ -542,3 +542,21 @@ Deno.test("reconciliation: a settled receipt needs no reconciliation", opts, asy
   const next = await seedSmokeMission({ authorize: false });
   assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }));
 });
+
+Deno.test("proposal: the two-actor catalog cannot be authorized as written (no invented price; live stays blocked)", opts, async () => {
+  const proposal = JSON.parse(Deno.readTextFileSync(
+    new URL("../../docs/launch/proposals/smoke-catalog-two-actor.json", import.meta.url)));
+  assertEquals(proposal.live_execution, "blocked");
+  assertEquals(proposal.approved_quotes.details.maximum_microusd, null, "no figure is invented for the company-details price");
+  const authorize = (quotes: unknown) => async () => {
+    const m = await seedSmokeMission({ authorize: false });
+    await authorizeSmoke(m.queueId, { quotes: quotes as Record<string, unknown>, actorLimits: proposal.actor_limits });
+  };
+  // As written: placeholders are not observations.
+  await assertRejects(authorize(proposal.approved_quotes), Error);
+  // Even with every OTHER template freshly observed, the unpriced one refuses it.
+  const now = new Date(Date.now() - 60_000).toISOString();
+  const observed = Object.fromEntries(Object.entries(proposal.approved_quotes as Record<string, Record<string, unknown>>)
+    .map(([k, t]) => [k, k === "details" ? t : { ...t, source: "observed", observed_at: now }]));
+  await assertRejects(authorize(observed), Error, "template details is malformed");
+});
