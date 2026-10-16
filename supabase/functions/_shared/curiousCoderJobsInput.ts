@@ -104,3 +104,36 @@ export function describeJobsNativeInput(native: CuriousCoderJobsNativeInput, act
     persistence_mode: persistenceMode,
   };
 }
+
+// ── THE FIRST SMOKE'S SHAPE FOR THIS ACTOR ──────────────────────────────────
+//
+// Read from the Actor's build OpenAPI on 2026-10-16 (version 1.7, build
+// cyeFbgtjjz0fqI55Q): there is NO `count` input — the run-level cap this
+// adapter sends is not in the schema — and `limitPerSource` ("maximum number
+// of jobs to scrape from each input URL … leave empty … up to ~1000") is the
+// only result limit. It is PER URL, so the smoke sends exactly one URL.
+// `scrapeCompany` is chosen explicitly: true, because the rows then carry the
+// employer's industries, headcount and headquarters (apifyJobsNormalizer) and
+// the Actor's pricing has no event for it (only the result and the start).
+// Smoke only; the customer path above is unchanged.
+export const SMOKE_JOBS_LIMIT_PER_SOURCE = 3;
+export const SMOKE_JOBS_SCRAPE_COMPANY = true;
+
+export interface CuriousCoderJobsSmokeInput {
+  urls: [string];
+  limitPerSource: number;
+  splitByLocation: false;
+  scrapeCompany: boolean;
+}
+
+export function buildCuriousCoderSmokeJobsInput(
+  args: Pick<CuriousCoderJobsBuildArgs, "urls" | "keywords" | "location">,
+): CuriousCoderJobsSmokeInput {
+  const first = (args.urls ?? []).find((u) => typeof u === "string" && u.trim().length > 0);
+  return {
+    urls: [first ?? buildLinkedInJobsSearchUrl(args.keywords ?? null, args.location ?? null)],
+    limitPerSource: SMOKE_JOBS_LIMIT_PER_SOURCE,
+    splitByLocation: false,
+    scrapeCompany: SMOKE_JOBS_SCRAPE_COMPANY,
+  };
+}

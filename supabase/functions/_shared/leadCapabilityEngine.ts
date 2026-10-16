@@ -49,10 +49,11 @@ import {
   compileHarvestCompanyDetailsInput, compileHarvestCompanyEmployeesInput,
   compileHarvestCompanySearchInput,
   compileHarvestJobDiscoveryInput, compileHarvestJobSearchInput, compileHarvestProfileSearchInput,
-  JOB_DISCOVERY_LIMITS, boundJobDiscoveryTitles,
+  JOB_DISCOVERY_LIMITS, boundJobDiscoveryTitles, boundJobDiscoveryForSmoke,
   compileDatahyenaFundingInput, compileMemo23YcInput, fanOutSolidcodeTeamSizes,
   type CompiledActorCall, type CompileResult,
 } from "./hiringActorInputs.ts";
+import { smokeAdmissionActive } from "./smokeAdmissionRefusal.ts";
 import { icpDiscoveryConstraints } from "./icpDiscoveryConstraints.ts";
 import { actorAnsweredHiring } from "./actorEvidenceCapability.ts";
 import {
@@ -6135,10 +6136,15 @@ export async function runCapabilityPlan(
             // posting proves only the hiring the mission named.
             const requestedHiring = requestedHiringFromSignals(
               (opts.mission?.required_signals ?? []).filter(isHiringSignal));
-            const compiled = compileHarvestJobDiscoveryInput({
+            const discoveryInput = {
               maxItems: Math.min(maxCandidates, JOB_DISCOVERY_LIMITS.maxItems),
               ...boundedJobDiscoveryInput(sel.input),
-            } as never);
+            };
+            // THE SMOKE asks for exactly one title × one location × ≤ 3 rows,
+            // the request its durable gate admits. Unchanged otherwise.
+            const compiled = compileHarvestJobDiscoveryInput((smokeAdmissionActive()
+              ? boundJobDiscoveryForSmoke(discoveryInput, maxCandidates)
+              : discoveryInput) as never);
             const dropped = new Map<string, number>();
             const seenJobs = new Set<string>();
             let jobsKept = 0;

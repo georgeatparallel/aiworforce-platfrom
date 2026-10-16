@@ -42,8 +42,9 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
-  ADMISSION_GATE_MARK, ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, isAdmissionRefusal, SMOKE_ADMISSION_ENV,
-  smokeAdmissionEnforced,
+  ADMISSION_GATE_MARK, ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, APIFY_SETTLED_SOURCE, apifyRunSettled,
+  isAdmissionRefusal, planSmokeStart, SMOKE_ADMISSION_ENV, SMOKE_READ_STATE_MARK, smokeAdmissionEnforced,
+  type SmokeReadState,
 } from "./smokeAdmissionRefusal.ts";
 
 export { ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, isAdmissionRefusal, SMOKE_ADMISSION_ENV, smokeAdmissionEnforced };
@@ -166,6 +167,12 @@ export interface RequestLimits {
   max_fields?: Record<string, number>;
   /** Top-level body fields whose value (or each array element) must be one of these, compared as JSON. */
   allowed_values?: Record<string, unknown[]>;
+  /**
+   * Top-level body arrays that may hold at most this many entries; absent is
+   * allowed, anything but an array is refused. For inputs a vendor bills per
+   * entry: search URLs, job titles, locations (results = limit × entries).
+   */
+  max_array_items?: Record<string, number>;
 }
 
 export interface Authorization {
@@ -176,6 +183,8 @@ export interface Authorization {
   deadline_at: string;
   approved_quotes: Record<string, QuoteTemplate>;
   actor_limits: Record<string, number>;
+  /** The read allowance (status, dataset, resume and receipt GETs together). */
+  provider_polls?: number;
 }
 
 /** The ONE template for this (kind, actor). None or several: refused. */
@@ -192,6 +201,8 @@ export function templateFor(
 }
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** Apify's run-level charge ceiling query parameter. */
+export const APIFY_CHARGE_CAP = "maxTotalChargeUsd";
 
 /**
  * Apply a template's pins and check the FINAL request against its limits.
@@ -199,10 +210,20 @@ const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringif
  */
 export function boundRequest(
   req: PhysicalRequest, c: Exclude<Classified, { kind: "free" | "forbidden" }>, limits: RequestLimits | undefined,
+  maximumMicrousd?: number,
 ): { ok: true; request: PhysicalRequest } | { ok: false; reason: string } {
   if (!limits || typeof limits !== "object") return { ok: false, reason: "no_request_limits" };
   const url = new URL(req.url.href);
   for (const [k, v] of Object.entries(limits.pin_query ?? {})) url.searchParams.set(k, String(v));
+  // THE VENDOR'S OWN MONEY STOP. Apify's `maxTotalChargeUsd` caps a run's charge
+  // across every pricing model (act-runs-post). Every Apify start carries one
+  // no greater than the authorized maximum: a lower pinned or caller value is
+  // kept; anything higher, absent or unreadable becomes the maximum itself.
+  if (c.kind === "provider" && c.vendor === "apify" && typeof maximumMicrousd === "number") {
+    const quote = maximumMicrousd / 1e6;
+    const asked = Number(url.searchParams.get(APIFY_CHARGE_CAP) ?? NaN);
+    url.searchParams.set(APIFY_CHARGE_CAP, String(Number.isFinite(asked) && asked >= 0 && asked < quote ? asked : quote));
+  }
   let body = req.body;
   if (body === undefined) return { ok: false, reason: "unreadable_body" };
   const hasBody = body !== null && body !== "";
@@ -210,7 +231,7 @@ export function boundRequest(
   // without a body (as `{}`), so an absent or empty body is refused like `{}`.
   // Polls never carry the purchase's fields and are bounded by their parent.
   const mandatory = c.kind !== "poll" && Object.keys(limits.max_fields ?? {}).length > 0;
-  if (hasBody || limits.pin_body || mandatory) {
+  if (hasBody || limits.pin_body || mandatory || limits.max_array_items) {
     const parsed = parseBody(hasBody ? body : "{}");
     if (!parsed) return { ok: false, reason: "body_not_json_object" };
     const pinned = { ...parsed, ...(limits.pin_body ?? {}) };
@@ -218,6 +239,10 @@ export function boundRequest(
     for (const [k, max] of Object.entries(limits.max_fields ?? {})) {
       const v = pinned[k];
       if (typeof v !== "number" || !Number.isFinite(v) || v > max) return { ok: false, reason: `field_unbounded:${k}` };
+    }
+    for (const [k, max] of Object.entries(limits.max_array_items ?? {})) {
+      if (!(k in pinned)) continue;
+      if (!Array.isArray(pinned[k]) || (pinned[k] as unknown[]).length > max) return { ok: false, reason: `array_unbounded:${k}` };
     }
     for (const [k, allowed] of Object.entries(limits.allowed_values ?? {})) {
       if (!(k in pinned)) continue;
@@ -396,7 +421,7 @@ export async function recordReceipt(db: AdmissionDb, r: {
 export async function loadAuthorization(db: AdmissionDb, queueId: string): Promise<Authorization | null | "unavailable"> {
   try {
     const { data, error } = await withTimeout(db.from("discovery_smoke_authorizations")
-      .select("id, queue_id, workspace_id, status, deadline_at, approved_quotes, actor_limits")
+      .select("id, queue_id, workspace_id, status, deadline_at, approved_quotes, actor_limits, provider_polls")
       .eq("queue_id", queueId).maybeSingle(), ADMISSION_RPC_TIMEOUT_MS);
     if (error) return "unavailable";
     return (data as Authorization | null) ?? null;
@@ -463,6 +488,8 @@ export interface MissionAdmissionContext {
   authorization?: Authorization | null;
   /** Set when the database said no more polls / stopped: refused locally from then on. */
   closedReason?: string | null;
+  /** The slice's remaining time (the worker's deadline, wall clock included), for the smoke's read plan. */
+  remainingMs?: () => number;
 }
 
 export const missionAdmission = new AsyncLocalStorage<MissionAdmissionContext>();
@@ -535,6 +562,18 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
   const newKey = d.newKey ?? (() => crypto.randomUUID());
   const ownApi = d.ownApi ? new URL(d.ownApi) : null;
 
+  /** Reads left (database) and time left (slice and authorization); null where unknown. */
+  const readState = async (ctx: MissionAdmissionContext, auth: Authorization): Promise<SmokeReadState> => {
+    const untilDeadline = Date.parse(auth.deadline_at) - now();
+    const slice = ctx.remainingMs?.();
+    const remainingMs = Number.isFinite(untilDeadline)
+      ? Math.max(0, Math.min(untilDeadline, typeof slice === "number" && Number.isFinite(slice) ? slice : Infinity))
+      : null;
+    const used = await pollsUsed(d.db, auth.id);
+    const cap = auth.provider_polls;
+    return { readsLeft: used === null || typeof cap !== "number" ? null : Math.max(0, cap - used), remainingMs };
+  };
+
   const gate = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     let req: PhysicalRequest;
     try {
@@ -593,7 +632,7 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
     }
     const tpl = templateFor(auth, c.kind, actor!);
     if (!tpl.ok) return refuse(tpl.reason, actor);
-    const bounded = boundRequest(req, c, tpl.template.request_limits);
+    const bounded = boundRequest(req, c, tpl.template.request_limits, tpl.template.maximum_microusd);
     if (!bounded.ok) return refuse("request_limits", bounded.reason);
     const final = bounded.request;
     const hash = await payloadHash(final);
@@ -605,6 +644,12 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
     if (ctx.signal?.aborted) return refuse("revoked");
     if (ctx.closedReason) return refuse(ctx.closedReason, "closed");
     if (!ctx.taskId || typeof ctx.generation !== "number") return refuse("not_bound");
+    // THE READ PLAN: an Apify run whose lifecycle cannot be read and settled is
+    // not bought. Here, after `prior`, so a refused replay stays uncertain.
+    if (c.kind === "provider" && c.vendor === "apify") {
+      const plan = planSmokeStart(await readState(ctx, auth));
+      if (!plan.ok) return refuse("read_plan", plan.reason);
+    }
 
     const decision = await admitOperation(d.db, {
       queueId: ctx.queueId, workerId: ctx.workerId, taskId: ctx.taskId, generation: ctx.generation,
@@ -637,12 +682,44 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
       return refusal("redirect_refused", res.status, c.kind === "provider");
     }
     log("[smoke-admission] sent", { kind: c.kind, actor, key: admitted.operation_key, committed_microusd: admitted.committed_microusd, status: res.status });
-    await observe(d.db, ctx.queueId, c, res, admitted, parent, log);
+    await observe(d.db, ctx.queueId, c, res, admitted, parent, log, now);
     return res;
   };
   // Lets the transports tell the smoke is active (smokeAdmissionActive).
   Object.defineProperty(gate, ADMISSION_GATE_MARK, { value: true });
+  // The read plan's inputs (smokeReadState): reads left from the database, time
+  // left from the slice and the authorization. Unknown is null, and the plan
+  // spends nothing on an unknown. Reads only; it admits nothing.
+  Object.defineProperty(gate, SMOKE_READ_STATE_MARK, {
+    value: async (): Promise<SmokeReadState> => {
+      const ctx = missionAdmission.getStore();
+      if (!ctx) return { readsLeft: null, remainingMs: null };
+      if (!ctx.authorization) {
+        const loaded = await loadAuthorization(d.db, ctx.queueId);
+        if (loaded === "unavailable" || !loaded) return { readsLeft: null, remainingMs: null };
+        ctx.authorization = loaded;
+      }
+      return await readState(ctx, ctx.authorization);
+    },
+  });
   return gate;
+}
+
+/**
+ * Reads (polls) this authorization has admitted, or null when that could not
+ * be read. A supabase-js filter chain is itself awaitable (rows); a client
+ * whose chain is not leaves the count unknown, which spends no read.
+ */
+async function pollsUsed(db: AdmissionDb, authorizationId: string): Promise<number | null> {
+  try {
+    const q = db.from("discovery_smoke_operations").select("operation_key")
+      .eq("authorization_id", authorizationId).eq("kind", "poll") as unknown as Partial<PromiseLike<{ data: unknown; error: unknown }>>;
+    if (typeof q.then !== "function") return null;
+    const { data, error } = await withTimeout(q as PromiseLike<{ data: unknown; error: unknown }>, ADMISSION_RPC_TIMEOUT_MS);
+    return error || !Array.isArray(data) ? null : data.length;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -656,6 +733,7 @@ async function observe(
   admitted: { operation_key: string; reservation_token: string },
   parent: { operation_key: string; reservation_token: string } | null,
   log: (m: string, meta?: unknown) => void,
+  now: () => number = Date.now,
 ): Promise<void> {
   try {
     if (c.kind === "provider" && c.captures && res.ok) {
@@ -678,9 +756,12 @@ async function observe(
       const j = await res.clone().json().catch(() => null) as { data?: Record<string, unknown> } | null;
       const charge = apifyCharge(j?.data ?? null);
       if (charge !== null) {
+        // SETTLED or not, recorded durably: the reconciliation lists every
+        // Apify purchase whose figure is not `APIFY_SETTLED_SOURCE`.
         await recordReceipt(db, {
           queueId, key: parent.operation_key, token: parent.reservation_token,
-          reportedMicrousd: charge, source: "apify_run(status).receipt",
+          reportedMicrousd: charge,
+          source: apifyRunSettled(j?.data ?? null, now()) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",
         });
       }
     }

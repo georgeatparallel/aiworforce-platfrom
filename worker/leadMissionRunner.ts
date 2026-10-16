@@ -86,7 +86,8 @@ export function createLeadMissionRunner(d: LeadMissionRunnerDeps): LeadMissionRu
       // Task and generation are filled in when the handler binds; until then
       // the gate admits nothing.
       const admission: MissionAdmissionContext | null = d.admission
-        ? { queueId: mission.queueId, workerId: d.admission.workerId, taskId: null, generation: null, signal: ctl.signal }
+        ? { queueId: mission.queueId, workerId: d.admission.workerId, taskId: null, generation: null, signal: ctl.signal,
+          remainingMs: () => deadline.remainingMs() }
         : null;
       const call = (fn: () => Promise<Response>) => admission ? missionAdmission.run(admission, fn) : fn();
       let res: Response;
