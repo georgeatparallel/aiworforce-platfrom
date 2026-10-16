@@ -78,12 +78,10 @@ jobs:
       LEAD_WORKER_MAX_RUNTIME_MS: "150000"       # per slice; 2 slices fit in #89's 300 s
       # ── Providers: test-scoped keys; the Apify account carries its own spending limit ──
       APIFY_API_TOKEN: ${{ secrets.TEST_APIFY_API_TOKEN }}
-      FIRECRAWL_API_KEY: ${{ secrets.TEST_FIRECRAWL_API_KEY }}
-      # The ACCOUNT's USD per credit, from its invoice, approved before dispatch.
-      # Unset (empty), webEvidenceCreditRate prices Firecrawl as `unpriced` under
-      # the run's USD cap and every map and scrape is refused before transport.
-      FIRECRAWL_USD_PER_CREDIT: ${{ vars.TEST_FIRECRAWL_USD_PER_CREDIT }}
-      FIRECRAWL_PRICE_TIER: ${{ vars.TEST_FIRECRAWL_PRICE_TIER }}
+      # NO FIRECRAWL in the first smoke: its variable credits (PDF pages, formats)
+      # are not receipted, so its maximum cannot be bounded. No key, no rate; the
+      # approved catalog has no Firecrawl template either. To add it later, map
+      # TEST_FIRECRAWL_API_KEY with FIRECRAWL_USD_PER_CREDIT from the invoice.
       ANTHROPIC_API_KEY: ${{ secrets.TEST_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.TEST_OPENAI_API_KEY }}     # gptProvider and the OpenAI strategist require it
     steps:

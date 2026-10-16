@@ -60,18 +60,27 @@ Deno.test("smoke spec: the inactive worker proposal sets exactly the candidate e
   assert(/secrets\.TEST_OPENAI_API_KEY/.test(env.OPENAI_API_KEY ?? ""), "gptProvider needs a TEST_ OpenAI key");
 });
 
-Deno.test("smoke spec: Firecrawl travels with an approved account rate, never a literal or a guess", async () => {
+Deno.test("smoke spec: the first smoke omits Firecrawl; an unset rate would still refuse it", async () => {
   const env = proposal.jobs.worker.env;
-  assert(/secrets\.TEST_FIRECRAWL_API_KEY/.test(env.FIRECRAWL_API_KEY ?? ""));
-  assertEquals(env.FIRECRAWL_USD_PER_CREDIT, "${{ vars.TEST_FIRECRAWL_USD_PER_CREDIT }}", "the rate is a reviewed Environment value");
-  assertEquals(env.FIRECRAWL_PRICE_TIER, "${{ vars.TEST_FIRECRAWL_PRICE_TIER }}", "with its provenance");
-  // An unset Environment variable expands to "": that must stay unpriced, so
-  // a capped run refuses Firecrawl rather than buying it at an assumed rate.
+  for (const k of ["FIRECRAWL_API_KEY", "FIRECRAWL_USD_PER_CREDIT", "FIRECRAWL_PRICE_TIER"]) assert(!(k in env), `${k} is not mapped`);
+  const p = spec.first_smoke_profile;
+  assert(!Object.keys(p.actor_limits).some((a) => a.startsWith("firecrawl:")), "no Firecrawl allowance");
+  assert(p.omitted.includes("firecrawl:scrape") && p.omitted.includes("firecrawl:map"));
+  assertEquals(spec.activation_gate.firecrawl_included, false);
+  // Defence in depth: were a key ever mapped without a rate, a capped run refuses.
   const { webEvidenceCreditRate } = await import("../../supabase/functions/_shared/webEvidenceSpec.ts");
   for (const unset of ["", undefined, "0", "-1", "abc"]) {
     assertEquals(webEvidenceCreditRate(() => unset, { usd_capped: true }), { usd_per_credit: null, basis: "unpriced" }, String(unset));
   }
-  assertEquals(spec.activation_gate.firecrawl_account_rate_approved, false);
+});
+
+Deno.test("smoke spec: the first smoke buys one job search of one title, one location, three rows", () => {
+  const p = spec.first_smoke_profile;
+  assertEquals(p.actor_limits, { "apify:harvestapi~linkedin-job-search": 1 });
+  assertEquals(p.job_search_request, { jobTitles: 1, locations: 1, geoIds: 0, maxItems: 3 });
+  assertEquals(p.job_search_request.maxItems, spec.limits.discovery_rows);
+  assertEquals(p.reads.total, spec.limits.provider_polls);
+  assertEquals(p.models.approved, ["openai:gpt-5.6-luna"]);
 });
 
 Deno.test("smoke spec: activation stays blocked until the target, prices and a separate approval exist", () => {
@@ -82,7 +91,7 @@ Deno.test("smoke spec: activation stays blocked until the target, prices and a s
   assert(g.separate_execution_approval_required);
   assert(g.worker_proposal_remains_inactive);
   for (const k of ["held_migration_applied_anywhere", "isolated_test_target_provisioned", "all_required_prices_verified",
-    "approved_quote_catalog_reviewed", "live_receipts_and_credits_reconciled", "firecrawl_account_rate_approved"] as const) {
+    "approved_quote_catalog_reviewed", "live_receipts_and_credits_reconciled", "firecrawl_included"] as const) {
     assertEquals(g[k], false, k);
   }
   assert(spec.enforcement.actual_vendor_charge_maximum.startsWith("BLOCKED"));
