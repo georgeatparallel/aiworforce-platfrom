@@ -63,8 +63,9 @@ credit_ts="$root/supabase/functions/_shared/creditAuthorization.ts"
 runner_ts="$root/worker/leadMissionRunner.ts"
 clock_ts="$root/supabase/functions/_shared/missionWallClock.ts"
 plan_ts="$root/supabase/functions/_shared/smokeAdmissionRefusal.ts"
+planner_ts="$root/supabase/functions/_shared/gptExecutionPlanner.ts"
 restore_list=()
-for f in "$adm_sql" "$gate_ts" "$tools_ts" "$credit_ts" "$runner_ts" "$clock_ts" "$plan_ts"; do
+for f in "$adm_sql" "$gate_ts" "$tools_ts" "$credit_ts" "$runner_ts" "$clock_ts" "$plan_ts" "$planner_ts"; do
   cp "$f" "$f.mutation-backup"; restore_list+=("$f")
 done
 trap 'cp "$backup" "$real"; for f in "${restore_list[@]}"; do mv -f "$f.mutation-backup" "$f"; done; rm -f "$backup" "$out"' EXIT
@@ -72,6 +73,7 @@ adm_tests="$root/tests/db-contract/smokeAdmission.contract.test.ts"
 gate_tests="$root/tests/db-contract/smokeAdmissionRuntime.contract.test.ts"
 unit_tests="$root/tests/edge-functions/_shared/smokeAdmission.test.ts"
 clock_tests="$root/tests/edge-functions/_shared/missionWallClock.test.ts"
+planner_tests="$root/tests/edge-functions/_shared/smokePlannerRequestSize.test.ts"
 
 # prove_killed <label> <file> <literal to find> <replacement> <test file> <test name that must FAIL>
 prove_killed() {
@@ -161,7 +163,7 @@ prove_killed "receipt read skipped" "$tools_ts" \
   $'      receipt = "unsettled";\n      if (plan.ok) {' $'      receipt = "unsettled";\n      if (plan.ok && plan.waitMs < 0) {' \
   "$gate_tests" "read lifecycle: a run finishing in its first long poll uses exactly three reads, and its receipt is settled"
 prove_killed "settled receipt not labelled" "$gate_ts" \
-  'source: apifyRunSettled(j?.data ?? null, now()) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",' 'source: "apify_run(status).receipt",' \
+  'source: apifyRunSettled(j?.data ?? null, sentAt) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",' 'source: "apify_run(status).receipt",' \
   "$gate_tests" "read lifecycle: a run finishing in its first long poll uses exactly three reads, and its receipt is settled"
 prove_killed "vendor cap above the quote kept" "$gate_ts" \
   "asked >= 0 && asked < quote ? asked : quote" "asked >= 0 ? asked : quote" \
@@ -220,3 +222,6 @@ prove_killed "wall clock: far-future queue timestamp accepted" "$clock_ts" \
 prove_killed "settlement judged at arrival, not send time (Codex P2)" "$tools_ts" \
   "    } else if (apifyRunSettled(finalRun, finalRunSentAt)) {" "    } else if (apifyRunSettled(finalRun, Date.now())) {" \
   "$gate_tests" "read lifecycle (Codex P2): a preliminary snapshot answered late is not taken as settled"
+prove_killed "smoke planner shown every authorised actor (Codex P1)" "$planner_ts" \
+  "    const payload = approved ? smokePlannerPayload(i.payload, approved) : i.payload;" "    const payload = i.payload;" \
+  "$planner_tests" "smoke planner: the execution-planner request for the smoke's mission fits the Luna template"

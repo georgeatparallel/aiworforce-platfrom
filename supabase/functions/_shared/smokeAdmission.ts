@@ -43,7 +43,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   ADMISSION_GATE_MARK, ADMISSION_REFUSED_STATUS, ADMISSION_REFUSED_TYPE, APIFY_SETTLED_SOURCE, apifyRunSettled,
-  isAdmissionRefusal, planSmokeStart, SMOKE_ADMISSION_ENV, SMOKE_READ_STATE_MARK, smokeAdmissionEnforced,
+  isAdmissionRefusal, planSmokeStart, SMOKE_ADMISSION_ENV, SMOKE_APPROVED_ACTORS_MARK, SMOKE_READ_STATE_MARK,
+  smokeAdmissionEnforced,
   type SmokeReadState,
 } from "./smokeAdmissionRefusal.ts";
 
@@ -703,6 +704,22 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
         ctx.authorization = loaded;
       }
       return await readState(ctx, ctx.authorization);
+    },
+  });
+  // The provider actors the authorization's catalog approves (read only).
+  Object.defineProperty(gate, SMOKE_APPROVED_ACTORS_MARK, {
+    value: async (): Promise<readonly string[] | null> => {
+      const ctx = missionAdmission.getStore();
+      if (!ctx) return null;
+      if (!ctx.authorization) {
+        const loaded = await loadAuthorization(d.db, ctx.queueId);
+        if (loaded === "unavailable" || !loaded) return null;
+        ctx.authorization = loaded;
+      }
+      const actors = Object.values(ctx.authorization.approved_quotes ?? {})
+        .filter((t) => Array.isArray(t?.allowed_kinds) && t.allowed_kinds.includes("provider"))
+        .flatMap((t) => (Array.isArray(t.allowed_actors) ? t.allowed_actors : []));
+      return [...new Set(actors.map(String))];
     },
   });
   return gate;

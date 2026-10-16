@@ -139,3 +139,23 @@ export function apifyRunSettled(run: Record<string, unknown> | null | undefined,
   const finished = typeof run.finishedAt === "string" ? Date.parse(run.finishedAt) : NaN;
   return Number.isFinite(finished) && finished + APIFY_SETTLE_MS <= nowMs;
 }
+
+// ── THE SMOKE'S APPROVED PROVIDER ACTORS ────────────────────────────────────
+//
+// The gate refuses any provider actor the authorization's catalog does not
+// approve. A planner shown every actor its graph allows writes a prompt the
+// smoke cannot afford (Codex, PR #94: the execution planner's 53,922-byte
+// request against a 32,768-byte model template) and may plan purchases the
+// gate will refuse. In the smoke, planners are shown the approved ones only.
+
+export const SMOKE_APPROVED_ACTORS_MARK = Symbol.for("agentory.smokeApprovedActors");
+
+/** The gate actors (`apify:owner~name`, `firecrawl:scrape`, …) the authorization approves for purchase; null outside the smoke or when unknown. */
+export async function smokeApprovedActors(): Promise<readonly string[] | null> {
+  const f = globalThis.fetch as unknown as Record<symbol, unknown> | undefined;
+  const read = f?.[SMOKE_APPROVED_ACTORS_MARK];
+  return typeof read === "function" ? await (read as () => Promise<readonly string[] | null>)() : null;
+}
+
+/** The gate's actor id for an Apify implementation id (`owner/name` → `apify:owner~name`), as `classifyRequest` derives it. */
+export const apifyGateActor = (implementationId: string): string => `apify:${implementationId.replace("/", "~")}`;

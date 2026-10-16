@@ -180,7 +180,7 @@ export function companyBrainSection(brain: CompanyBrainBriefing | null): string 
  * change. That is the whole contract of this module: update the knowledge, not
  * a branch.
  */
-export function actorPlaybookSection(actorKeys?: readonly string[] | null): string {
+export function actorPlaybookSection(actorKeys?: readonly string[] | null, compact = false): string {
   // P2 — THE RELEVANT SUBSET. Given the actors this mission's graph admitted,
   // only their cards are shown; the full catalog (~70k characters) otherwise.
   const all = discoveryCatalogBriefing();
@@ -200,10 +200,10 @@ export function actorPlaybookSection(actorKeys?: readonly string[] | null): stri
     "actor's best_for, and treat its not_for as disqualifying unless you can say",
     "specifically why this mission is the exception.",
     "",
-    JSON.stringify(actors, null, 2),
+    compact ? JSON.stringify(actors) : JSON.stringify(actors, null, 2),
     "",
     "SCENARIOS NO REGISTERED ACTOR CAN SERVE:",
-    JSON.stringify(unserveable, null, 2),
+    compact ? JSON.stringify(unserveable) : JSON.stringify(unserveable, null, 2),
     "",
     "If the mission needs a capability nothing above provides, say so and stop.",
     "That is a correct answer, and far better than the nearest available actor.",
@@ -216,6 +216,8 @@ export interface BriefingInput {
   results?: DiscoveryResultsSummary | null;
   /** P2 — restrict the actor playbook to these actors (the mission's admitted set). */
   actorKeys?: readonly string[] | null;
+  /** Unindented JSON (the smoke's request-size bound). Absent: byte-identical to before. */
+  compact?: boolean;
 }
 
 /**
@@ -296,7 +298,7 @@ export function buildAgentoryBriefing(i: BriefingInput): string {
     "",
     companyBrainSection(i.brain),
     "",
-    actorPlaybookSection(i.actorKeys ?? null),
+    actorPlaybookSection(i.actorKeys ?? null, i.compact === true),
     "",
     AGENTORY_AGENTS,
     ...(i.results ? ["", resultsSection(i.results)] : []),
