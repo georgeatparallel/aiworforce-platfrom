@@ -1409,7 +1409,8 @@ async function execSourceWithApify(
   if (!resolvedDatasetId) {
     return {
       ok: true,
-      data: { actor_id, run_id, dataset_id: null, items: [], total: 0, no_results: true, summary: "no_dataset", citations: [] },
+      data: { actor_id, run_id, dataset_id: null, items: [], total: 0, no_results: true, summary: "no_dataset", citations: [],
+        ...(receipt ? { receipt } : {}) },
     };
   }
 
@@ -1514,6 +1515,8 @@ async function execSourceWithApify(
         normalized_source_type: kindLabel,
         run_id,
         dataset_id: resolvedDatasetId,
+        // Smoke only (null elsewhere): "unsettled" is listed for reconciliation.
+        ...(receipt ? { receipt } : {}),
       // ── THE PROVIDER'S OWN USAGE, CARRIED OUT OF THE POLLER ─────────────
       //
       // `finalRun` is the full `/actor-runs/{id}` document and it dies here
@@ -1605,6 +1608,8 @@ async function execSourceWithApify(
       discovery,
       run_id,
       dataset_id: resolvedDatasetId,
+      // Smoke only (null elsewhere): "unsettled" is listed for reconciliation.
+      ...(receipt ? { receipt } : {}),
       // ── THE PROVIDER'S OWN USAGE, CARRIED OUT OF THE POLLER ─────────────
       //
       // `finalRun` is the full `/actor-runs/{id}` document and it dies here

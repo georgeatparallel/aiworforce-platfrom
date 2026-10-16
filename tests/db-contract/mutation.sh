@@ -114,10 +114,14 @@ prove_killed "no deadline" "$adm_sql" "or a.deadline_at <= v_now" "" \
   "$adm_tests" "deadline: absolute, from the queue row, read after the lock, never renewed"
 prove_killed "clock read before the lock wait" "$adm_sql" "v_now := clock_timestamp();  -- after the lock wait" "v_now := now();  --" \
   "$adm_tests" "deadline: an admission that waited on the lock past the deadline is refused"
+prove_killed "a run bought with one read (no dataset read)" "$plan_ts" "export const SMOKE_MIN_RUN_READS = 2;" "export const SMOKE_MIN_RUN_READS = 1;" \
+  "$gate_tests" "read lifecycle: the FINAL run is bought with two reads; its receipt is deferred, held at the maximum, and blocks the next smoke"
 prove_killed "no generation fence" "$adm_sql" "or t.checkpoint_version is distinct from p_generation" "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "any task status admitted" "$adm_sql" "or t.status not in ('running', 'ready')" "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
+prove_killed "no new smoke over unreconciled liability: gate removed" "$adm_sql" "  if v_open > 0 then" "  if false then" \
+  "$adm_tests" "reconciliation: an unsettled purchase blocks the next authorization until a person reconciles it"
 prove_killed "no lineage lease check" "$adm_sql" "or l.lease_holder is distinct from p_task " "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "re-keyed payload buys again" "$adm_sql" \
@@ -147,10 +151,10 @@ prove_killed "vendor caps not pinned" "$gate_ts" "url.searchParams.set(k, String
   "$gate_tests" "apify: admitted with the template's vendor caps, run id durable, polls admitted, one credit charged"
 # The smoke's Apify read lifecycle (its loop replaced the 3 s poll loop in smoke mode).
 prove_killed "smoke status read ignores the read reserve" "$plan_ts" \
-  '  if (s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_reserved" };' "" \
+  '  if (s.readsLeft < SMOKE_MIN_RUN_READS) return { ok: false, reason: "reads_reserved" };' "" \
   "$gate_tests" "read lifecycle: a run still RUNNING at the reserve stays pending, its receipt explicitly unsettled and listed"
 prove_killed "smoke start ignores the lifecycle's reads" "$plan_ts" \
-  '  if (s.readsLeft !== null && s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_exhausted" };' "" \
+  '  if (s.readsLeft !== null && s.readsLeft < SMOKE_MIN_RUN_READS) return { ok: false, reason: "reads_exhausted" };' "" \
   "$gate_tests" "read lifecycle: a slow run takes four reads; a second run that could not be settled is never bought"
 prove_killed "read plan refusal reads as a refund for a replay" "$gate_ts" \
   '      if (!plan.ok) return refuse("read_plan", plan.reason);' '      if (!plan.ok) return refusal("read_plan", plan.reason);' \

@@ -114,11 +114,35 @@ create unique index discovery_smoke_run_id on public.discovery_smoke_operations
 create unique index discovery_smoke_dataset_id on public.discovery_smoke_operations
   (authorization_id, provider_dataset_id) where provider_dataset_id is not null;
 
+-- ── RECONCILIATION: THE VENDOR'S OWN FIGURE, RECORDED BY A PERSON ─────────
+--
+-- A provider purchase without a settled receipt (`apify_run(settled).receipt`)
+-- — the final run whose receipt read the five-read plan deferred, a run left
+-- pending, an uncertain start — is LIABILITY, carried at its committed
+-- maximum. It is closed only here, against the vendor's run history, by an
+-- administrator. Immutable, and it never changes a commitment: the record of
+-- what the mission was allowed to cost stays as it was. Until every such
+-- purchase is reconciled, no new smoke can be authorized.
+create table public.discovery_smoke_reconciliations (
+  authorization_id uuid not null,
+  operation_key    text not null,
+  vendor_microusd  bigint not null check (vendor_microusd >= 0),
+  vendor_ref       text not null check (length(trim(vendor_ref)) > 0),
+  reconciled_at    timestamptz not null default clock_timestamp(),
+  reconciled_by    name not null default current_user,
+  primary key (authorization_id, operation_key),
+  foreign key (authorization_id, operation_key)
+    references public.discovery_smoke_operations(authorization_id, operation_key)
+);
+
 alter table public.discovery_smoke_authorizations enable row level security;
 alter table public.discovery_smoke_operations enable row level security;
-revoke all on public.discovery_smoke_authorizations, public.discovery_smoke_operations
+alter table public.discovery_smoke_reconciliations enable row level security;
+revoke all on public.discovery_smoke_authorizations, public.discovery_smoke_operations,
+  public.discovery_smoke_reconciliations
   from public, anon, authenticated, service_role;
-grant select on public.discovery_smoke_authorizations, public.discovery_smoke_operations to service_role;
+grant select on public.discovery_smoke_authorizations, public.discovery_smoke_operations,
+  public.discovery_smoke_reconciliations to service_role;
 
 -- ── ADMINISTRATIVE APPROVAL. Never granted to the worker. ─────────────────
 --
@@ -135,7 +159,7 @@ declare
   q public.lead_mission_queue%rowtype;
   a public.discovery_smoke_authorizations%rowtype;
   v_now timestamptz := clock_timestamp();
-  v_hash text; v_t jsonb; v_id text; v_obs timestamptz; v_k text;
+  v_hash text; v_t jsonb; v_id text; v_obs timestamptz; v_k text; v_open bigint;
 begin
   select * into q from public.lead_mission_queue where id = p_queue for update;
   if not found then raise exception 'authorize_discovery_smoke: no such queue row'; end if;
@@ -149,6 +173,20 @@ begin
       raise exception 'authorize_discovery_smoke: an authorization exists and cannot be replaced';
     end if;
     return a.id;
+  end if;
+
+  -- NO NEW SMOKE OVER UNRECONCILED LIABILITY. Any earlier provider purchase
+  -- with neither a settled receipt nor a reconciliation may still be billed
+  -- up to its maximum; another mission would spend on top of an unknown.
+  -- Serialized against a concurrent reconciliation by the table lock below.
+  lock table public.discovery_smoke_reconciliations in share mode;
+  select count(*) into v_open from public.discovery_smoke_operations o
+   where o.kind = 'provider'
+     and o.report_source is distinct from 'apify_run(settled).receipt'
+     and not exists (select 1 from public.discovery_smoke_reconciliations r
+                      where r.authorization_id = o.authorization_id and r.operation_key = o.operation_key);
+  if v_open > 0 then
+    raise exception 'authorize_discovery_smoke: % earlier provider purchase(s) are unreconciled; reconcile them first', v_open;
   end if;
 
   if q.status not in ('queued', 'running', 'resumable') then
@@ -404,6 +442,47 @@ begin
   return true;
 end $$;
 
+-- ── RECONCILE ONE PURCHASE. Administrators only, never the worker. ────────
+--
+-- Records the vendor's final figure for a provider operation that has no
+-- settled receipt. Never edits the operation, never lowers a commitment. A
+-- second call for the same operation returns the first record unchanged, or
+-- refuses if it differs. A figure above the committed maximum is recorded AND
+-- stops the authorization (if still active): the bound was wrong, and the
+-- report says so (`exceeded`).
+create function public.reconcile_discovery_smoke_operation(
+  p_queue uuid, p_key text, p_vendor_microusd bigint, p_vendor_ref text
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare a public.discovery_smoke_authorizations%rowtype; o public.discovery_smoke_operations%rowtype;
+        r public.discovery_smoke_reconciliations%rowtype;
+begin
+  if p_vendor_microusd is null or p_vendor_microusd < 0 or coalesce(length(trim(p_vendor_ref)), 0) = 0 then
+    raise exception 'reconcile_discovery_smoke_operation: a vendor figure and its reference are required';
+  end if;
+  select * into a from public.discovery_smoke_authorizations where queue_id = p_queue for update;
+  if not found then raise exception 'reconcile_discovery_smoke_operation: no authorization for this queue row'; end if;
+  select * into o from public.discovery_smoke_operations where authorization_id = a.id and operation_key = p_key;
+  if not found or o.kind <> 'provider' then
+    raise exception 'reconcile_discovery_smoke_operation: % is not a provider purchase of this authorization', p_key;
+  end if;
+  select * into r from public.discovery_smoke_reconciliations where authorization_id = a.id and operation_key = p_key;
+  if found then
+    if r.vendor_microusd is distinct from p_vendor_microusd or r.vendor_ref is distinct from p_vendor_ref then
+      raise exception 'reconcile_discovery_smoke_operation: % is already reconciled differently', p_key;
+    end if;
+  else
+    insert into public.discovery_smoke_reconciliations (authorization_id, operation_key, vendor_microusd, vendor_ref)
+    values (a.id, p_key, p_vendor_microusd, trim(p_vendor_ref)) returning * into r;
+    if p_vendor_microusd > o.committed_microusd and a.status = 'active' then
+      update public.discovery_smoke_authorizations
+         set status = 'stopped', stop_reason = 'reconciled_charge_exceeded_quote:' || p_key
+       where id = a.id;
+    end if;
+  end if;
+  return jsonb_build_object('operation_key', p_key, 'vendor_microusd', r.vendor_microusd,
+    'committed_microusd', o.committed_microusd, 'exceeded', r.vendor_microusd > o.committed_microusd);
+end $$;
+
 -- One-way. There is no restart or reset.
 create function public.stop_discovery_smoke(p_queue uuid, p_reason text)
 returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -415,6 +494,7 @@ begin
 end $$;
 
 revoke all on function public.authorize_discovery_smoke(uuid, text, jsonb, jsonb, integer) from public, anon, authenticated, service_role;
+revoke all on function public.reconcile_discovery_smoke_operation(uuid, text, bigint, text) from public, anon, authenticated, service_role;
 revoke all on function public.admit_discovery_smoke(uuid, uuid, uuid, integer, text, text, text, text, text, text) from public, anon, authenticated;
 revoke all on function public.record_discovery_smoke_receipt(uuid, text, uuid, text, text, bigint, text) from public, anon, authenticated;
 revoke all on function public.stop_discovery_smoke(uuid, text) from public, anon, authenticated;

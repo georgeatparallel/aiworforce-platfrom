@@ -82,6 +82,17 @@ export const APIFY_RECEIPT_TIMEOUT_MS = 10_000;
 export const SMOKE_MIN_WAIT_S = 5;
 /** Reads one run still needs after a status read: its dataset and its receipt. */
 export const SMOKE_READS_AFTER_STATUS = 2;
+/**
+ * THE FINAL RUN'S TWO READS. A run may be bought with only its status and
+ * dataset reads left: the purchase that leaves the mission no read for its
+ * settled receipt. That receipt is DEFERRED, never assumed: the operation keeps
+ * its committed maximum, carries at most a preliminary figure
+ * (`apify_run(status).receipt`), is listed by the reconciliation, and no new
+ * smoke can be authorized until a person reconciles it against the vendor
+ * (`reconcile_discovery_smoke_operation`). Two reads is also the floor: a run
+ * whose dataset could not be read is never bought.
+ */
+export const SMOKE_MIN_RUN_READS = 2;
 /** Time everything after a status read can take: dataset, settling, receipt. */
 export const SMOKE_TAIL_MS = APIFY_DATASET_TIMEOUT_MS + APIFY_SETTLE_MS + APIFY_RECEIPT_TIMEOUT_MS;
 /** The source a settled Apify figure is recorded under (`report_source`). */
@@ -90,15 +101,17 @@ export const APIFY_SETTLED_SOURCE = "apify_run(settled).receipt";
 export type SmokeReadPlan = { ok: true; waitS: number; timeoutMs: number } | { ok: false; reason: string };
 
 /**
- * May a new Apify run be STARTED? Not when its whole lifecycle (three reads
- * and the time for them) is known not to fit. Decided by the GATE, after it
+ * May a new Apify run be STARTED? Not when its status and dataset reads (and
+ * the time for its whole lifecycle) are known not to fit; with exactly two
+ * reads left it is the mission's final run and its receipt is deferred
+ * (`SMOKE_MIN_RUN_READS`). Decided by the GATE, after it
  * knows whether this purchase may already exist, so a refused replay of an
  * uncertain start still reads as uncertain (its credit stays held). An unknown
  * count or clock does not refuse: the database bounds the purchase itself, and
  * an unknown never spends a read (`planSmokeStatusRead`, `planSmokeReceipt`).
  */
 export function planSmokeStart(s: SmokeReadState): { ok: true } | { ok: false; reason: string } {
-  if (s.readsLeft !== null && s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_exhausted" };
+  if (s.readsLeft !== null && s.readsLeft < SMOKE_MIN_RUN_READS) return { ok: false, reason: "reads_exhausted" };
   if (s.remainingMs !== null &&
     s.remainingMs < APIFY_START_TIMEOUT_MS + SMOKE_MIN_WAIT_S * 1000 + SMOKE_READ_SLACK_MS + SMOKE_TAIL_MS) {
     return { ok: false, reason: "no_time" };
@@ -106,10 +119,14 @@ export function planSmokeStart(s: SmokeReadState): { ok: true } | { ok: false; r
   return { ok: true };
 }
 
-/** One long-polled status read, clamped so the dataset and the receipt still fit, in reads and in time. */
+/**
+ * One long-polled status read, clamped so the dataset (and, when a read is
+ * left for it, the receipt) still fits, in reads and in time. The dataset's
+ * read is always kept; the receipt's is kept when it exists.
+ */
 export function planSmokeStatusRead(s: SmokeReadState): SmokeReadPlan {
   if (s.readsLeft === null || s.remainingMs === null) return { ok: false, reason: "read_state_unknown" };
-  if (s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_reserved" };
+  if (s.readsLeft < SMOKE_MIN_RUN_READS) return { ok: false, reason: "reads_reserved" };
   const waitS = Math.min(APIFY_MAX_WAIT_S, Math.floor((s.remainingMs - SMOKE_TAIL_MS - SMOKE_READ_SLACK_MS) / 1000));
   if (!(waitS >= SMOKE_MIN_WAIT_S)) return { ok: false, reason: "no_time" };
   return { ok: true, waitS, timeoutMs: waitS * 1000 + SMOKE_READ_SLACK_MS };

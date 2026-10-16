@@ -13,19 +13,24 @@ import {
 
 const T0 = Date.parse("2026-10-16T12:00:00Z");
 
-Deno.test("read plan: a run is bought only when its three reads and their time remain", () => {
+Deno.test("read plan: a run is bought only when its status and dataset reads and its time remain", () => {
   assertEquals(planSmokeStart({ readsLeft: 3, remainingMs: 75_000 }), { ok: true });
-  assertEquals(planSmokeStart({ readsLeft: 2, remainingMs: 300_000 }), { ok: false, reason: "reads_exhausted" });
+  // The final run: status and dataset; its receipt is deferred to reconciliation.
+  assertEquals(planSmokeStart({ readsLeft: 2, remainingMs: 300_000 }), { ok: true });
+  assertEquals(planSmokeStart({ readsLeft: 1, remainingMs: 300_000 }), { ok: false, reason: "reads_exhausted" });
+  assertEquals(planSmokeStart({ readsLeft: 0, remainingMs: 300_000 }), { ok: false, reason: "reads_exhausted" });
   assertEquals(planSmokeStart({ readsLeft: 5, remainingMs: 74_999 }), { ok: false, reason: "no_time" });
   // Unknown is not a reason to refuse a purchase the database bounds; it never spends a read.
   assertEquals(planSmokeStart({ readsLeft: null, remainingMs: null }), { ok: true });
   assertEquals(planSmokeStatusRead({ readsLeft: null, remainingMs: 300_000 }), { ok: false, reason: "read_state_unknown" });
 });
 
-Deno.test("read plan: a status read waits at most 60 s and keeps the dataset and receipt in reads and time", () => {
+Deno.test("read plan: a status read waits at most 60 s and always keeps the dataset's read and time", () => {
   assertEquals(planSmokeStatusRead({ readsLeft: 5, remainingMs: 300_000 }), { ok: true, waitS: APIFY_MAX_WAIT_S, timeoutMs: 70_000 });
   assertEquals(planSmokeStatusRead({ readsLeft: 3, remainingMs: 90_000 }), { ok: true, waitS: 40, timeoutMs: 50_000 });
-  assertEquals(planSmokeStatusRead({ readsLeft: 2, remainingMs: 300_000 }), { ok: false, reason: "reads_reserved" });
+  // Two left: the status read and the dataset's; the receipt is the one deferred.
+  assertEquals(planSmokeStatusRead({ readsLeft: 2, remainingMs: 300_000 }), { ok: true, waitS: APIFY_MAX_WAIT_S, timeoutMs: 70_000 });
+  assertEquals(planSmokeStatusRead({ readsLeft: 1, remainingMs: 300_000 }), { ok: false, reason: "reads_reserved" });
   assertEquals(planSmokeStatusRead({ readsLeft: 5, remainingMs: 54_999 }), { ok: false, reason: "no_time" });
   // The client timeout never outlasts the time left.
   for (let ms = 55_000; ms <= 300_000; ms += 5_000) {

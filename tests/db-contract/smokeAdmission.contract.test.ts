@@ -482,3 +482,63 @@ for (const [why, change, refusedAs] of R8_CHANGES) {
     }
   });
 }
+
+// ── reconciliation: no new smoke over unreconciled liability ────────────────
+
+const tokenOf = (d: unknown) => (d as { reservation_token: string }).reservation_token;
+const reconcile = (m: SmokeMission, key: string, usd: number, ref = "apify run history: synthetic") =>
+  sql`select public.reconcile_discovery_smoke_operation(${m.queueId}, ${key}, ${usd}, ${ref}) as r`;
+
+Deno.test("reconciliation: an unsettled purchase blocks the next authorization until a person reconciles it", opts, async () => {
+  const first = await seedSmokeMission();
+  const buy = provider(first, JOBS, "apify_jobs");
+  const d = await admit(buy);
+  assertEquals(d.decision, "admitted");
+  // A preliminary figure (the deferred final receipt) is evidence, not settlement.
+  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token: tokenOf(d),
+    runId: `run-${uuid()}`, reportedMicrousd: 4000, source: "apify_run(status).receipt" }));
+
+  const next = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+  assertEquals((await sql`select count(*)::int as n from public.discovery_smoke_authorizations where queue_id = ${next.queueId}`)[0].n, 0);
+
+  // The worker can never close it.
+  const svc = await serviceClient();
+  const { error } = await svc.rpc("reconcile_discovery_smoke_operation",
+    { p_queue: first.queueId, p_key: buy.key, p_vendor_microusd: 0, p_vendor_ref: "worker" });
+  assert(error, "service_role cannot reconcile");
+
+  const [{ r }] = await reconcile(first, buy.key, 3800);
+  assertEquals(r.exceeded, false);
+  // Liability as authorized is untouched: the commitment and the evidence stay.
+  const [row] = await ops(first);
+  assertEquals([row.committed_microusd, row.reported_microusd, row.report_source], ["60000", "4000", "apify_run(status).receipt"]);
+  assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }), "reconciled: the next smoke may be authorized");
+});
+
+Deno.test("reconciliation: immutable, provider purchases only, and a figure above the quote stops the authorization", opts, async () => {
+  const m = await seedSmokeMission();
+  const buy = provider(m, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  const model = op(m);
+  assertEquals((await admit(model)).decision, "admitted");
+  await assertRejects(() => reconcile(m, model.key, 0), Error, "not a provider purchase");
+  await assertRejects(() => reconcile(m, buy.key, -1), Error, "required");
+  await assertRejects(() => reconcile(m, buy.key, 1, " "), Error, "required");
+  const [{ r }] = await reconcile(m, buy.key, 70000);
+  assertEquals(r.exceeded, true, "above the 60000 committed maximum");
+  const [a] = await sql`select status, stop_reason from public.discovery_smoke_authorizations where queue_id = ${m.queueId}`;
+  assertEquals([a.status, a.stop_reason], ["stopped", `reconciled_charge_exceeded_quote:${buy.key}`]);
+  assertEquals((await reconcile(m, buy.key, 70000))[0].r.vendor_microusd, 70000, "the same record again is a no-op");
+  await assertRejects(() => reconcile(m, buy.key, 60000), Error, "already reconciled differently");
+});
+
+Deno.test("reconciliation: a settled receipt needs no reconciliation", opts, async () => {
+  const first = await seedSmokeMission();
+  const buy = provider(first, JOBS, "apify_jobs");
+  const d = await admit(buy);
+  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token: tokenOf(d),
+    runId: `run-${uuid()}`, reportedMicrousd: 2000, source: "apify_run(settled).receipt" }));
+  const next = await seedSmokeMission({ authorize: false });
+  assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }));
+});
