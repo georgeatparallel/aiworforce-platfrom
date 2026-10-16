@@ -32,6 +32,6 @@ Deno.test("the slice folds from the maximum of the task copy, the lineage copy a
 });
 
 Deno.test("the worker reads the queue's continuation count and hands it to run-agent", () => {
-  assert(/select\("continuations"\)/.test(workerMain));
+  assert(/select\("continuations,created_at"\)/.test(workerMain));
   assert(/queueContinuations:\s*mission\.continuations/.test(runner));
 });
