@@ -246,6 +246,9 @@ changes would be needed to test efficacy:
 
 ## 7. Isolated test project: the checklist
 
+The step-by-step version, with exact SQL, the catalog and stop and
+reconciliation commands, is `discovery-smoke-runbook.md`.
+
 Each line is a separate approval. Production (`ohsdatpvfdjdemstoiuj`) and the
 abandoned project (`wqnigjhcwjxtmordrwno`) are never targets; the script and
 the workflow refuse both.
