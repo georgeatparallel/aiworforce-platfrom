@@ -116,6 +116,8 @@ prove_killed "clock read before the lock wait" "$adm_sql" "v_now := clock_timest
   "$adm_tests" "deadline: an admission that waited on the lock past the deadline is refused"
 prove_killed "no generation fence" "$adm_sql" "or t.checkpoint_version is distinct from p_generation" "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
+prove_killed "any task status admitted" "$adm_sql" "or t.status not in ('running', 'ready')" "" \
+  "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "no lineage lease check" "$adm_sql" "or l.lease_holder is distinct from p_task " "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "re-keyed payload buys again" "$adm_sql" \

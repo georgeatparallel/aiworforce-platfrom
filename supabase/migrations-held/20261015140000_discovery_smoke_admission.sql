@@ -265,7 +265,12 @@ begin
      or l.lease_holder is distinct from p_task or l.lease_expires_at is null or l.lease_expires_at <= v_now then
     return jsonb_build_object('decision', 'lost_ownership');
   end if;
-  if t.id is null or t.workspace_id is distinct from a.workspace_id or t.status is distinct from 'running'
+  -- `ready` is the slice's own stage-boundary checkpoint (run-agent writes the
+  -- row status with every checkpoint, projectStatus("continuation_required")),
+  -- not a release: the same generation and both leases above still hold. A
+  -- re-claim bumps the generation; a finished or failed task is refused.
+  if t.id is null or t.workspace_id is distinct from a.workspace_id or t.status is null
+     or t.status not in ('running', 'ready')
      or t.checkpoint_version is distinct from p_generation then
     return jsonb_build_object('decision', 'stale_generation');
   end if;

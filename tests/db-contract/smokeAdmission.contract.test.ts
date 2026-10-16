@@ -195,7 +195,9 @@ Deno.test("ownership: queue claim, queue lease, lineage lease, task binding and 
     ["the lineage lease moved", (m) => sql`update public.lead_lineages set lease_holder = ${uuid()} where lineage_id = ${m.taskId}`, "lost_ownership"],
     ["the lineage lease expired", (m) => sql`update public.lead_lineages set lease_expires_at = now() - interval '1 second' where lineage_id = ${m.taskId}`, "lost_ownership"],
     ["a newer claim bumped the generation", (m) => sql`update public.tasks set checkpoint_version = checkpoint_version + 1 where id = ${m.taskId}`, "stale_generation"],
-    ["the task is no longer running", (m) => sql`update public.tasks set status = 'ready' where id = ${m.taskId}`, "stale_generation"],
+    ["the task finished", (m) => sql`update public.tasks set status = 'complete' where id = ${m.taskId}`, "stale_generation"],
+    ["the task failed", (m) => sql`update public.tasks set status = 'failed' where id = ${m.taskId}`, "stale_generation"],
+    ["re-claimed after a checkpoint", (m) => sql`update public.tasks set status = 'ready', checkpoint_version = checkpoint_version + 1 where id = ${m.taskId}`, "stale_generation"],
     ["the lineage ended", (m) => sql`update public.lead_lineages set status = 'terminal', terminal_reason = 'cancelled' where lineage_id = ${m.taskId}`, "stopped"],
     ["the mission was cancelled", (m) => sql`select * from public.cancel_lead_mission(${m.queueId}, ${m.ws})`, "stopped"],
     ["the request was edited after approval", (m) => sql`update public.lead_mission_queue set request = request || '{"lead_count": 500}' where id = ${m.queueId}`, "identity_mismatch"],
@@ -206,6 +208,12 @@ Deno.test("ownership: queue claim, queue lease, lineage lease, task binding and 
     await mutate(m);
     assertEquals((await admit(op(m))).decision, want, why);
   }
+  // The slice's own stage-boundary checkpoint writes the row `ready` mid-run
+  // (offline rehearsal on PR #94: every admission after the first checkpoint
+  // was refused). Same generation, leases held: still this slice's.
+  const c = await seedSmokeMission();
+  await sql`update public.tasks set status = 'ready' where id = ${c.taskId}`;
+  assertEquals((await admit(op(c))).decision, "admitted", "a checkpoint is not a release");
   const m = await seedSmokeMission();
   assertEquals((await admit(op(m, { taskId: uuid() }))).decision, "lost_ownership", "a task not bound to the queue row");
   assertEquals((await admit(op(m, { workerId: uuid() }))).decision, "lost_ownership", "a worker that is not the claimant");
