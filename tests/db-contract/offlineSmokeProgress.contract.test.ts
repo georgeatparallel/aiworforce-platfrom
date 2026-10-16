@@ -114,10 +114,85 @@ const json = (body: unknown, status = 200) =>
     }),
   );
 
-Deno.test(
-  "offline smoke progress: past the planner, one bounded purchase, stops at the model budget before qualification",
-  { sanitizeOps: false, sanitizeResources: false },
-  async () => {
+const DETAILS = "apify:harvestapi~linkedin-company";
+
+// ── AN HONEST STAND-IN FOR THE MODEL ─────────────────────────────────────────
+// Each stage gets the answer its schema asks for, built only from the evidence
+// the request itself carries: every excerpt is copied verbatim from a supplied
+// `source_text`, and a requirement with nothing citable is `review`, never a
+// pass. Nothing here can qualify a company the evidence does not support.
+type Ev = { evidence_id: string; evidence_type?: string; source_text?: string | null };
+function evidenceIn(x: unknown, out: Ev[] = []): Ev[] {
+  if (Array.isArray(x)) for (const y of x) evidenceIn(y, out);
+  else if (x && typeof x === "object") {
+    const o = x as Record<string, unknown>;
+    if (typeof o.evidence_id === "string" && typeof o.source_text === "string") out.push(o as Ev);
+    else for (const v of Object.values(o)) evidenceIn(v, out);
+  }
+  return out;
+}
+const cite = (ev: Ev[], test: (e: Ev) => boolean, phrase: string) => {
+  const e = ev.find((x) => test(x) && (x.source_text ?? "").includes(phrase));
+  return e ? { evidence_id: e.evidence_id, excerpt: phrase } : null;
+};
+function citations(ev: Ev[]) {
+  return {
+    business: cite(ev, (e) => e.evidence_type === "company_description", "sales software for revenue teams at mid-size companies"),
+    location: cite(ev, (e) => /location|headquarter/.test(e.evidence_type ?? ""), "United States"),
+    size: cite(ev, (e) => e.evidence_type === "company_size_band", "11-50 employees"),
+    hiring: cite(ev, (e) => /job|posting|hiring/.test(e.evidence_type ?? ""), "Account Executive"),
+  };
+}
+function evaluatorAnswer(input: unknown) {
+  const c = citations(evidenceIn(input));
+  const req: Array<[string, { evidence_id: string; excerpt: string } | null]> = [
+    ["B2B software company", c.business], ["located in the United States", c.location],
+    ["declared 11–50 employee band", c.size], ["open Account Executive posting within 30 days", c.hiring],
+  ];
+  const missing = req.filter(([, x]) => !x).map(([r]) => r);
+  return {
+    mission_fit: missing.length === 0 ? "pass" : "review", icp_fit: "plausible",
+    hiring_fit: c.hiring ? "verified" : "absent", confidence: 0.8, match_score: missing.length === 0 ? 80 : 0,
+    matched_requirements: req.filter(([, x]) => x).map(([requirement, x]) => ({ requirement, ...x!, support: "verified" })),
+    failed_requirements: [], reasoning: missing.length ? `not established: ${missing.join("; ")}` : "every requirement cited",
+    rejection_reasons: [], evidence_quality: missing.length ? "weak" : "moderate", unknown_fields: missing, next_action: null,
+  };
+}
+function groundedResult(company_key: string, ev: Ev[]) {
+  const c = citations(ev);
+  const claim = (claim: string, claim_type: string, x: { evidence_id: string; excerpt: string }) =>
+    ({ claim, claim_type, evidence_ids: [x.evidence_id], evidence_excerpts: [x] });
+  const supporting = [
+    ...(c.business ? [claim("builds sales software for revenue teams", "business_model", c.business)] : []),
+    ...(c.hiring ? [claim("has an open Account Executive posting", "commercial_signal", c.hiring)] : []),
+  ];
+  return {
+    company_key,
+    business_model: { value: c.business ? "b2b_software" : "unknown", confidence: c.business ? 0.7 : 0,
+      claims: c.business ? [supporting[0]] : [] },
+    company_fit: c.business && c.hiring ? "pass" : "review", agentory_use_case: "plausible",
+    mission_signal_assessment: { strongest_signal: c.hiring ? "Account Executive" : null,
+      signal_strength: c.hiring ? "strong" : "none", evidence_ids: c.hiring ? [c.hiring.evidence_id] : [], reason: "cited" },
+    supporting_claims: supporting, conflicting_evidence_ids: [], missing_evidence: [], unknown_fields: [],
+    confidence: 0.7, reason: "from the supplied evidence only",
+  };
+}
+function batchAnswer(input: { companies?: Array<{ company_key: string; evidence?: unknown }> }) {
+  return { results: (input.companies ?? []).map((co) => groundedResult(co.company_key, evidenceIn(co.evidence))) };
+}
+
+interface Variant {
+  /** LEAD_V2_SMOKE_ORCHESTRATION; absent = the customer orchestration. */
+  orchestration?: "minimal";
+  /** Add the company-details actor to the rehearsal catalog (NOT in the approved first-smoke profile). */
+  companyDetails?: boolean;
+  label: string;
+}
+// deno-lint-ignore no-explicit-any
+type Rehearsal = Record<string, any>;
+
+async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void>) {
+  {
     const originalFetch = globalThis.fetch;
     const key = await mintJwt("service_role");
     const localFetch: typeof fetch = (u, i) => {
@@ -153,6 +228,7 @@ Deno.test(
       LEAD_V2_MISSION_CREDIT_CAP: "5",
       LEAD_WORKER_MAX_RUNTIME_MS: "150000",
       LEAD_MAX_AUTO_CONTINUATIONS: "1",
+      ...(v.orchestration ? { LEAD_V2_SMOKE_ORCHESTRATION: v.orchestration } : {}),
     };
     const saved = new Map(Object.keys(env).map((k) => [k, Deno.env.get(k)]));
     for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
@@ -161,6 +237,7 @@ Deno.test(
         "ANTHROPIC_API_KEY",
         "FIRECRAWL_API_KEY",
         "FIRECRAWL_USD_PER_CREDIT",
+        ...(v.orchestration ? [] : ["LEAD_V2_SMOKE_ORCHESTRATION"]),
       ]
     ) {
       saved.set(k, Deno.env.get(k));
@@ -193,15 +270,28 @@ Deno.test(
         ...evidence,
         request_limits: { max_request_bytes: 32768, max_output_tokens: 4000 },
       },
+      ...(v.companyDetails ? {
+        details: {
+          allowed_kinds: ["provider"],
+          allowed_actors: [DETAILS],
+          maximum_microusd: 5000,
+          ...evidence,
+          request_limits: {
+            max_request_bytes: 4096,
+            max_array_items: { companies: 1 },
+            pin_query: { timeout: "120", memory: "256" },
+          },
+        },
+      } : {}),
       reads: {
         allowed_kinds: ["poll"],
-        allowed_actors: [JOBS],
+        allowed_actors: v.companyDetails ? [JOBS, DETAILS] : [JOBS],
         maximum_microusd: 0,
         ...evidence,
         request_limits: {},
       },
     };
-    const m = await seedSmokeMission({ quotes, actorLimits: { [JOBS]: 1 } });
+    const m = await seedSmokeMission({ quotes, actorLimits: { [JOBS]: 1, ...(v.companyDetails ? { [DETAILS]: 1 } : {}) } });
     const user = uuid(), plan = uuid();
     await sql`insert into auth.users (id, email) values (${user}, ${
       "offline-" + user + "@example.invalid"
@@ -226,7 +316,7 @@ Deno.test(
       task_id?: string;
     };
     const trace: Trace = {
-      implementation_sha: "4cc5048f960024a43229e083f7cfa8bf42338622",
+      variant: v.label,
       proposed_spec_sha: "0fb6312c1b78bf0282401140e62e903b31567930",
       mission: MISSION,
       requests: [],
@@ -235,8 +325,9 @@ Deno.test(
       errors: [],
       stages: [],
       handler_calls: [],
+      model_stages: [],
     };
-    let finishedAt: string | null = null;
+    const finishedAt = new Map<string, string>();
     const fixture = JSON.parse(
       await Deno.readTextFile(
         new URL(
@@ -263,7 +354,10 @@ Deno.test(
       linkedinUrl: "https://www.linkedin.com/company/offline-software",
       website: "https://offline-software.example",
       description:
-        "We sell a business software platform to business customers.",
+        // The company's own words name its buyers and its product, as the
+        // business-model rule requires (a plural buyer noun; "business
+        // customers" names none and correctly stays unverified).
+        "Example Software builds sales software for revenue teams at mid-size companies.",
       employeeCountRange: { start: 11, end: 50 },
       locations: [{
         country: "United States",
@@ -293,7 +387,17 @@ Deno.test(
       trace.requests.push(request);
       if (url.hostname === "api.openai.com") {
         models++;
-        const answer = models === 1 ? proposal : executionPlan;
+        const system = String(body.messages?.[0]?.content ?? "");
+        const name = body.response_format?.json_schema?.name ?? null;
+        const user = (() => { try { return JSON.parse(String(body.messages?.at(-1)?.content ?? "")); } catch { return null; } })();
+        const answer = name === "lead_mission_proposal" ? proposal
+          : name === "lead_execution_plan" ? executionPlan
+          : system.startsWith("You assess several companies") ? batchAnswer(user ?? {})
+          : system.startsWith("Decide whether this company satisfies") ? evaluatorAnswer(user)
+          : system.startsWith("You interpret supplied company evidence")
+            ? groundedResult(String(user?.company_key ?? ""), evidenceIn(user))
+          : {};
+        (trace.model_stages as string[]).push(name ?? system.slice(0, 40));
         return json({
           id: `fake-${models}`,
           model: body.model,
@@ -313,29 +417,25 @@ Deno.test(
         "api.apify.com",
         "unexpected vendor path must fail the rehearsal",
       );
+      // One run per actor: `run-jobs` / `run-details`, each with its dataset.
+      const kind = url.pathname.includes("linkedin-company") || url.pathname.includes("details") ? "details" : "jobs";
       if (request.method === "POST") {
         return json({
-          data: {
-            id: "offline-run",
-            defaultDatasetId: "offline-dataset",
-            status: "RUNNING",
-          },
+          data: { id: `run-${kind}`, defaultDatasetId: `dataset-${kind}`, status: "RUNNING" },
         }, 201);
       }
       if (url.pathname.includes("/actor-runs/")) {
-        finishedAt ??= new Date().toISOString();
+        const run = url.pathname.split("/").at(-1)!;
+        if (!finishedAt.has(run)) finishedAt.set(run, new Date().toISOString());
         return json({
           data: {
-            id: "offline-run",
-            defaultDatasetId: "offline-dataset",
-            status: "SUCCEEDED",
-            finishedAt,
-            usageTotalUsd: 0.002,
+            id: run, defaultDatasetId: run.replace("run-", "dataset-"), status: "SUCCEEDED",
+            finishedAt: finishedAt.get(run), usageTotalUsd: run === "run-jobs" ? 0.002 : 0.004,
           },
         });
       }
       assert(url.pathname.includes("/datasets/"));
-      return json([row]);
+      return json(url.pathname.includes("dataset-details") ? [structuredClone(row.company)] : [row]);
     };
     const gate = createAdmissionFetch({
       db: client as never,
@@ -533,47 +633,14 @@ Deno.test(
         await sql`select model, estimated_cost_usd, actual_cost_usd, cost_source from public.lead_model_calls where workspace_id = ${m.ws}`;
       trace.authorization =
         await sql`select status, total_microusd, provider_microusd, model_microusd, provider_purchases, model_attempts, provider_polls, deadline_at from public.discovery_smoke_authorizations where id = ${m.authorizationId}`;
-      // ── WHAT THIS PROVES (and where the mission stops) ─────────────────────
-      const schema = (r: { body: unknown }) =>
-        ((r.body as { response_format?: { json_schema?: { name?: string } } })?.response_format?.json_schema?.name) ?? null;
       const of = (k: string) => operations.filter((o) => o.kind === k);
       const sentByGate = trace.admissions.filter((a) => a.message === "[smoke-admission] sent").length;
       const refused = trace.admissions.filter((a) => a.message === "[smoke-admission] refused")
         .map((a) => (a.data as { decision: string }).decision);
-      // 1. The execution planner fits the Luna template and is admitted.
-      const plans = trace.attempted_requests.filter((r) => schema(r) === "lead_execution_plan");
-      assert(plans.length >= 1 && plans[0].bytes <= 32768, `planner ${plans[0]?.bytes} bytes`);
-      // 2. Past the planner: one bounded job search, vendor-capped, three reads, a settled receipt.
-      const start = trace.requests.find((r) => r.method === "POST" && r.url.includes("/runs"))!;
-      assert(start.url.includes("maxTotalChargeUsd=0.005"), start.url);
-      assertEquals(start.body, { jobTitles: ["Account Executive"], locations: ["United States"], maxItems: 3, postedLimit: "month", sortBy: "date" });
-      assertEquals(of("provider").length, 1);
-      assertEquals(of("provider")[0].report_source, "apify_run(settled).receipt");
-      assertEquals(Number(of("provider")[0].reported_microusd), 2000);
-      // 3. A stage-boundary checkpoint (task row `ready`) does not end the slice:
-      //    triage, after the first checkpoint, is admitted.
-      assert(!refused.includes("stale_generation"), JSON.stringify(refused));
-      assert(trace.requests.some((r) => String((r.body as { messages?: Array<{ content: string }> })?.messages?.[0]?.content ?? "").startsWith("You triage companies")));
-      // 4. Every limit held, and nothing the gate refused reached a vendor.
-      assertEquals(trace.requests.length - compiledOffline, sentByGate, "only admitted requests are sent");
-      assert(of("model").length <= 4 && of("model").reduce((a, o) => a + Number(o.committed_microusd), 0) <= 50000);
-      assert(of("poll").length <= 5);
-      assert(operations.reduce((a, o) => a + Number(o.committed_microusd), 0) <= 250000);
-      for (const r of trace.requests) {
-        if (r.url.includes("api.openai.com")) assert(r.bytes <= 32768, `model request ${r.bytes} bytes was sent`);
-      }
-      assert(refused.includes("request_limits"), "discovery_actor_strategy (≈193 KB) is refused before admission");
-      assert(refused.includes("unknown_quote"), "company details is not in the smoke catalog");
-      // 5. THE NEXT BLOCKER: four attempts are spent before qualification
-      //    (execution plan, route control, triage, re-plan), so every
-      //    qualification model call is refused `usd_limit` and the company
-      //    stays unknown — withheld, never passed.
-      assertEquals(of("model").length, 4);
-      assert(refused.includes("usd_limit"), JSON.stringify(refused));
-      assertEquals(dashboard.error, null);
-      assertEquals(dashboard.data?.length, 0, "unknown is never a match");
-      assertEquals(credits.filter((c) => c.status === "charged").length, 1, "one credit: the one purchase");
-      trace.verdict = "NO_GO: model attempts exhausted before qualification";
+      trace.candidates = (dashboard.data ?? []).map((c: Record<string, unknown>) => ({
+        company_name: c.company_name, status: c.status, qualification_status: c.qualification_status,
+      }));
+      await check({ trace, operations, dashboard, credits, compiledOffline, sentByGate, refused, of });
     } catch (e) {
       trace.errors.push(String(e));
       throw e;
@@ -582,12 +649,103 @@ Deno.test(
       console.log("OFFLINE_SMOKE_TRACE", JSON.stringify(trace));
       const output = Deno.env.get("OFFLINE_SMOKE_TRACE_PATH");
       if (output) {
-        await Deno.writeTextFile(output, JSON.stringify(trace, null, 2) + "\n");
+        await Deno.writeTextFile(`${output}.${v.label}.json`, JSON.stringify(trace, null, 2) + "\n");
       }
       globalThis.fetch = originalFetch;
       for (const [k, v] of saved) {
         v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
       }
     }
-  },
-);
+  }
+}
+
+/** Every variant: the limits hold and nothing the gate refused reached a vendor. */
+function limitsHeld(r: Rehearsal) {
+  const { trace, operations, of } = r;
+  assertEquals(trace.requests.length - r.compiledOffline, r.sentByGate, "only admitted requests are sent");
+  assert(of("model").length <= 4, "four model attempts");
+  assert(of("model").reduce((a: number, o: Rehearsal) => a + Number(o.committed_microusd), 0) <= 50000, "$0.05 model");
+  assert(of("provider").length <= 5, "five purchases");
+  assert(of("poll").length <= 5, "five reads");
+  assert(operations.reduce((a: number, o: Rehearsal) => a + Number(o.committed_microusd), 0) <= 250000, "$0.25 total");
+  for (const q of trace.requests) {
+    if (q.url.includes("api.openai.com")) assert(q.bytes <= 32768, `model request ${q.bytes} bytes was sent`);
+    if (q.method === "POST" && q.url.includes("api.apify.com")) {
+      assert(/maxTotalChargeUsd=0\.00[0-5]\d*(&|$)/.test(q.url), `vendor cap on ${q.url}`);
+    }
+  }
+  assert(!r.refused.includes("stale_generation"), JSON.stringify(r.refused));
+  // One purchase per actor, never repeated.
+  const actors = of("provider").map((o: Rehearsal) => o.actor);
+  assertEquals(actors.length, new Set(actors).size, "no duplicate paid purchase");
+}
+
+const opts = { sanitizeOps: false, sanitizeResources: false };
+const SKIPPED_STAGES = ["research_route_control", "discovery_actor_strategy", "You triage companies", "You compare prospect companies"];
+const stageRan = (r: Rehearsal, prefix: string) => (r.trace.model_stages as string[]).some((s) => s.startsWith(prefix.slice(0, 40)));
+const taskJson = (r: Rehearsal) => JSON.stringify(r.trace.tasks);
+
+/** Minimal orchestration: plan + qualification only; the skipped stages never call a model. */
+function minimalShape(r: Rehearsal) {
+  for (const s of SKIPPED_STAGES) assert(!stageRan(r, s), `${s} ran under the minimal orchestration`);
+  assertEquals((r.trace.model_stages as string[]).filter((s) => s === "lead_execution_plan").length, 1, "the real planner, once");
+  assert(stageRan(r, "You assess several companies") && stageRan(r, "Decide whether this company satisfies"),
+    "qualification uses the real evaluators");
+  assertEquals(r.of("model").length, 3, "plan, batch evaluation, mission evaluation");
+  // No terminal receipt re-reads: every Apify read is one of the run's own.
+  const apifyReads = r.trace.requests.filter((q: Rehearsal) => q.method === "GET" && q.url.includes("api.apify.com")).length;
+  assertEquals(apifyReads, r.of("poll").length);
+}
+
+/**
+ * WHERE THE MISSION STOPS TODAY, and why — each must be lifted by an approved
+ * change, never by loosening a rule (docs: the PR #94 rehearsal report):
+ *   1. enrichment is a precondition of qualifying, and the job row "can suggest
+ *      but not prove" size, country and industry: the company record
+ *      (apify:harvestapi~linkedin-company) is required, and the approved
+ *      first-smoke catalog does not include it;
+ *   2. with it, two runs need 3 + 3 reads against the cap of five;
+ *   3. the compiler reads "an open Account Executive posting" as a leadership
+ *      POST, a signal the smoke can never answer.
+ */
+function blockersRecorded(r: Rehearsal) {
+  const signals = ((r.trace.stages as Rehearsal[])[0].mission.required_signals as Rehearsal[]).map((x) => x.event);
+  assert(signals.includes("post"), `blocker 3 lifted (${signals}): extend the rehearsal to persistence`);
+  assert(taskJson(r).includes('"enrichment_outcome": "provider_error"') || taskJson(r).includes('"enrichment_outcome":"provider_error"'),
+    "held: no company record");
+  assert(taskJson(r).includes("insufficient_evidence"), "held as insufficient evidence, never passed");
+  assertEquals(r.dashboard.error, null);
+  assertEquals(r.dashboard.data?.length, 0, "nothing qualified is persisted without the company record");
+}
+
+Deno.test("offline smoke, minimal orchestration, approved catalog: qualification is reached; held without the company record", opts, () =>
+  rehearse({ orchestration: "minimal", label: "minimal-approved" }, (r) => {
+    limitsHeld(r);
+    minimalShape(r);
+    assertEquals(r.of("provider").length, 1);
+    assertEquals(r.of("provider")[0].report_source, "apify_run(settled).receipt");
+    assertEquals(r.of("poll").length, 3, "status, settled receipt, dataset");
+    assert(r.refused.includes("unknown_quote"), "company details is outside the approved catalog");
+    blockersRecorded(r);
+    assertEquals(r.credits.filter((c: Rehearsal) => c.status === "charged").length, 1);
+    r.trace.verdict = "BLOCKED: company record not approved (1); reads (2); compiled post signal (3)";
+  }));
+
+Deno.test("offline smoke, minimal orchestration, + company details: the second run is refused its start on reads", opts, () =>
+  rehearse({ orchestration: "minimal", companyDetails: true, label: "minimal-details" }, (r) => {
+    limitsHeld(r);
+    minimalShape(r);
+    assertEquals(r.of("provider").length, 1, "the company-details start is refused before admission");
+    assertEquals(r.of("poll").length, 3);
+    assert(r.trace.admissions.some((a: Rehearsal) => a.data?.decision === "read_plan" && a.data?.detail === "reads_exhausted"),
+      JSON.stringify(r.refused));
+    blockersRecorded(r);
+    r.trace.verdict = "BLOCKED: 3 + 3 reads against five (2)";
+  }));
+
+Deno.test("offline smoke, customer orchestration: the stages the smoke skips still run outside it", opts, () =>
+  rehearse({ label: "customer" }, (r) => {
+    limitsHeld(r);
+    assert(stageRan(r, "research_route_control") && stageRan(r, "You triage companies"),
+      JSON.stringify(r.trace.model_stages));
+  }));

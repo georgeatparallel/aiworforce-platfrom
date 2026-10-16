@@ -2105,6 +2105,14 @@ export interface CapabilityEngineDeps {
   }) => Promise<unknown>;
   /** Batches this task may pay for. Defaults to "as many as the pool needs". */
   triageBatchesAllowed?: number;
+  /**
+   * THE DISCOVERY SMOKE'S MINIMAL ORCHESTRATION (opt-in, smoke only; see
+   * `smokeMinimalOrchestration`). Its catalog approves one search of one
+   * actor, so no discovery re-plan and no post-discovery plan amendment can
+   * buy anything: both are skipped, and their model calls with them. Every
+   * other stage — identity, enrichment, qualification, persistence — runs.
+   */
+  smokeMinimalOrchestration?: boolean;
   triageBatchSize?: number;
   evaluateMission?: (i: {
     input: MissionEvaluationInput;
@@ -6586,6 +6594,15 @@ export async function runCapabilityPlan(
           }
         }
 
+        if (deps.smokeMinimalOrchestration) {
+          log("discovery_replan_skipped", {
+            pass, reason: "smoke_minimal_orchestration", pool: companies.length,
+            admitted: admittedNow(),
+          });
+          // True of the smoke: its catalog approves no further actor.
+          discoveryStop = "no_further_actor_proposed";
+          break;
+        }
         log("discovery_replan_considering", {
           pass, pool: companies.length, admitted: admittedNow(),
           available_admitted: availableAdmittedNow(),
@@ -6922,7 +6939,14 @@ export async function runCapabilityPlan(
         .map((s) => s.capability)
         .filter((c) => OPTIONAL_BY_CHAIN.has(c) && !state.completed_capabilities.includes(c));
 
-      if (deps.planExecution && executionPlan && amendableSurface.length === 0) {
+      if (deps.planExecution && executionPlan && deps.smokeMinimalOrchestration) {
+        // The smoke's catalog approves one search of one actor: a re-added
+        // optional stage (a second paid job search) could not be bought.
+        log("execution_plan_amendment_skipped", {
+          reason: "smoke_minimal_orchestration",
+          detail: "the smoke catalog approves no further purchase an amendment could add",
+        });
+      } else if (deps.planExecution && executionPlan && amendableSurface.length === 0) {
         log("execution_plan_amendment_skipped", {
           reason: "no_amendable_surface",
           detail:

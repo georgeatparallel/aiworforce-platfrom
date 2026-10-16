@@ -159,3 +159,19 @@ export async function smokeApprovedActors(): Promise<readonly string[] | null> {
 
 /** The gate's actor id for an Apify implementation id (`owner/name` → `apify:owner~name`), as `classifyRequest` derives it. */
 export const apifyGateActor = (implementationId: string): string => `apify:${implementationId.replace("/", "~")}`;
+
+export const SMOKE_ORCHESTRATION_ENV = "LEAD_V2_SMOKE_ORCHESTRATION";
+
+/**
+ * The smoke's minimal orchestration: opt-in (`LEAD_V2_SMOKE_ORCHESTRATION=
+ * minimal`) AND only while the admission gate is this process's fetch. Either
+ * missing, the run is the customer path, unchanged. It drops the model calls
+ * that cannot change what the one-search smoke buys or decides — route
+ * control, triage, the discovery re-plan, the post-discovery plan amendment,
+ * shadow pool ranking — and the terminal receipt re-reads the gate's settled
+ * receipt already covers.
+ */
+export function smokeMinimalOrchestration(readEnv: (k: string) => string | undefined): boolean {
+  return smokeAdmissionActive() &&
+    String(readEnv(SMOKE_ORCHESTRATION_ENV) ?? "").trim().toLowerCase() === "minimal";
+}

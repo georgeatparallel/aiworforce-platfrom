@@ -195,6 +195,7 @@ import {
   persistP2Spine, settleAndPersistP2Spine, type SpineDb, type SpineState,
 } from "../_shared/p2SpinePersistence.ts";
 import { fetchApifyRunReceipt, settlementAttempts } from "../_shared/providerReceipts.ts";
+import { smokeMinimalOrchestration } from "../_shared/smokeAdmissionRefusal.ts";
 import { specGovernedMapper, specGovernedPageFetcher, webEvidenceCreditRate } from "../_shared/webEvidenceSpec.ts";
 import {
   readFreshPages, readResearchedRequirements,
@@ -2857,6 +2858,17 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
           task_id: task.id, ...triageBinding.diagnostics,
         });
         let triageBatchesMade = 0;
+        // THE DISCOVERY SMOKE ONLY (opt-in, and only behind the admission gate).
+        // Its four model attempts go to planning and qualification; see
+        // `smokeMinimalOrchestration`. Outside it every stage below is unchanged.
+        const smokeMinimal = smokeMinimalOrchestration(readEnvSafe);
+        if (smokeMinimal) {
+          console.log("[run-agent][smoke-orchestration]", {
+            task_id: task.id, mode: "minimal",
+            skipped: ["route_control", "triage", "discovery_replan", "execution_plan_amendment",
+              "pool_ranking_shadow", "p2_receipt_rereads"],
+          });
+        }
 
         // ── THE GROUNDED COMPANY BRAIN ───────────────────────────────────────
         //
@@ -3528,7 +3540,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               // target, at most twice per invocation. Every proposal passes
               // `validateRouteControl` before a plan version changes.
               // LEAD_V2_ROUTE_CONTROL=off removes it.
-              ...(String(readEnvSafe("LEAD_V2_ROUTE_CONTROL") ?? "").trim().toLowerCase() === "off" ? {} : {
+              ...(smokeMinimal || String(readEnvSafe("LEAD_V2_ROUTE_CONTROL") ?? "").trim().toLowerCase() === "off" ? {} : {
                 controlRoutes: makeGptRouteController({
                   readEnv: readEnvSafe,
                   onModelCall: modelCalls.sink,
@@ -3561,7 +3573,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               // deterministic verdict. A failure here is never an exclusion —
               // the strict parser degrades a bad batch to `uncertain`, which
               // costs a company its priority and never its place in the run.
-              triageCompanies: triageBinding.triageCompanies
+              triageCompanies: triageBinding.triageCompanies && !smokeMinimal
                 ? async ({ input, company_keys }) => {
                   triageBatchesMade++;
                   const raw = await triageBinding.triageCompanies!(
@@ -3576,6 +3588,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                 }
                 : undefined,
               triageBatchesAllowed: triageBinding.batchesRemaining,
+              smokeMinimalOrchestration: smokeMinimal,
               triageBatchSize: triageBinding.batchSize,
               // ── THE MISSION EVALUATOR, IN PRODUCTION ─────────────────────
               //
@@ -3688,7 +3701,9 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
               // nothing, persisted nothing, and left enforce to be switched on
               // with no evidence of what it would reorder. The engine ships the
               // deterministic order in shadow and records the difference.
-              ...(poolBinding.rankPool
+              // The smoke's minimal orchestration skips the SHADOW ranker only:
+              // it orders nothing the user sees, and costs one of four attempts.
+              ...(poolBinding.rankPool && !(smokeMinimal && poolBinding.rankingMode !== "enforce")
                 ? {
                   rankPool: poolBinding.rankPool,
                   rankingMode: poolBinding.rankingMode,
@@ -4592,12 +4607,15 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
             // per-result charges after SUCCEEDED, so receipts are re-read until
             // they agree and the run finished a minute ago — bounded, and cut to
             // a single read when the deadline has no room.
+            // In the smoke's minimal orchestration nothing is re-read: the gate
+            // recorded each run's settled receipt durably, and every read here
+            // would spend the mission's shared five.
             if (p2Specs && capabilityRun) {
               const apifyToken = readEnvSafe("APIFY_API_TOKEN");
               const room = terminalGuard.deadline ? terminalGuard.deadline.remainingMs() : Infinity;
               const p2Final = await settleAndPersistP2Spine({
                 state: capabilityRun.state as SpineState,
-                receiptFor: apifyToken ? (runId) => fetchApifyRunReceipt(runId, apifyToken) : null,
+                receiptFor: apifyToken && !smokeMinimal ? (runId) => fetchApifyRunReceipt(runId, apifyToken) : null,
                 db: supabase as unknown as SpineDb,
                 scope: { workspace_id: String(workspace_id ?? ""), lineage_id: String(lineageRootId) },
                 attempts: settlementAttempts(room, { waitMs: 15_000 }),
@@ -5644,7 +5662,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
                   const room = terminalGuard.deadline ? terminalGuard.deadline.remainingMs() : Infinity;
                   const vFinal = await settleAndPersistP2Spine({
                     state: vState as SpineState,
-                    receiptFor: apifyToken ? (runId) => fetchApifyRunReceipt(runId, apifyToken) : null,
+                    receiptFor: apifyToken && !smokeMinimal ? (runId) => fetchApifyRunReceipt(runId, apifyToken) : null,
                     db: supabase as unknown as SpineDb,
                     scope: { workspace_id: String(workspace_id ?? ""), lineage_id: String(lineageRootId) },
                     attempts: settlementAttempts(room, { waitMs: 15_000 }),
