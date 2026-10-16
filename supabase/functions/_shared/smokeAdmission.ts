@@ -206,7 +206,11 @@ export function boundRequest(
   let body = req.body;
   if (body === undefined) return { ok: false, reason: "unreadable_body" };
   const hasBody = body !== null && body !== "";
-  if (hasBody || limits.pin_body) {
+  // SAF-008. A purchase whose template names mandatory fields is checked even
+  // without a body (as `{}`), so an absent or empty body is refused like `{}`.
+  // Polls never carry the purchase's fields and are bounded by their parent.
+  const mandatory = c.kind !== "poll" && Object.keys(limits.max_fields ?? {}).length > 0;
+  if (hasBody || limits.pin_body || mandatory) {
     const parsed = parseBody(hasBody ? body : "{}");
     if (!parsed) return { ok: false, reason: "body_not_json_object" };
     const pinned = { ...parsed, ...(limits.pin_body ?? {}) };

@@ -396,3 +396,30 @@ Deno.test("R2 (Codex P2): in the smoke, an uncertain Firecrawl CRAWL start keeps
     assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, `${why}: held, not refunded`);
   }
 });
+
+// Codex SAF-008: the quote's mandatory `maxItems` is never sent as an absent or
+// empty body. Codex's reproduction, through the real admission RPC.
+Deno.test("SAF-008: an absent or empty body never bypasses the quote's mandatory fields", opts, async () => {
+  const quotes = syntheticQuotes({
+    apify_jobs: { ...(syntheticQuotes().apify_jobs as Record<string, unknown>),
+      request_limits: { max_request_bytes: 4096, max_fields: { maxItems: 3 } } },
+  });
+  const url = "https://api.apify.com/v2/acts/curious_coder~linkedin-jobs-scraper/runs";
+  for (const body of [null, "", "{}", "null", "[]", " ", '{"maxItems":"3"}', '{"maxItems":4}']) {
+    const m = await fundedMission({ quotes });
+    const v = fakeVendor(() => json(201, { data: { id: "run-unbounded", status: "RUNNING" } }));
+    const res = await inMission(m, v, () => fetch(url, { method: "POST", body }));
+    const refusal = await res.json();
+    assertEquals(res.status, 409, `${JSON.stringify(body)}: a definite non-start`);
+    assertEquals(refusal.error.decision, "request_limits", JSON.stringify(body));
+    assertEquals(v.seen.length, 0, `${JSON.stringify(body)}: nothing reaches the vendor`);
+    assertEquals((await ops(m)).length, 0, `${JSON.stringify(body)}: no durable purchase`);
+  }
+  const m = await fundedMission({ quotes });
+  const v = fakeVendor(() => json(201, { data: { id: "run-bounded", status: "RUNNING" } }));
+  const ok = await inMission(m, v, () => fetch(url, { method: "POST", body: '{"maxItems":3}' }));
+  await ok.body?.cancel();
+  assertEquals(ok.status, 201, "the bounded request is still bought");
+  assertEquals(v.seen.length, 1);
+  assertEquals((await ops(m)).length, 1);
+});

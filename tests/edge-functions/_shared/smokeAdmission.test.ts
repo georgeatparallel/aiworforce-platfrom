@@ -108,6 +108,23 @@ Deno.test("limits: vendor-side caps are pinned onto the request that is sent and
   assert(/^[0-9a-f]{64}$/.test(h1));
 });
 
+Deno.test("SAF-008: a purchase with mandatory fields refuses an absent or empty body; bodyless requests without them are unchanged", () => {
+  const url = "https://api.apify.com/v2/acts/a~b/runs";
+  const mandatory = { max_request_bytes: 4096, max_fields: { maxItems: 3 } };
+  for (const body of [null, "", "{}"]) {
+    assertEquals(boundRequest(req("POST", url, body), apify, mandatory), { ok: false, reason: "field_unbounded:maxItems" },
+      `${JSON.stringify(body)} is refused exactly as {} is`);
+  }
+  assertEquals(boundRequest(req("POST", url, " "), apify, mandatory), { ok: false, reason: "body_not_json_object" });
+  assert(boundRequest(req("POST", url, "{\"maxItems\":3}"), apify, mandatory).ok, "the bounded request is kept");
+  // No mandatory field: a bodyless purchase capped by its query pins is still allowed.
+  const pinned = boundRequest(req("POST", url, null), apify, { max_request_bytes: 4096, pin_query: { maxItems: "50" } });
+  assert(pinned.ok && pinned.request.body === null && pinned.request.url.searchParams.get("maxItems") === "50");
+  // A poll never carries the purchase's fields, even under a template that names them.
+  const poll = classify("GET", "https://api.apify.com/v2/actor-runs/r1") as Exclude<Classified, { kind: "free" | "forbidden" }>;
+  assert(boundRequest(req("GET", "https://api.apify.com/v2/actor-runs/r1", null), poll, mandatory).ok);
+});
+
 Deno.test("templates: exactly one per kind and actor", () => {
   const t = (actors: string[], kinds = ["model"]) => ({ allowed_kinds: kinds, allowed_actors: actors } as unknown as QuoteTemplate);
   assertEquals(templateFor({ approved_quotes: { a: t(["x"]) } }, "model", "y"), { ok: false, reason: "unknown_quote" });

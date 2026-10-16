@@ -171,3 +171,6 @@ prove_killed "R2 uncertain crawl start refunded (Codex P2)" "$tools_ts" \
   '  if (!startRes.ok && smokeAdmissionActive() && (startRes.status === 0 || startRes.status >= 500)) {' \
   '  if (false) {' \
   "$gate_tests" "R2 (Codex P2): in the smoke, an uncertain Firecrawl CRAWL start keeps its credit HELD"
+prove_killed "SAF-008 bodyless purchase skips mandatory fields" "$gate_ts" \
+  "  if (hasBody || limits.pin_body || mandatory) {" "  if (hasBody || limits.pin_body) {" \
+  "$gate_tests" "SAF-008: an absent or empty body never bypasses the quote's mandatory fields"
