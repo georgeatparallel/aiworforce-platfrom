@@ -143,6 +143,20 @@ If Luna's observed price differs from $0.20 in / $1.20 out per 1M, recompute
 `0.2·B + 1.2·O` with the real figures. If four attempts no longer fit in
 50,000 µ$, **stop**: the model allocation is not raised.
 
+**Request size (Codex P1 on #94).**
+- **The fix.** The execution planner's request was 53,922 bytes. In smoke
+  mode, #94 shows the planner only the approved actors, in unindented JSON:
+  **29,594 bytes** measured for this mission with no Company Brain, against
+  B = 32,768.
+- **Where it gets measured.** The full-path rehearsal must measure every
+  stage with the test workspace's real brain.
+- **If a stage still exceeds 32,768,** that stage is refused before transport
+  and nothing is bought.
+- **The only bound-preserving fallback is B ≤ 38,400.** At that size
+  0.2·38,400 + 1.2·4,000 = 12,480 µ$, and four attempts are 49,920 µ$, still
+  inside the $0.05 model allocation. That is decision D2; it raises no
+  authorized limit.
+
 ## Phase 6 — Stop and cancellation (in this order, any time)
 
 ```sql
@@ -212,7 +226,7 @@ has no earlier liability.
 | # | Decision |
 |---|---|
 | D1 | The first-smoke profile above (one job search, Luna only, no details, no Firecrawl) |
-| D2 | The catalog values, once the prices are observed (job-search 5,000 µ$; Luna 11,400 µ$ or recomputed) |
+| D2 | The catalog values, once the prices are observed (job-search 5,000 µ$; Luna B = 32,768 → 11,400 µ$, or B ≤ 38,400 → 12,480 µ$ if the rehearsal measures a larger request; both keep 4 attempts within $0.05) |
 | D3 | Drop `TEST_ANTHROPIC_API_KEY` from the worker proposal (not on the mission path) |
 | D4 | Reconcile after the mission (Phase 7) is acceptable for the first smoke; the durable gate above goes to separate review before any second paid mission |
 | D5 | Create the test project; set the account limits (Phase 1, Phase 3) |
