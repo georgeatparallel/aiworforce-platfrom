@@ -527,14 +527,15 @@ Deno.test("read lifecycle: a slow run takes four reads; a second run that could 
   assert(first.ok, JSON.stringify(first).slice(0, 300));
   assertEquals(v.kinds, ["status(wait=60)", "status(wait=60)", "receipt", "dataset"]);
   assertEquals(await reads(m), 4);
-  // One read left: a second run's lifecycle needs three, so the gate does not buy it.
-  const second = await inMission(m, v, () => runTool("source_with_apify", jobsSearch("enterprise sales"), toolCtx(m)));
-  assertEquals(second.error, "apify_start_failed:409", "a definite non-start (read_plan: reads_exhausted)");
+  // One read left: a second run's lifecycle needs three, so the gate does not
+  // buy it. Company details: not a discovery page, so only the read plan refuses it.
+  const second = await inMission(m, v, () => fetch("https://api.apify.com/v2/acts/harvestapi~linkedin-company/runs?token=t",
+    { method: "POST", body: JSON.stringify({ companies: ["https://www.linkedin.com/company/x"] }) }));
+  const why = (await second.json()).error;
+  assertEquals([second.status, why.decision, why.detail], [409, "read_plan", "reads_exhausted"], "a definite non-start");
   assertEquals(v.seen.filter((s) => s.method === "POST").length, 1, "nothing more was bought");
   assertEquals(await reads(m), 4, "and nothing more was read");
-  const c = await credits(m.ws);
-  assertEquals([c.balance, c.reserved, c.statuses.filter((x) => x !== "not_charged")], [9, 0, ["charged"]],
-    "one credit for the one run; nothing charged or held for the refused one");
+  assertEquals(await credits(m.ws), { balance: 9, reserved: 0, statuses: ["charged"] }, "one credit, for the one run");
 });
 
 Deno.test("read lifecycle: a run still RUNNING at the reserve stays pending, its receipt explicitly unsettled and listed", opts, async () => {
@@ -563,7 +564,11 @@ Deno.test("read lifecycle: the long poll is clamped to the time left; too little
   const late = await fundedMission();
   const v2 = apify({ id: "r5", finishAfter: 1 });
   const refused = await inMission(late, v2, () => runTool("source_with_apify", jobsSearch(), toolCtx(late)), { remainingMs: () => 60_000 });
-  assertEquals(refused.error, "apify_start_failed:409", "read_plan: no_time");
+  assertEquals(refused.error, "apify_start_failed:409", "a definite non-start");
+  const direct = await inMission(late, v2, () => fetch("https://api.apify.com/v2/acts/harvestapi~linkedin-company/runs?token=t",
+    { method: "POST", body: JSON.stringify({ companies: ["https://www.linkedin.com/company/x"] }) }), { remainingMs: () => 60_000 });
+  const why = (await direct.json()).error;
+  assertEquals([why.decision, why.detail], ["read_plan", "no_time"], "refused by the read plan, not by a cap");
   assertEquals(v2.seen.length, 0, "a run whose lifecycle cannot fit in the time left is not bought");
 });
 

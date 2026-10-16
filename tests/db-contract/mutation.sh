@@ -151,6 +151,9 @@ prove_killed "smoke start ignores the lifecycle's reads" "$plan_ts" \
 prove_killed "read plan refusal reads as a refund for a replay" "$gate_ts" \
   '      if (!plan.ok) return refuse("read_plan", plan.reason);' '      if (!plan.ok) return refusal("read_plan", plan.reason);' \
   "$gate_tests" "read lifecycle: a replay of an uncertain start refused by the read plan keeps its credit HELD"
+prove_killed "smoke start ignores the time left" "$plan_ts" \
+  "    s.remainingMs < APIFY_START_TIMEOUT_MS + SMOKE_MIN_WAIT_S * 1000 + SMOKE_READ_SLACK_MS + SMOKE_TAIL_MS) {" "    false) {" \
+  "$gate_tests" "read lifecycle: the long poll is clamped to the time left; too little time buys nothing"
 prove_killed "long poll not clamped to the time left" "$plan_ts" \
   "Math.min(APIFY_MAX_WAIT_S, Math.floor((s.remainingMs - SMOKE_TAIL_MS - SMOKE_READ_SLACK_MS) / 1000))" "APIFY_MAX_WAIT_S" \
   "$gate_tests" "read lifecycle: the long poll is clamped to the time left; too little time buys nothing"
