@@ -486,7 +486,7 @@ const unsettled = async (m: SmokeMission) =>
   await sql.unsafe(reconciliation.replace(":'queue_id'", `'${m.queueId}'`));
 const reads = async (m: SmokeMission) => (await ops(m)).filter((o) => o.kind === "poll").length;
 /** An Apify that honours `waitForFinish`: `finishAfter` status reads, then SUCCEEDED with `finishedAt` `settleLeftMs` short of settled. */
-function apify(o: { id: string; finishAfter: number; settleLeftMs?: number; usd?: number; finalUsd?: number }) {
+function apify(o: { id: string; finishAfter: number; settleLeftMs?: number; usd?: number; finalUsd?: number; statusDelayMs?: number }) {
   let statusReads = 0;
   let finishedAt: string | null = null;
   const kinds: string[] = [];
@@ -499,8 +499,10 @@ function apify(o: { id: string; finishAfter: number; settleLeftMs?: number; usd?
       if (longPoll && ++statusReads < o.finishAfter) return json(200, { data: { id: o.id, status: "RUNNING", defaultDatasetId: `ds-${o.id}` } });
       if (o.finishAfter === Infinity) return json(200, { data: { id: o.id, status: "RUNNING", defaultDatasetId: `ds-${o.id}` } });
       finishedAt ??= ago(10_000 - (o.settleLeftMs ?? 200));
-      return json(200, { data: { id: o.id, status: "SUCCEEDED", defaultDatasetId: `ds-${o.id}`, finishedAt,
+      const body = json(200, { data: { id: o.id, status: "SUCCEEDED", defaultDatasetId: `ds-${o.id}`, finishedAt,
         usageTotalUsd: longPoll ? (o.usd ?? 0.004) : (o.finalUsd ?? o.usd ?? 0.004) } });
+      // A snapshot taken now, answered late: the delay must not make it "settled".
+      return longPoll && o.statusDelayMs ? new Promise<Response>((r) => setTimeout(() => r(body), o.statusDelayMs)) : body;
     }
     return json(404, {});
   });
@@ -649,4 +651,18 @@ Deno.test("read lifecycle: a replay of an uncertain start refused by the read pl
   assert(String(replay.error).startsWith(APIFY_START_UNCERTAIN), `refused by the read plan, still uncertain: ${replay.error}`);
   assertEquals(v.seen.filter((s) => s.method === "POST").length, 1, "not sent again");
   assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, "still held, never refunded");
+});
+
+Deno.test("read lifecycle (Codex P2): a preliminary snapshot answered late is not taken as settled", opts, async () => {
+  // The terminal status is snapshotted 150 ms before it settles, and arrives
+  // 400 ms later. Judged against arrival it would look settled; judged against
+  // when the request left (the snapshot's lower bound) it is not.
+  const m = await fundedMission();
+  const v = apify({ id: "r6", finishAfter: 1, settleLeftMs: 150, statusDelayMs: 400, usd: 0.004, finalUsd: 0.0045 });
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  assertEquals(v.kinds, ["status(wait=60)", "receipt", "dataset"], "the settled receipt is still read");
+  const [p] = (await ops(m)).filter((o) => o.kind === "provider");
+  assertEquals([p.reported_microusd, p.report_source], ["4500", APIFY_SETTLED_SOURCE], "the settled figure, from the receipt read");
+  assertEquals((await unsettled(m)).length, 0);
 });

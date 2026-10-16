@@ -671,6 +671,9 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
     // pinned caps) and its body. Headers and signal are the caller's.
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     headers.delete("content-length");
+    // When the request left: the vendor's snapshot is no older than this, so
+    // judging "settled" against it never mistakes a preliminary figure.
+    const sentAt = now();
     const res = await d.baseFetch(final.url.href, {
       method: final.method, headers, body: final.body ?? undefined, redirect: "manual",
       signal: init?.signal ?? (input instanceof Request ? input.signal : undefined),
@@ -682,7 +685,7 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
       return refusal("redirect_refused", res.status, c.kind === "provider");
     }
     log("[smoke-admission] sent", { kind: c.kind, actor, key: admitted.operation_key, committed_microusd: admitted.committed_microusd, status: res.status });
-    await observe(d.db, ctx.queueId, c, res, admitted, parent, log, now);
+    await observe(d.db, ctx.queueId, c, res, admitted, parent, log, sentAt);
     return res;
   };
   // Lets the transports tell the smoke is active (smokeAdmissionActive).
@@ -733,7 +736,8 @@ async function observe(
   admitted: { operation_key: string; reservation_token: string },
   parent: { operation_key: string; reservation_token: string } | null,
   log: (m: string, meta?: unknown) => void,
-  now: () => number = Date.now,
+  /** When the request was sent (a lower bound on the vendor's snapshot time). */
+  sentAt: number = Date.now(),
 ): Promise<void> {
   try {
     if (c.kind === "provider" && c.captures && res.ok) {
@@ -761,7 +765,7 @@ async function observe(
         await recordReceipt(db, {
           queueId, key: parent.operation_key, token: parent.reservation_token,
           reportedMicrousd: charge,
-          source: apifyRunSettled(j?.data ?? null, now()) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",
+          source: apifyRunSettled(j?.data ?? null, sentAt) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",
         });
       }
     }

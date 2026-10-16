@@ -1188,6 +1188,10 @@ async function execSourceWithApify(
     resumeWait = plan;
   }
 
+  // SETTLEMENT IS JUDGED AT SEND TIME. A response is a snapshot taken no
+  // earlier than its request left; judged against a later clock (after the
+  // gate's own writes), a preliminary figure could read as settled.
+  let finalRunSentAt = Date.now();
   const startRes = resumeRunId
     ? await apifyFetch(`/actor-runs/${resumeRunId}?${resumeWait ? `waitForFinish=${resumeWait.waitS}&` : ""}token=${APIFY_API_TOKEN}`, {
       method: "GET",
@@ -1295,6 +1299,7 @@ async function execSourceWithApify(
       console.log("[toolRegistry] smoke: status read not planned; the Apify run stays pending", { run_id, status, reason: plan.reason });
       break;
     }
+    const pollSentAt = Date.now();
     const poll = await apifyFetch(`/actor-runs/${run_id}?waitForFinish=${plan.waitS}&token=${APIFY_API_TOKEN}`, {
       method: "GET",
       timeoutMs: plan.timeoutMs,
@@ -1305,6 +1310,7 @@ async function execSourceWithApify(
       return { ok: false, unavailable: true, error: "apify_unauthorized", data: { run_id } };
     }
     finalRun = poll.data?.data ?? poll.data ?? finalRun;
+    finalRunSentAt = pollSentAt;
     status = finalRun?.status ?? status;
   }
   while (!smokeReads && Date.now() < deadline) {
@@ -1347,7 +1353,7 @@ async function execSourceWithApify(
   if (smokeReads) {
     if (!APIFY_TERMINAL_STATUSES.has(status)) {
       receipt = "unsettled";
-    } else if (apifyRunSettled(finalRun, Date.now())) {
+    } else if (apifyRunSettled(finalRun, finalRunSentAt)) {
       receipt = "settled";
     } else {
       const st = await smokeReadState();
@@ -1361,13 +1367,14 @@ async function execSourceWithApify(
       receipt = "unsettled";
       if (plan.ok) {
         if (plan.waitMs > 0) await new Promise((r) => setTimeout(r, plan.waitMs));
+        const receiptSentAt = Date.now();
         const r = await apifyFetch(`/actor-runs/${run_id}?token=${APIFY_API_TOKEN}`, {
           method: "GET",
           timeoutMs: APIFY_RECEIPT_TIMEOUT_MS,
         }).catch(() => null);
         if (r?.ok && !isAdmissionRefusal(r)) {
           finalRun = r.data?.data ?? r.data ?? finalRun;
-          if (apifyRunSettled(finalRun, Date.now())) receipt = "settled";
+          if (apifyRunSettled(finalRun, receiptSentAt)) receipt = "settled";
         }
       }
     }

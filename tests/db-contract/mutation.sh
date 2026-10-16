@@ -217,3 +217,6 @@ prove_killed "wall clock: deadline extended past 300 s" "$clock_ts" \
 prove_killed "wall clock: far-future queue timestamp accepted" "$clock_ts" \
   "at > now + QUEUE_CLOCK_SKEW_MS) return null;" "false) return null;" \
   "$clock_tests" "wall clock: unreadable or future queue timestamp 2026-10-14T00:00:30.001Z refuses before the handler"
+prove_killed "settlement judged at arrival, not send time (Codex P2)" "$tools_ts" \
+  "    } else if (apifyRunSettled(finalRun, finalRunSentAt)) {" "    } else if (apifyRunSettled(finalRun, Date.now())) {" \
+  "$gate_tests" "read lifecycle (Codex P2): a preliminary snapshot answered late is not taken as settled"
