@@ -45,7 +45,12 @@
       "source": "<Apify usage page: API reads not charged for these actors>",
       "liability_bound_ref": "reads are not actor events",
       "observed_at": "<ISO time>",
-      "request_limits": {}
+      "request_limits": {
+        "max_reads_per_actor": {
+          "apify:harvestapi~linkedin-job-search": 3,
+          "apify:harvestapi~linkedin-company": 2
+        }
+      }
     },
     "luna": {
       "allowed_kinds": ["model"],
@@ -65,7 +70,9 @@
     "cap": 5,
     "apify:harvestapi~linkedin-job-search": ["status (long poll)", "settled receipt", "dataset"],
     "apify:harvestapi~linkedin-company": ["status (long poll)", "dataset"],
-    "deferred": "the company-details receipt: committed maximum held, listed by scripts/test-project/smoke-reconciliation.sql, closed only by reconcile_discovery_smoke_operation"
+    "enforced_by": "reads.request_limits.max_reads_per_actor (admit_discovery_smoke refuses `read_allocation`; the worker's read plan uses each actor's share), inside the shared cap of 5",
+    "slow_job_search": "a job search needing two status reads keeps its dataset read and defers its receipt; company details keeps its two",
+    "deferred": "any receipt the allocation leaves no read for (normally the company details'): committed maximum held, listed by scripts/test-project/smoke-reconciliation.sql, closed only by reconcile_discovery_smoke_operation"
   },
   "orchestration": "LEAD_V2_SMOKE_ORCHESTRATION=minimal (model attempts: execution plan, batch evaluation, mission evaluation, opportunity reasoning)"
 }

@@ -224,6 +224,10 @@ begin
        or coalesce(length(trim(v_t ->> 'source')), 0) = 0
        or coalesce(length(trim(v_t ->> 'liability_bound_ref')), 0) = 0
        or jsonb_typeof(v_t -> 'request_limits') is distinct from 'object'
+       or ((v_t -> 'request_limits') ? 'max_reads_per_actor'
+           and (jsonb_typeof(v_t -> 'request_limits' -> 'max_reads_per_actor') <> 'object'
+                or exists (select 1 from jsonb_each(v_t -> 'request_limits' -> 'max_reads_per_actor') r
+                            where jsonb_typeof(r.value) <> 'number' or r.value::text !~ '^[0-9]+$')))
        or (v_t ? 'discovery_page' and jsonb_typeof(v_t -> 'discovery_page') <> 'boolean') then
       raise exception 'authorize_discovery_smoke: template % is malformed', v_id;
     end if;
@@ -262,7 +266,7 @@ declare
   p public.discovery_smoke_operations%rowtype;
   v_tpl jsonb; v_cost bigint; v_page boolean; v_paid boolean; v_now timestamptz; v_obs timestamptz;
   v_total bigint; v_provider bigint; v_model bigint;
-  n_paid integer; n_model integer; n_page integer; n_poll integer; n_actor integer;
+  n_paid integer; n_model integer; n_page integer; n_poll integer; n_actor integer; n_actor_poll integer;
 begin
   if p_queue is null or p_worker is null or p_task is null or p_generation is null
      or p_key is null or length(trim(p_key)) = 0 or p_kind is null or p_kind not in ('provider', 'model', 'poll')
@@ -378,8 +382,9 @@ begin
          count(*) filter (where kind = 'model'),
          count(*) filter (where discovery_page),
          count(*) filter (where kind = 'poll'),
-         count(*) filter (where actor = p_actor and (kind = 'provider' or (kind = 'poll' and committed_microusd > 0)))
-    into v_total, v_provider, v_model, n_paid, n_model, n_page, n_poll, n_actor
+         count(*) filter (where actor = p_actor and (kind = 'provider' or (kind = 'poll' and committed_microusd > 0))),
+         count(*) filter (where kind = 'poll' and actor = p_actor)
+    into v_total, v_provider, v_model, n_paid, n_model, n_page, n_poll, n_actor, n_actor_poll
     from public.discovery_smoke_operations where authorization_id = a.id;
 
   if v_total + v_cost > a.total_microusd
@@ -401,6 +406,14 @@ begin
   end if;
   if p_kind = 'poll' and n_poll >= a.provider_polls then
     return jsonb_build_object('decision', 'poll_limit');
+  end if;
+  -- THE READ ALLOCATION (optional, per actor, inside the shared cap): a reads
+  -- template may give each actor its share of the polls, so one slow run
+  -- cannot spend the reads a later approved run needs (independent review,
+  -- PR #96: job search 3, company details 2). Counted from the same rows.
+  if p_kind = 'poll' and (v_tpl -> 'request_limits' -> 'max_reads_per_actor') ? p_actor
+     and n_actor_poll >= (v_tpl -> 'request_limits' -> 'max_reads_per_actor' ->> p_actor)::integer then
+    return jsonb_build_object('decision', 'read_allocation');
   end if;
 
   insert into public.discovery_smoke_operations

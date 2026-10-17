@@ -61,11 +61,15 @@ export const SMOKE_READ_STATE_MARK = Symbol.for("agentory.smokeReadState");
 /** What the mission has left: reads from the database, time from the slice, the wall clock and the authorization. */
 export interface SmokeReadState { readsLeft: number | null; remainingMs: number | null }
 
-/** The gate's view, at call time; null outside the smoke. */
-export async function smokeReadState(): Promise<SmokeReadState | null> {
+/**
+ * The gate's view, at call time; null outside the smoke. With `actor` (the
+ * gate's actor id, `apify:owner~name`), reads left are that actor's: the
+ * smaller of the shared cap and its allocation (`max_reads_per_actor`).
+ */
+export async function smokeReadState(actor?: string): Promise<SmokeReadState | null> {
   const f = globalThis.fetch as unknown as Record<symbol, unknown> | undefined;
   const read = f?.[SMOKE_READ_STATE_MARK];
-  return typeof read === "function" ? await (read as () => Promise<SmokeReadState>)() : null;
+  return typeof read === "function" ? await (read as (a?: string) => Promise<SmokeReadState>)(actor) : null;
 }
 
 /** Apify's documented maximum for `waitForFinish` (actor-run-get, act-runs-post). */

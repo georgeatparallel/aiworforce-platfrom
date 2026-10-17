@@ -189,6 +189,8 @@ interface Variant {
   companyDetails?: boolean;
   /** The negative control: a company description that names no buyer ("to business customers"). */
   weakEvidence?: boolean;
+  /** The job search's first long poll returns RUNNING (independent review, PR #96). */
+  slowJobSearch?: boolean;
   label: string;
 }
 
@@ -311,6 +313,7 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
       model_stages: [],
     };
     const finishedAt = new Map<string, string>();
+    const statusReads = new Map<string, number>();
     const fixture = JSON.parse(
       await Deno.readTextFile(
         new URL(
@@ -409,6 +412,10 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
       }
       if (url.pathname.includes("/actor-runs/")) {
         const run = url.pathname.split("/").at(-1)!;
+        statusReads.set(run, (statusReads.get(run) ?? 0) + 1);
+        if (v.slowJobSearch && run === "run-jobs" && statusReads.get(run) === 1) {
+          return json({ data: { id: run, defaultDatasetId: "dataset-jobs", status: "RUNNING" } });
+        }
         if (!finishedAt.has(run)) finishedAt.set(run, new Date().toISOString());
         return json({
           data: {
@@ -753,6 +760,28 @@ Deno.test("offline smoke, two actors: one evidence-backed lead is qualified and 
     await refused.body?.cancel();
     assertEquals(r.trace.requests.length, before, "nothing is sent after the stop");
     r.trace.verdict = "PASS: 1 qualified, 1 persisted";
+  }));
+
+Deno.test("offline smoke, two actors, SLOW job search: the 3 + 2 allocation holds and the lead is still persisted", opts, () =>
+  rehearse({ orchestration: "minimal", companyDetails: true, slowJobSearch: true, label: "two-actor-slow" }, async (r) => {
+    limitsHeld(r);
+    minimalShape(r);
+    const reads = r.trace.requests.filter((q: Rehearsal) => q.method === "GET" && q.url.includes("api.apify.com"))
+      .map((q: Rehearsal) => new URL(q.url).pathname.replace(/^\/v2\//, "") + (new URL(q.url).searchParams.has("waitForFinish") ? " (long poll)" : ""));
+    assertEquals(reads, [
+      "actor-runs/run-jobs (long poll)", "actor-runs/run-jobs (long poll)", "datasets/dataset-jobs/items",
+      "actor-runs/run-details (long poll)", "datasets/dataset-details/items",
+    ], "job search: its three; company details: its two");
+    const [jobs, details] = r.of("provider");
+    assertEquals([jobs.committed_microusd, jobs.report_source], ["5000", "apify_run(status).receipt"],
+      "the job search's receipt is the one deferred: held at its maximum, never called settled");
+    assertEquals([details.committed_microusd, details.report_source], [String(SYNTHETIC_DETAILS_MAXIMUM), "apify_run(status).receipt"]);
+    assertEquals((await unreconciled(r.m.queueId)).map((o) => [o.actor, o.receipt]), [[JOBS, "unsettled"], [DETAILS, "unsettled"]]);
+    assertEquals(r.of("model").length, 4);
+    assertEquals(r.dashboard.data?.length, 1, "one lead persisted");
+    assertEquals((r.dashboard.data[0].raw as Rehearsal).canonical_decision.hard_checks,
+      { hiring: "pass", industry: "pass", geography: "pass", company_size: "pass" });
+    r.trace.verdict = "PASS (slow job search): 1 qualified, 1 persisted";
   }));
 
 Deno.test("offline smoke, negative control: a description naming no buyer is not qualified, whatever the evaluator says", opts, () =>

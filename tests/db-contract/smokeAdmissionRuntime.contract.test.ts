@@ -585,6 +585,28 @@ Deno.test("read lifecycle: the FINAL run is bought with two reads; its receipt i
   assertEquals(await credits(n2.ws), { balance: 10, reserved: 0, statuses: ["not_charged"] }, "a definite non-start is not charged");
 });
 
+Deno.test("read lifecycle: with a 3 + 2 allocation, a slow job search keeps company details' two reads (independent review, PR #96)", opts, async () => {
+  const quotes = syntheticQuotes({
+    polls: { ...(syntheticQuotes().polls as Record<string, unknown>),
+      request_limits: { max_reads_per_actor: { "apify:curious_coder~linkedin-jobs-scraper": 3, "apify:harvestapi~linkedin-company": 2 } } },
+  });
+  const m = await fundedMission({ quotes });
+  // The first long poll returns RUNNING; the second returns SUCCEEDED, just finished.
+  const v = apify({ id: "r7", finishAfter: 2 });
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  assertEquals(v.kinds, ["status(wait=60)", "status(wait=60)", "dataset"], "its share is three: the receipt is the read deferred");
+  assertEquals((res.data as { receipt?: string }).receipt, "unsettled");
+  assertEquals(await reads(m), 3);
+  assertEquals((await unsettled(m)).map((r) => r.provider_run_id), ["r7"], "held at its maximum, listed");
+  // Company details still has its two reads: its start is bought.
+  const second = await inMission(m, v, () => fetch("https://api.apify.com/v2/acts/harvestapi~linkedin-company/runs?token=t",
+    { method: "POST", body: JSON.stringify({ companies: ["https://www.linkedin.com/company/x"] }) }));
+  assertEquals(second.status, 201, "not refused by the read plan");
+  await second.body?.cancel();
+  assertEquals(v.seen.filter((s) => s.method === "POST").length, 2);
+});
+
 Deno.test("read lifecycle: the long poll is clamped to the time left; too little time buys nothing", opts, async () => {
   const m = await fundedMission();
   const v = apify({ id: "r4", finishAfter: 1, settleLeftMs: -1_000 }); // already settled when first seen

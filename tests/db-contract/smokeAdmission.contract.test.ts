@@ -608,3 +608,26 @@ Deno.test("reconciliation: a pre-authorized mission cannot spend over a CANCELLE
   await reconcile(a, buy.key, 60000);
   assertEquals((await admit(op(b))).decision, "admitted");
 });
+
+Deno.test("polls: a reads template's per-actor allocation holds each actor to its share of the five (independent review, PR #96)", opts, async () => {
+  const quotes = syntheticQuotes({
+    polls: { ...(syntheticQuotes().polls as Record<string, unknown>),
+      request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 2 } } },
+  });
+  const m = await seedSmokeMission({ quotes });
+  const jobs = provider(m, JOBS, "apify_jobs");
+  const details = provider(m, DETAILS, "apify_details");
+  assertEquals((await admit(jobs)).decision, "admitted");
+  assertEquals((await admit(details)).decision, "admitted");
+  const poll = (actor: string, parentKey: string) =>
+    op(m, { kind: "poll", actor, templateId: "polls", key: `poll:${uuid()}`, parentKey });
+  for (let i = 0; i < 3; i++) assertEquals((await admit(poll(JOBS, jobs.key))).decision, "admitted", `jobs read ${i + 1}`);
+  assertEquals((await admit(poll(JOBS, jobs.key))).decision, "read_allocation", "the job search's fourth read is the details' share");
+  for (let i = 0; i < 2; i++) assertEquals((await admit(poll(DETAILS, details.key))).decision, "admitted", `details read ${i + 1}`);
+  assertEquals((await admit(poll(DETAILS, details.key))).decision, "poll_limit", "the shared cap of five still holds");
+  // A malformed allocation is a malformed template.
+  const bad = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(bad.queueId, { quotes: syntheticQuotes({
+    polls: { ...(syntheticQuotes().polls as Record<string, unknown>), request_limits: { max_reads_per_actor: { [JOBS]: "3" } } },
+  }) }), Error, "malformed");
+});

@@ -160,6 +160,8 @@ export interface RequestLimits {
   pin_query?: Record<string, string>;
   /** Top-level JSON body fields set before sending (e.g. Firecrawl proxy). */
   pin_body?: Record<string, unknown>;
+  /** Reads templates: each actor's share of the shared poll cap (enforced by admit_discovery_smoke). */
+  max_reads_per_actor?: Record<string, number>;
   /** The final body, in UTF-8 bytes. Required for every kind that has a body. */
   max_request_bytes?: number;
   /** Model kinds: the output-token field must be present and at most this. */
@@ -563,8 +565,12 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
   const newKey = d.newKey ?? (() => crypto.randomUUID());
   const ownApi = d.ownApi ? new URL(d.ownApi) : null;
 
-  /** Reads left (database) and time left (slice and authorization); null where unknown. */
-  const readState = async (ctx: MissionAdmissionContext, auth: Authorization): Promise<SmokeReadState> => {
+  /**
+   * Reads left (database) and time left (slice and authorization); null where
+   * unknown. With an actor that has an allocation, its reads left are the
+   * smaller of the shared cap's and its own.
+   */
+  const readState = async (ctx: MissionAdmissionContext, auth: Authorization, actor?: string): Promise<SmokeReadState> => {
     const untilDeadline = Date.parse(auth.deadline_at) - now();
     const slice = ctx.remainingMs?.();
     const remainingMs = Number.isFinite(untilDeadline)
@@ -572,7 +578,13 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
       : null;
     const used = await pollsUsed(d.db, auth.id);
     const cap = auth.provider_polls;
-    return { readsLeft: used === null || typeof cap !== "number" ? null : Math.max(0, cap - used), remainingMs };
+    let readsLeft = used === null || typeof cap !== "number" ? null : Math.max(0, cap - used);
+    const share = actor ? readAllocation(auth, actor) : null;
+    if (share !== null && readsLeft !== null) {
+      const mine = await pollsUsed(d.db, auth.id, actor);
+      readsLeft = mine === null ? null : Math.min(readsLeft, Math.max(0, share - mine));
+    }
+    return { readsLeft, remainingMs };
   };
 
   const gate = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -648,7 +660,7 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
     // THE READ PLAN: an Apify run whose lifecycle cannot be read and settled is
     // not bought. Here, after `prior`, so a refused replay stays uncertain.
     if (c.kind === "provider" && c.vendor === "apify") {
-      const plan = planSmokeStart(await readState(ctx, auth));
+      const plan = planSmokeStart(await readState(ctx, auth, actor!));
       if (!plan.ok) return refuse("read_plan", plan.reason);
     }
 
@@ -695,7 +707,7 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
   // left from the slice and the authorization. Unknown is null, and the plan
   // spends nothing on an unknown. Reads only; it admits nothing.
   Object.defineProperty(gate, SMOKE_READ_STATE_MARK, {
-    value: async (): Promise<SmokeReadState> => {
+    value: async (actor?: string): Promise<SmokeReadState> => {
       const ctx = missionAdmission.getStore();
       if (!ctx) return { readsLeft: null, remainingMs: null };
       if (!ctx.authorization) {
@@ -703,7 +715,7 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
         if (loaded === "unavailable" || !loaded) return { readsLeft: null, remainingMs: null };
         ctx.authorization = loaded;
       }
-      return await readState(ctx, ctx.authorization);
+      return await readState(ctx, ctx.authorization, actor);
     },
   });
   // The provider actors the authorization's catalog approves (read only).
@@ -730,16 +742,29 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
  * be read. A supabase-js filter chain is itself awaitable (rows); a client
  * whose chain is not leaves the count unknown, which spends no read.
  */
-async function pollsUsed(db: AdmissionDb, authorizationId: string): Promise<number | null> {
+async function pollsUsed(db: AdmissionDb, authorizationId: string, actor?: string): Promise<number | null> {
   try {
-    const q = db.from("discovery_smoke_operations").select("operation_key")
-      .eq("authorization_id", authorizationId).eq("kind", "poll") as unknown as Partial<PromiseLike<{ data: unknown; error: unknown }>>;
+    let chain = db.from("discovery_smoke_operations").select("operation_key")
+      .eq("authorization_id", authorizationId).eq("kind", "poll");
+    if (actor) chain = chain.eq("actor", actor);
+    const q = chain as unknown as Partial<PromiseLike<{ data: unknown; error: unknown }>>;
     if (typeof q.then !== "function") return null;
     const { data, error } = await withTimeout(q as PromiseLike<{ data: unknown; error: unknown }>, ADMISSION_RPC_TIMEOUT_MS);
     return error || !Array.isArray(data) ? null : data.length;
   } catch {
     return null;
   }
+}
+
+/** A reads template's allocation for this actor (`max_reads_per_actor`), or null when none is set. */
+export function readAllocation(auth: Pick<Authorization, "approved_quotes">, actor: string): number | null {
+  for (const t of Object.values(auth.approved_quotes ?? {})) {
+    if (!Array.isArray(t?.allowed_kinds) || !t.allowed_kinds.includes("poll")) continue;
+    if (!Array.isArray(t.allowed_actors) || !t.allowed_actors.includes(actor)) continue;
+    const n = t.request_limits?.max_reads_per_actor?.[actor];
+    if (typeof n === "number" && Number.isInteger(n) && n >= 0) return n;
+  }
+  return null;
 }
 
 /**

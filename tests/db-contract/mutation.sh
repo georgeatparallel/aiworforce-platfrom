@@ -136,6 +136,12 @@ prove_killed "two smokes race past the recheck: admission lock removed" "$adm_sq
     perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));" \
   "  if p_kind in ('provider', 'model') then" \
   "$adm_tests" "reconciliation: two smokes racing to buy first — exactly one purchase is admitted"
+prove_killed "one actor's slow run spends another's reads: allocation ignored by the read plan" "$gate_ts" \
+  "    const share = actor ? readAllocation(auth, actor) : null;" "    const share = null as number | null;" \
+  "$gate_tests" "read lifecycle: with a 3 + 2 allocation, a slow job search keeps company details' two reads (independent review, PR #96)"
+prove_killed "one actor's reads exceed its share: database allocation removed" "$adm_sql" \
+  "    return jsonb_build_object('decision', 'read_allocation');" "    null;" \
+  "$adm_tests" "polls: a reads template's per-actor allocation holds each actor to its share of the five (independent review, PR #96)"
 prove_killed "no lineage lease check" "$adm_sql" "or l.lease_holder is distinct from p_task " "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "re-keyed payload buys again" "$adm_sql" \
