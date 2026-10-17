@@ -145,9 +145,11 @@ Deno.test("refusals: 409 reads as a definite non-start; a purchase that may exis
 
 function fakeDb(rpc: (fn: string, args: Record<string, unknown>) => unknown, rows: Record<string, unknown> = {}): AdmissionDb {
   // A filter chain of any depth; one eq() reads `table`, more read `table:<n eq>`.
-  const sel = (table: string) => {
+  const sel = (table: string, cols: string) => {
     const chain = (depth: number) => ({
       eq: () => chain(depth + 1),
+      // A real Supabase row query is awaitable; zero admitted polls here.
+      ...(cols === "operation_key" ? { then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve) } : {}),
       maybeSingle: async () => {
         const v = rows[depth === 1 ? table : depth === 2 ? `${table}:parent` : `${table}:${depth}`];
         return v instanceof Error ? { data: null, error: { message: v.message } } : { data: v ?? null, error: null };
@@ -160,13 +162,13 @@ function fakeDb(rpc: (fn: string, args: Record<string, unknown>) => unknown, row
       const v = await rpc(fn, args);
       return v instanceof Error ? { data: null, error: { message: v.message } } : { data: v, error: null };
     },
-    from: (table: string) => ({ select: () => sel(table) }),
+    from: (table: string) => ({ select: (cols: string) => sel(table, cols) }),
   } as unknown as AdmissionDb;
 }
 const TOKEN = "11111111-2222-4333-8444-555555555555";
 const AUTH = {
   id: "auth-1", queue_id: "q", workspace_id: "w", status: "active", deadline_at: new Date(Date.now() + 60000).toISOString(),
-  actor_limits: {},
+  actor_limits: {}, provider_polls: 5,
   approved_quotes: { gpt: { allowed_kinds: ["model"], allowed_actors: ["openai:m"], maximum_microusd: 1, source: "s", liability_bound_ref: "r",
     observed_at: new Date().toISOString(), request_limits: { max_request_bytes: 1000, max_output_tokens: 10 } } },
 };

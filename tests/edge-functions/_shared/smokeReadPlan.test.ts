@@ -20,8 +20,10 @@ Deno.test("read plan: a run is bought only when its status and dataset reads and
   assertEquals(planSmokeStart({ readsLeft: 1, remainingMs: 300_000 }), { ok: false, reason: "reads_exhausted" });
   assertEquals(planSmokeStart({ readsLeft: 0, remainingMs: 300_000 }), { ok: false, reason: "reads_exhausted" });
   assertEquals(planSmokeStart({ readsLeft: 5, remainingMs: 74_999 }), { ok: false, reason: "no_time" });
-  // Unknown is not a reason to refuse a purchase the database bounds; it never spends a read.
-  assertEquals(planSmokeStart({ readsLeft: null, remainingMs: null }), { ok: true });
+  // Unknown retrieval capacity cannot justify a new paid run.
+  assertEquals(planSmokeStart({ readsLeft: null, remainingMs: null }), { ok: false, reason: "read_state_unknown" });
+  assertEquals(planSmokeStart({ readsLeft: null, remainingMs: 300_000 }), { ok: false, reason: "read_state_unknown" });
+  assertEquals(planSmokeStart({ readsLeft: 5, remainingMs: null }), { ok: false, reason: "read_state_unknown" });
   assertEquals(planSmokeStatusRead({ readsLeft: null, remainingMs: 300_000 }), { ok: false, reason: "read_state_unknown" });
 });
 

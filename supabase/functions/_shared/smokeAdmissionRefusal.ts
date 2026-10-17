@@ -110,11 +110,12 @@ export type SmokeReadPlan = { ok: true; waitS: number; timeoutMs: number } | { o
  * reads left it is the mission's final run and its receipt is deferred
  * (`SMOKE_MIN_RUN_READS`). Decided by the GATE, after it
  * knows whether this purchase may already exist, so a refused replay of an
- * uncertain start still reads as uncertain (its credit stays held). An unknown
- * count or clock does not refuse: the database bounds the purchase itself, and
- * an unknown never spends a read (`planSmokeStatusRead`, `planSmokeReceipt`).
+ * uncertain start still reads as uncertain (its credit stays held). Unknown
+ * retrieval capacity or time refuses a new start, just as it refuses the
+ * subsequent status/dataset lifecycle; it cannot justify an unusable purchase.
  */
 export function planSmokeStart(s: SmokeReadState): { ok: true } | { ok: false; reason: string } {
+  if (s.readsLeft === null || s.remainingMs === null) return { ok: false, reason: "read_state_unknown" };
   if (s.readsLeft !== null && s.readsLeft < SMOKE_MIN_RUN_READS) return { ok: false, reason: "reads_exhausted" };
   if (s.remainingMs !== null &&
     s.remainingMs < APIFY_START_TIMEOUT_MS + SMOKE_MIN_WAIT_S * 1000 + SMOKE_READ_SLACK_MS + SMOKE_TAIL_MS) {
