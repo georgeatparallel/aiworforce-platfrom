@@ -6,7 +6,7 @@
 # the database named by TEST_DB_URL, and only after every check below passes.
 #
 #   TEST_PROJECT_REF=<ref> TEST_DB_URL='postgresql://…<ref>…' \
-#     scripts/test-project/build-test-schema.sh --confirm <ref> [--with-held-billing-fix] [--with-held-admission]
+#     scripts/test-project/build-test-schema.sh --confirm <ref> [--with-held-billing-fix] [--with-held-admission] [--with-test-no-brain-guard]
 #
 # Refuses, before any connection is made, when:
 #   * the ref is empty, the live project or the abandoned former project;
@@ -19,6 +19,7 @@
 # Applies, in the order tests/db-contract/bootstrap.sh proves in CI:
 #   A  the held baseline, B  every shipped migration, C  the held Lead V2 chain,
 #   D  (opt-in) the held billing fix, E  (opt-in) the held smoke admission.
+#   F  (explicit test-only opt-in) permanent no-Company-Brain guard, before seeding.
 #
 # CRON SAFETY. Two shipped migrations schedule `net.http_post` to the literal
 # PRODUCTION URL. Each file that calls `cron.schedule` is applied in the SAME
@@ -30,12 +31,13 @@ set -euo pipefail
 REFUSED_REFS="ohsdatpvfdjdemstoiuj wqnigjhcwjxtmordrwno"
 ref="${TEST_PROJECT_REF:-}"
 url="${TEST_DB_URL:-}"
-confirm=""; with_billing=0; with_admission=0
+confirm=""; with_billing=0; with_admission=0; with_no_brain=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --confirm) confirm="${2:-}"; shift 2 ;;
     --with-held-billing-fix) with_billing=1; shift ;;
     --with-held-admission) with_admission=1; shift ;;
+    --with-test-no-brain-guard) with_no_brain=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -63,6 +65,7 @@ held_v2=(
 )
 billing_fix="$held/20261015130000_credits_rearm_settled_key.sql"
 admission="$held/20261015140000_discovery_smoke_admission.sql"
+no_brain="$root/scripts/test-project/sql/20261017120000_discovery_test_no_company_brain.sql"
 # Every file is checked before anything connects, so a build never stops half-way on a missing one.
 for f in "$held/20260816120000_baseline_schema.sql" "${held_v2[@]/#/$held/}" "$detach"; do
   [ -f "$f" ] || refuse "missing ${f#$root/}"
@@ -71,6 +74,10 @@ done
   || refuse "--with-held-billing-fix needs ${billing_fix#$root/} (its PR is not merged here)"
 [ $with_admission -eq 0 ] || [ -f "$admission" ] \
   || refuse "--with-held-admission needs ${admission#$root/} (its PR is not merged here)"
+[ $with_no_brain -eq 0 ] || {
+  [ $with_admission -eq 1 ] || refuse "--with-test-no-brain-guard requires --with-held-admission"
+  [ -f "$no_brain" ] || refuse "missing test-only no-Brain guard"
+}
 q() { psql "$url" -X -q -At -v ON_ERROR_STOP=1 -c "$1"; }
 
 q "select 1" >/dev/null || refuse "cannot connect to TEST_DB_URL"
@@ -97,6 +104,7 @@ for f in $(ls "$root/supabase/migrations/"*.sql | sort); do apply "$f"; done
 for f in "${held_v2[@]}"; do apply "$held/$f"; done
 if [ $with_billing -eq 1 ]; then apply "$billing_fix"; fi
 if [ $with_admission -eq 1 ]; then apply "$admission"; fi
+if [ $with_no_brain -eq 1 ]; then apply "$no_brain"; fi
 
 hosted="$(q "select count(*) from cron.job where command ilike '%net.http_post%' or command ilike '%supabase.co%'")"
 [ "$hosted" = "0" ] || { echo "FAILED: $hosted cron job(s) still call a hosted project" >&2; exit 1; }
