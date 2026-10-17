@@ -249,7 +249,7 @@ fails if it, the held migration's caps and the worker proposal disagree.
 4. Create the GitHub Environment `discovery-test`:
    - variables `TEST_PROJECT_REF` and `TEST_WORKSPACE_ID`;
    - secrets `TEST_SUPABASE_URL`, `TEST_SUPABASE_SERVICE_ROLE_KEY` (the
-     `sb_secret_…` key), `TEST_SUPABASE_ANON_KEY` and the four provider keys (`TEST_APIFY_API_TOKEN`, `TEST_FIRECRAWL_API_KEY`, `TEST_OPENAI_API_KEY`, `TEST_ANTHROPIC_API_KEY`). No Lovable key: the smoke gate refuses that host.
+     `sb_secret_…` key), `TEST_SUPABASE_ANON_KEY` and the two provider keys the smoke catalog prices (`TEST_APIFY_API_TOKEN`, `TEST_OPENAI_API_KEY`). No Firecrawl, Anthropic or Lovable key: the catalog has no template for those hosts, so the gate refuses them.
    Test-scoped keys only. Add a required reviewer if the plan allows it.
 5. Move the workflow into `.github/workflows/` through a reviewed PR to the
    **default branch, which is `launch/hardening`**, because GitHub only offers

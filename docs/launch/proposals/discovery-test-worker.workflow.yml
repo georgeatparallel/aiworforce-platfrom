@@ -63,6 +63,11 @@ jobs:
       # One fixed 300 s mission deadline from the queue row's created_at, across
       # slices and restarts (worker/leadMissionRunner.ts, missionWallClock.ts).
       LEAD_V2_SMOKE_WALL_CLOCK: enforce
+      # The smoke's reduced orchestration (four model attempts: execution plan,
+      # batch evaluation, mission evaluation, opportunity reasoning). Honoured
+      # only while the admission gate is the transport (smokeAdmissionRefusal.ts);
+      # without it the customer orchestration needs more attempts than the four.
+      LEAD_V2_SMOKE_ORCHESTRATION: minimal
       # The gate refuses the Lovable AI gateway (no approved template), and the
       # strategist defaults to it. OpenAI is the strategist the smoke can price.
       LEAD_STRATEGIST_PROVIDER: openai
@@ -77,12 +82,10 @@ jobs:
       # ── Worker bounds ────────────────────────────────────────────────────
       LEAD_WORKER_MAX_RUNTIME_MS: "150000"       # per slice; 2 slices fit in #89's 300 s
       # ── Providers: test-scoped keys; the Apify account carries its own spending limit ──
+      # Only the two vendors the smoke catalog prices. No Firecrawl or Anthropic
+      # key: the catalog has no template for either (the gate would refuse
+      # them), and the offline rehearsal runs with both absent.
       APIFY_API_TOKEN: ${{ secrets.TEST_APIFY_API_TOKEN }}
-      # NO FIRECRAWL in the first smoke: its variable credits (PDF pages, formats)
-      # are not receipted, so its maximum cannot be bounded. No key, no rate; the
-      # approved catalog has no Firecrawl template either. To add it later, map
-      # TEST_FIRECRAWL_API_KEY with FIRECRAWL_USD_PER_CREDIT from the invoice.
-      ANTHROPIC_API_KEY: ${{ secrets.TEST_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.TEST_OPENAI_API_KEY }}     # gptProvider and the OpenAI strategist require it
     steps:
       - name: Refuse anything but the confirmed non-production project

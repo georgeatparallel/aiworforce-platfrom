@@ -74,12 +74,19 @@ Deno.test("smoke spec: the first smoke omits Firecrawl; an unset rate would stil
   }
 });
 
-Deno.test("smoke spec: the first smoke buys one job search of one title, one location, three rows", () => {
+Deno.test("smoke spec: the smoke buys one job search (one title, one location, three rows) and one company-details lookup", () => {
   const p = spec.first_smoke_profile;
-  assertEquals(p.actor_limits, { "apify:harvestapi~linkedin-job-search": 1 });
+  assertEquals(p.actor_limits, { "apify:harvestapi~linkedin-job-search": 1, "apify:harvestapi~linkedin-company": 1 });
   assertEquals(p.job_search_request, { jobTitles: 1, locations: 1, geoIds: 0, maxItems: 3 });
   assertEquals(p.job_search_request.maxItems, spec.limits.discovery_rows);
+  // The company-details actor bills per company looked up, by URL or by name.
+  assertEquals(p.company_details_request, { companies: 1, searches: 0 });
   assertEquals(p.reads.total, spec.limits.provider_polls);
+  assertEquals(Object.values(p.reads.allocation).reduce((a, b) => a + b, 0), spec.limits.provider_polls, "3 + 2 = the five");
+  assertEquals(Object.keys(p.reads.allocation).sort(), Object.keys(p.actor_limits).sort(), "a share for each actor");
+  for (const [a, n] of Object.entries(p.actor_limits)) {
+    assert(n <= (spec.limits.provider_actor_purchases as Record<string, number>)[a], `${a} within its allowance`);
+  }
   assertEquals(p.models.approved, ["openai:gpt-5.6-luna"]);
 });
 

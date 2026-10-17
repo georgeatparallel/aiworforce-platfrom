@@ -14,6 +14,21 @@ The implementation PR (#94) adds:
 - the job-search smoke bound;
 - a durable receipt reconciliation.
 
+The unblocking PR (#96) adds:
+- the two-actor smoke (job search + one company-details lookup), with a
+  database-enforced 3 + 2 read allocation (`docs/launch/proposals/smoke-catalog-two-actor.json`);
+- a smoke-only minimal orchestration (`LEAD_V2_SMOKE_ORCHESTRATION=minimal`),
+  so qualification fits four model attempts;
+- durable reconciliation (`reconcile_discovery_smoke_operation`): an open
+  purchase blocks every later smoke, in the database;
+- the final offline hardening: NULL-safe catalog validation, complete read
+  allocations, free reads, terminal-only reconciliation, and a hold on any
+  figure above its quote.
+
+**Where this document and #96 differ, #96 and `discovery-smoke-runbook.md`
+are current.** The one-actor profile below (§1, §4, §6b) was the first draft:
+it qualified no lead, because the company record is the evidence.
+
 This document records the decisions and evidence around it. It raises no
 limit and changes no admission rule.
 
@@ -74,15 +89,20 @@ One Apify run's complete lifecycle is **three reads**:
 | 90 s left | **2**: status with W = 40, plus dataset (that status was already settled) | settled |
 | 60 s left | **0**: nothing bought | n/a |
 
-**Limitation:** five reads settle **one** Apify run, with one or two reads to
-spare. They cannot settle two runs (3 + 3 > 5). The first smoke therefore buys
-**one job search**, and the plan refuses any later start (§4).
+**Two runs in five reads (#96).** Five reads cannot settle two runs in full
+(3 + 3 > 5). The final run is therefore bought with **two** reads (status,
+dataset), and its receipt is deferred to reconciliation. The reads template
+allocates them: job search 3, company details 2 (`max_reads_per_actor`; the
+database refuses a read beyond an actor's share with `read_allocation`). A
+slow job search (two status reads) keeps its dataset read and defers its own
+receipt.
 
-**Deferral:** reconciling outside the mission (the listed rows, against Apify's
-run history) is an operator step. It is not yet the separately approved,
-durable procedure that would let the mission skip in-mission settlement. The
-query is durable and tested, but nothing forces it to be run. Its approval is
-item 1 in §6b.
+**Deferral is durable (#96).** A deferred receipt is open liability at its
+committed maximum. `authorize_discovery_smoke` refuses every new smoke, and
+`admit_discovery_smoke` refuses every other authorization's paid admission,
+until an administrator reconciles it against Apify's run history. That
+requires a terminal vendor status, and the authorization must no longer be
+live. A figure above the quote is held, not closed (runbook, Phase 7).
 
 ## 2. Firecrawl: omitted from the first smoke
 
@@ -197,9 +217,13 @@ the real actor.
 - `max_array_items` `{jobTitles: 1, locations: 1, geoIds: 0}`;
 - the gate pins `maxTotalChargeUsd=0.005`.
 
-At $0.001 per job, 3 jobs plus the start is $0.004. **No company-details
-template**: five reads cannot settle a second run, and the rows already carry
-the declared band.
+At $0.001 per job, 3 jobs plus the start is $0.004.
+
+**Company details (#96).** One lookup of the employer's own LinkedIn record,
+which qualification requires as evidence: `companies` 1, `searches` 0 (the
+actor bills per company looked up, by URL or by name). Its `maximum_microusd`
+is **not observed** and stays `null`, so the catalog cannot be authorized
+until it is.
 
 ## 5. Pricing evidence and account limits
 
@@ -219,7 +243,7 @@ the declared band.
 | # | Decision | Where it stands | Needs your approval |
 |---|---|---|---|
 | 1 | Migration design: queue-keyed, hard caps, no refund of capacity | Implemented, merged and verified; held, not applied | **Yes**: approve applying it to the test project only |
-| 2 | Poll allowance vs cadence | Five reads with the #94 lifecycle: one run settled, a second refused | **Yes**: approve the one-run first smoke |
+| 2 | Poll allowance vs cadence | Five reads, 3 + 2 (#96): the job search settled, the company details' receipt deferred to reconciliation | **Yes**: approve the two-run smoke |
 | 3 | Template-pinned vendor caps | `maxTotalChargeUsd` now automatic; billed-entry bounds implemented | **Yes**: the job-search template in §4 (`timeout`, `memory`, `maxItems`, entry bounds) |
 | 4 | Input-token bound (tokens ≤ bytes) | Implemented | **Yes**: accept it, with B = 32,768 |
 | 5 | Refuse model calls without `maxTokens` | Implemented; every mission call site sets one | **Yes, confirm.** No stage on the mission path is affected. |
@@ -242,6 +266,15 @@ changes would be needed to test efficacy:
   4,000-token bound beyond about 4;
 - more purchases.
 
+**Superseded by #96.** The minimal orchestration skips the stages that do not
+decide qualification, so the mission's four model attempts are the execution
+plan, batch evaluation, mission evaluation and opportunity reasoning. With the
+company-details lookup as evidence, the offline rehearsal (normal and slow job
+search) persisted one qualified, evidence-backed lead inside every cap:
+4 attempts, 2 purchases, 5 reads (3 + 2), 55,600 µ$ committed with the
+company-details maximum set to a synthetic 5,000 µ$. The live run tests both
+safe bounding and qualification; zero leads remains an honest outcome.
+
 **Decide which test this is before running it.**
 
 ## 7. Isolated test project: the checklist
@@ -258,13 +291,13 @@ the workflow refuse both.
 2. [ ] Enable `pg_cron` and `pg_net`.
 3. [ ] Run `TEST_PROJECT_REF=<ref> TEST_DB_URL=<url> scripts/test-project/build-test-schema.sh --confirm <ref> --with-held-billing-fix --with-held-admission` (50 files; cron jobs detached in the same transactions).
 4. [ ] `select jobname from cron.job` lists only `sweep-stuck-runs` and `release-stale-credit-reservations`.
-5. [ ] Confirm the held objects exist: `discovery_smoke_authorizations`, `discovery_smoke_operations` and the four RPCs. Confirm `service_role` cannot execute `authorize_discovery_smoke`.
+5. [ ] Confirm the held objects exist: `discovery_smoke_authorizations`, `discovery_smoke_operations`, `discovery_smoke_reconciliations` and the five RPCs. Confirm `service_role` cannot execute `authorize_discovery_smoke` or `reconcile_discovery_smoke_operation` (runbook, Phase 2).
 6. [ ] Seed one internal workspace and grant it 10 credits. The mission cap stays 5.
 
 **B. Credentials** (test-scoped; never production)
 7. [ ] Create the GitHub Environment `discovery-test`, with a required reviewer.
    - Variables: `TEST_PROJECT_REF`, `TEST_WORKSPACE_ID`.
-   - Secrets: `TEST_SUPABASE_URL`, `TEST_SUPABASE_SERVICE_ROLE_KEY`, `TEST_SUPABASE_ANON_KEY`, `TEST_APIFY_API_TOKEN`, `TEST_OPENAI_API_KEY`. No Firecrawl, Lovable or Anthropic key (§2, §3); `TEST_ANTHROPIC_API_KEY` is still mapped in the proposal and is an open decision.
+   - Secrets: `TEST_SUPABASE_URL`, `TEST_SUPABASE_SERVICE_ROLE_KEY`, `TEST_SUPABASE_ANON_KEY`, `TEST_APIFY_API_TOKEN`, `TEST_OPENAI_API_KEY`. No Firecrawl, Lovable or Anthropic key (§2, §3); the proposal maps neither since #96.
 8. [ ] Set the vendor account limits from §5.
 
 **C. Activation**
@@ -273,7 +306,7 @@ the workflow refuse both.
     - insert one queue row with `run_budget {provider_usd: 0.20, max_candidates: 3}`;
     - run `select public.authorize_discovery_smoke(<queue_id>, '<pricing_version>', '<catalog>'::jsonb, '<actor_limits>'::jsonb, 300);`.
 
-    The catalog is the approved one, with every price observed ≤ 24 h earlier.
+    The catalog is the approved one (`smoke-catalog-two-actor.json`), with every price observed ≤ 24 h earlier; `<actor_limits>` is `{"apify:harvestapi~linkedin-job-search": 1, "apify:harvestapi~linkedin-company": 1}`.
 11. [ ] **Separate execution approval**, then one dispatch, typing the test ref.
 
 **D. Stop** (in this order)
@@ -284,7 +317,7 @@ the workflow refuse both.
 5. Clear `TEST_WORKSPACE_ID`, so no further run can claim.
 
 **E. Reconcile** (before anything else runs)
-12. [ ] Run `psql "$TEST_DB_URL" -v queue_id='<queue_id>' -f scripts/test-project/smoke-reconciliation.sql`. Every listed Apify purchase (no settled figure) is closed against Apify's run history and final `usageTotalUsd`. Then compare every row's `committed_microusd` and `reported_microusd` with:
+12. [ ] Run `psql "$TEST_DB_URL" -v queue_id='<queue_id>' -f scripts/test-project/smoke-reconciliation.sql` once the authorization is no longer live. Close every listed purchase with `reconcile_discovery_smoke_operation(<queue>, <key>, <figure>, <reference>, <terminal status>)` against Apify's run history and final `usageTotalUsd` (runbook, Phase 7). Then compare every row's `committed_microusd` and `reported_microusd` with:
     - Apify;
     - the OpenAI project's usage.
 
@@ -298,18 +331,18 @@ the workflow refuse both.
 
 ## 6b. Still requiring your approval
 
-1. **Receipt deferral.** Whether listed, unsettled Apify purchases may be
-   reconciled after the mission (the operator runs the query and closes each
-   row against Apify), or whether an unsettled receipt must block the next
-   mission until it is closed. The latter needs a reviewed schema change.
-2. **The first-smoke profile** (spec `first_smoke_profile`):
+1. **Receipt deferral.** Implemented durably in #96: an open purchase blocks
+   the next mission until it is reconciled. Approve the procedure (runbook,
+   Phase 7).
+2. **The smoke profile** (spec `first_smoke_profile`, #96):
    - one job search (1 title, 1 location, 3 rows);
-   - no company details;
+   - one company-details lookup (1 URL, no searches);
    - no Firecrawl;
-   - Luna only;
-   - five reads.
-3. **The job-search template** in §4, its `maximum_microusd`, and the actor
-   limits `{apify:harvestapi~linkedin-job-search: 1}`.
+   - Luna only, minimal orchestration;
+   - five reads, 3 + 2.
+3. **The templates** in `smoke-catalog-two-actor.json`, the company-details
+   maximum once observed, and the actor limits
+   `{apify:harvestapi~linkedin-job-search: 1, apify:harvestapi~linkedin-company: 1}`.
 4. **The Luna template** (B = 32,768, O = 4,000, 11,400 µ$) once its price is
    observed; Terra and Anthropic refused.
 5. **The remaining §6 rows** (1, 4, 5, 7–10), the account limits in §5, and
@@ -324,12 +357,12 @@ the workflow refuse both.
 | Area | Code-complete | Offline rehearsal | Live test |
 |---|---|---|---|
 | Durable admission: money, counts, deadline, fencing, no refunds | ✅ #90, verified | ✅ | ⛔ not applied to any database |
-| Five-read Apify lifecycle, settled receipt, reconciliation | ✅ #94 | ✅ (one run) | ⛔ deferral decision (§6b.1) |
+| Five-read Apify lifecycle, settled receipt, reconciliation | ✅ #94, #96 (3 + 2, durable reconciliation) | ✅ (two runs; one qualified lead) | ⛔ procedure approval (§6b.1) |
 | Vendor cap, billed-entry bounds, one-search smoke bound | ✅ #94 | ✅ | ⛔ template values not approved |
 | Wall clock (opt-in) | ✅ #92, verified | ✅ | ⛔ the worker is not activated |
 | Models: Luna only; Terra and Anthropic refused | ✅ | ✅ | ⛔ Luna price not observed; request sizes not measured |
 | Firecrawl omitted | ✅ | ✅ | ✅ decision; ⛔ variable-credit defect open for later inclusion |
-| Price evidence | Public Apify prices obtained | n/a | ⛔ account tier, Luna price, read charges |
+| Price evidence | Public Apify prices obtained | n/a | ⛔ account tier, company-details maximum, Luna price, read charges |
 | Test project, credentials, account limits | ✅ build script and workflow proposal | n/a | ⛔ nothing provisioned |
 | Operator roles, archival, execution approval | n/a | n/a | ⛔ not assigned |
 
