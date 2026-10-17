@@ -331,6 +331,15 @@ begin
   select * into q from public.lead_mission_queue where id = p_queue for share;
   select * into t from public.tasks where id = p_task for share;
   select * into l from public.lead_lineages where lineage_id = q.lineage_id for share;
+  -- THE GLOBAL LIABILITY LOCK, for paid kinds, is taken BEFORE the clock is
+  -- read. It can wait on another smoke, and a lease or the deadline may expire
+  -- meanwhile (Codex P1, final review: ownership was judged before this wait
+  -- and never again). Every check below runs after the last wait. The rows
+  -- above are held, so nothing else they decide can change. It is still the
+  -- last lock this function takes.
+  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  end if;
   v_now := clock_timestamp();  -- after the lock wait; now() is transaction start
 
   if a.status <> 'active' or a.deadline_at <= v_now
@@ -378,17 +387,14 @@ begin
   -- smoke authorized before another one bought anything would otherwise pass
   -- the authorization check and spend on top of the other's open liability.
   -- Rechecked at every paid admission, under the same lock as authorization
-  -- and reconciliation, so a purchase committing elsewhere is seen. Reads of
-  -- this mission's own runs are not spending and are not blocked.
-  if p_kind in ('provider', 'model') then
-    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
-    if exists (select 1 from public.discovery_smoke_operations x
+  -- and reconciliation (taken above), so a purchase committing elsewhere is
+  -- seen. Reads of this mission's own runs are not spending and are not blocked.
+  if p_kind in ('provider', 'model') and exists (select 1 from public.discovery_smoke_operations x
                 where x.kind = 'provider' and x.authorization_id <> a.id
                   and not exists (select 1 from public.discovery_smoke_reconciliations r
                                    where r.authorization_id = x.authorization_id and r.operation_key = x.operation_key
                                      and r.vendor_microusd <= x.committed_microusd)) then
-      return jsonb_build_object('decision', 'prior_liability_unreconciled');
-    end if;
+    return jsonb_build_object('decision', 'prior_liability_unreconciled');
   end if;
 
   -- The price is the APPROVED template's maximum; the worker names a template,

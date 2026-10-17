@@ -265,6 +265,98 @@ Deno.test("deadline: an admission that waited on the lock past the deadline is r
   assertEquals(waited.decision, "stopped", "the clock is read after the lock, not at transaction start");
 });
 
+// ── leases expiring while a paid admission waits on the liability lock ──────
+//
+// Codex P1 (final review of #94 → #96 → #93): ownership and the deadline were
+// judged BEFORE the global liability lock. A paid admission that waited on it
+// past a lease or the deadline was then admitted. Another session holds the
+// lock until the leases expire; nothing may be admitted for the stale owner.
+
+const LIABILITY_LOCK = "agentory.discovery_smoke.liability";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Hold the global liability lock in another session for `ms`. */
+function holdLiabilityLock(ms: number) {
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${LIABILITY_LOCK}))`;
+    await sleep(ms);
+  });
+}
+/** Make this mission's queue and/or lineage lease expire `ms` from now (database clock). */
+async function expireLeasesIn(m: SmokeMission, ms: number, which: { queue?: boolean; lineage?: boolean }) {
+  if (which.queue) {
+    await sql`update public.lead_mission_queue set lease_expires_at = clock_timestamp() + make_interval(secs => ${ms / 1000})
+              where id = ${m.queueId}`;
+  }
+  if (which.lineage) {
+    await sql`update public.lead_lineages set lease_expires_at = clock_timestamp() + make_interval(secs => ${ms / 1000})
+              where lineage_id = ${m.taskId}`;
+  }
+}
+
+Deno.test("leases: a paid admission that waited on the liability lock past a lease is refused (Codex P1, final review)", opts, async () => {
+  const svc = await db();
+  for (const lease of ["queue", "lineage"] as const) {
+    for (const kind of ["model", "provider"] as const) {
+      const m = await seedSmokeMission();
+      await expireLeasesIn(m, 1500, { [lease]: true });
+      const holder = holdLiabilityLock(2500);
+      await sleep(200);
+      const d = await admitOperation(svc, kind === "model" ? op(m) : provider(m, JOBS, "apify_jobs"));
+      await holder;
+      assertEquals(d.decision, "lost_ownership", `${kind} after the ${lease} lease expired during the wait`);
+      assertEquals((await ops(m)).length, 0, `${kind}/${lease}: nothing admitted, nothing committed`);
+    }
+  }
+});
+
+Deno.test("leases: a paid admission that waited on the liability lock past the deadline is refused", opts, async () => {
+  const m = await seedSmokeMission({ ageSeconds: 298 });   // two seconds left
+  const holder = holdLiabilityLock(3000);
+  await sleep(200);
+  const d = await admitOperation(await db(), provider(m, JOBS, "apify_jobs"));
+  await holder;
+  assertEquals(d.decision, "stopped");
+  assertEquals((await ops(m)).length, 0);
+});
+
+Deno.test("leases: concurrent buyers waiting on the lock past their leases are all refused", opts, async () => {
+  const svc = await db();
+  const a = await seedSmokeMission();
+  const b = await seedSmokeMission();
+  for (const m of [a, b]) await expireLeasesIn(m, 1500, { queue: true, lineage: true });
+  const holder = holdLiabilityLock(2500);
+  await sleep(200);
+  const decisions = await Promise.all([
+    admitOperation(svc, provider(a, JOBS, "apify_jobs")), admitOperation(svc, op(a)),
+    admitOperation(svc, provider(b, JOBS, "apify_jobs")), admitOperation(svc, op(b)),
+  ]);
+  await holder;
+  assertEquals(decisions.map((d) => d.decision), ["lost_ownership", "lost_ownership", "lost_ownership", "lost_ownership"]);
+  assertEquals([(await ops(a)).length, (await ops(b)).length], [0, 0]);
+});
+
+Deno.test("leases: after a stale owner is refused, the resumed task (new claim, new generation) buys exactly once", opts, async () => {
+  const svc = await db();
+  const m = await seedSmokeMission();
+  await expireLeasesIn(m, 1500, { queue: true });
+  const holder = holdLiabilityLock(2500);
+  await sleep(200);
+  const stale = admitOperation(svc, provider(m, JOBS, "apify_jobs", { key: "provider:resume" }));
+  // The re-claim waits behind the stale admission's row locks, then lands.
+  const worker2 = uuid();
+  const reclaim = sql`update public.lead_mission_queue set claimed_by = ${worker2}, lease_expires_at = now() + interval '3 minutes'
+                      where id = ${m.queueId}`.execute();
+  await holder;
+  assertEquals((await stale).decision, "lost_ownership");
+  await reclaim;
+  await sql`update public.tasks set checkpoint_version = checkpoint_version + 1 where id = ${m.taskId}`;
+  const resumed = { ...m, workerId: worker2, generation: m.generation + 1 };
+  const buy = provider(resumed, JOBS, "apify_jobs", { key: "provider:resume" });
+  assertEquals((await admitOperation(svc, buy)).decision, "admitted", "the resumed owner may buy");
+  assertEquals((await admitOperation(svc, { ...buy, key: "provider:resume:2" })).decision, "uncertain", "and only once");
+  assertEquals((await ops(m)).length, 1);
+});
+
 // ── restart, re-enqueue, re-claim ───────────────────────────────────────────
 
 Deno.test("restart: a new worker and a new generation inherit every counter; a new queue row inherits nothing", opts, async () => {

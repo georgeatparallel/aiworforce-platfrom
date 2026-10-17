@@ -126,16 +126,27 @@ prove_killed "any task status admitted" "$adm_sql" "or t.status not in ('running
 prove_killed "no new smoke over unreconciled liability: gate removed" "$adm_sql" "  if v_open > 0 then" "  if false then" \
   "$adm_tests" "reconciliation: an unsettled purchase blocks the next authorization until a person reconciles it"
 prove_killed "an earlier authorization spends over open liability: admission recheck removed" "$adm_sql" \
-  "  if p_kind in ('provider', 'model') then
-    perform pg_advisory_xact_lock" \
-  "  if false then
-    perform pg_advisory_xact_lock" \
+  "  if p_kind in ('provider', 'model') and exists (select 1 from public.discovery_smoke_operations x" \
+  "  if false and exists (select 1 from public.discovery_smoke_operations x" \
   "$adm_tests" "reconciliation: an earlier authorization cannot spend over another's open liability (Codex review, PR #96)"
 prove_killed "two smokes race past the recheck: admission lock removed" "$adm_sql" \
   "  if p_kind in ('provider', 'model') then
     perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));" \
-  "  if p_kind in ('provider', 'model') then" \
+  "  if p_kind in ('provider', 'model') then
+    null;" \
   "$adm_tests" "reconciliation: two smokes racing to buy first — exactly one purchase is admitted"
+# Codex P1 (final review): the clock read, and so every ownership check, before
+# the liability lock's wait. A lease expiring during the wait would be missed.
+prove_killed "ownership judged before the liability lock's wait" "$adm_sql" \
+  "  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  end if;
+  v_now := clock_timestamp();  -- after the lock wait; now() is transaction start" \
+  "  v_now := clock_timestamp();  -- after the lock wait; now() is transaction start
+  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  end if;" \
+  "$adm_tests" "leases: a paid admission that waited on the liability lock past a lease is refused (Codex P1, final review)"
 prove_killed "one actor's slow run spends another's reads: allocation ignored by the read plan" "$gate_ts" \
   "    const share = actor ? readAllocation(auth, actor) : null;" "    const share = null as number | null;" \
   "$gate_tests" "read lifecycle: with a 3 + 2 allocation, a slow job search keeps company details' two reads (independent review, PR #96)"

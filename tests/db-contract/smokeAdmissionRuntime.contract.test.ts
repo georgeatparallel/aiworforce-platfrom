@@ -679,6 +679,42 @@ Deno.test("jobs: the legacy LinkedIn jobs actor gets one URL, three per source, 
   assertEquals(post.url.searchParams.get("maxTotalChargeUsd"), "0.06", "capped at the template's maximum");
 });
 
+Deno.test("leases: nothing reaches the transport when ownership expires while the gate waits on the liability lock (Codex P1)", opts, async () => {
+  // Another session holds the global liability lock until both ownership
+  // leases have expired. A Luna request and an Apify purchase made through
+  // the real gate in that window must send nothing.
+  const holdLock = (ms: number) => sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'))`;
+    await new Promise((r) => setTimeout(r, ms));
+  });
+  const expireIn = async (m: SmokeMission, s: number) => {
+    await sql`update public.lead_mission_queue set lease_expires_at = clock_timestamp() + make_interval(secs => ${s}) where id = ${m.queueId}`;
+    await sql`update public.lead_lineages set lease_expires_at = clock_timestamp() + make_interval(secs => ${s}) where lineage_id = ${m.taskId}`;
+  };
+  const m = await fundedMission();
+  const v = fakeVendor((r) => r.method === "POST" && r.url.hostname === "api.apify.com"
+    ? json(201, { data: { id: "run-late", defaultDatasetId: "ds-late", status: "RUNNING" } })
+    : json(200, { choices: [{ message: { content: "{}" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+
+  await expireIn(m, 1.5);
+  let holder = holdLock(2500);
+  await new Promise((r) => setTimeout(r, 200));
+  const luna = await inMission(m, v, () => gptStructured({ purpose: "t", system: "s", user: "u", model: "gpt-4.1-mini", maxTokens: 100 }));
+  await holder;
+  assertEquals(luna.ok, false, "the model request is refused");
+
+  await expireIn(m, 1.5);
+  holder = holdLock(2500);
+  await new Promise((r) => setTimeout(r, 200));
+  const buy = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  await holder;
+  assertEquals(buy.ok, false, "the purchase is refused");
+
+  assertEquals(v.seen.length, 0, "zero model or provider requests reached the transport after ownership expired");
+  assertEquals((await ops(m)).length, 0, "nothing admitted, nothing committed");
+  assertEquals((await credits(m.ws)).reserved, 0, "no credit is left reserved for a purchase that was never made");
+});
+
 Deno.test("models: a Terra template priced above the model allocation is never admitted", opts, async () => {
   const quotes = syntheticQuotes({
     terra: { allowed_kinds: ["model"], allowed_actors: ["openai:gpt-5.6-terra"], maximum_microusd: 113_536, observed_at: ago(3_600_000),
