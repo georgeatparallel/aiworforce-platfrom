@@ -1,0 +1,61 @@
+{
+  "reviewed_pr96_sha": "fa53ebbe139d4a18d3c33e3d23b740f776ec6c2e",
+  "merge_order": [
+    {
+      "pr": 94,
+      "sha": "8701b360a6845c611e23b06f567721ad5a686d8d"
+    },
+    {
+      "pr": 96,
+      "sha": "fa53ebbe139d4a18d3c33e3d23b740f776ec6c2e"
+    },
+    {
+      "pr": 93,
+      "sha": "7d1aa801ef1adc07c3db8875c62ddae6686d2e27"
+    }
+  ],
+  "combined_tree": "cb9cfd12718210ff9ac866cdd6b8e7bbe26045d7",
+  "original_regression_sha256": "f3adeeb37079058e43ed88e61ed99d56d5f9f3d315d6c687de6efb971b777c45",
+  "ci": {
+    "CI": {
+      "run": 39027403051,
+      "conclusion": "success"
+    },
+    "Database contract": {
+      "run": 39027403004,
+      "conclusion": "success"
+    }
+  },
+  "local_results": {
+    "p1-and-contracts": [
+      "ok | 74 passed | 0 failed (52s)"
+    ],
+    "ownership-matrix-final": [
+      "ok | 15 passed | 0 failed (12s)"
+    ],
+    "missions": [
+      "ok | 2 passed | 0 failed | 3 filtered out (11s)"
+    ],
+    "queue-fences": [
+      "ok | 17 passed | 0 failed (271ms)"
+    ],
+    "smoke-units": [
+      "ok | 34 passed | 0 failed (602ms)"
+    ],
+    "preflight-final": [
+      "ok | 3 passed | 0 failed (44ms)"
+    ],
+    "brain-bound": [
+      "ok | 1 passed | 0 failed (19ms)"
+    ],
+    "risk-controls-final": [
+      "FAILED | 2 passed | 5 failed (124ms)"
+    ]
+  },
+  "p1_verdict": "PASS",
+  "merge_recommendation": "READY TO MERGE pinned combined implementation",
+  "isolated_live_execution": "BLOCKED pending operator facts and explicit approvals",
+  "real_vendor_calls": 0,
+  "hosted_writes": 0,
+  "known_p2_controls_are_expected_red": true
+}
