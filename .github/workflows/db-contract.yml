@@ -44,7 +44,9 @@ jobs:
   db-contract:
     name: Database contract (Postgres + PostgREST)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Contract tests (~9 min) + 63 mutation proofs (~12 min, each a fresh
+    # database and a full admission-suite run).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
