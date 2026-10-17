@@ -592,3 +592,19 @@ Deno.test("proposal: the two-actor catalog cannot be authorized as written (no i
     .map(([k, t]) => [k, k === "details" ? t : { ...t, source: "observed", observed_at: now }]));
   await assertRejects(authorize(observed), Error, "template details is malformed");
 });
+
+Deno.test("reconciliation: a pre-authorized mission cannot spend over a CANCELLED mission's uncertain purchase (independent repro, PR #96)", opts, async () => {
+  // Both authorized before either purchases; same workspace is irrelevant to the rule.
+  const a = await seedSmokeMission();
+  const b = await seedSmokeMission();
+  const buy = provider(a, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  // No run id, no receipt: an uncertain start, committed at 60000.
+  assertEquals([(await ops(a))[0].provider_run_id, (await ops(a))[0].report_source], [null, null]);
+  await sql`select * from public.cancel_lead_mission(${a.queueId}, ${a.ws})`;
+  assertEquals((await admit(op(b))).decision, "prior_liability_unreconciled", "B's first paid model operation is refused");
+  assertEquals((await ops(b)).length, 0);
+  // The cancelled mission's purchase can still be closed by a person; then B may spend.
+  await reconcile(a, buy.key, 60000);
+  assertEquals((await admit(op(b))).decision, "admitted");
+});
