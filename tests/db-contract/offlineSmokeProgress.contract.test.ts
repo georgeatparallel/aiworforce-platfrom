@@ -189,6 +189,7 @@ interface Variant {
   label: string;
 }
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- trace rows and SQL results, read field by field
 type Rehearsal = Record<string, any>;
 
 async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void>) {
@@ -653,7 +654,8 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
       }
       globalThis.fetch = originalFetch;
       for (const [k, v] of saved) {
-        v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+        if (v === undefined) Deno.env.delete(k);
+        else Deno.env.set(k, v);
       }
     }
   }
