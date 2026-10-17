@@ -109,7 +109,10 @@ prove_killed "no serialization lock" "$adm_sql" \
   if not found then return jsonb_build_object('decision', 'not_authorized'); end if;" \
   "where queue_id = p_queue;
   if not found then return jsonb_build_object('decision', 'not_authorized'); end if;" \
-  "$adm_tests" "race: an admission still in flight holds the last slot until it commits"
+  "$adm_tests" "deadline: an admission that waited on the lock past the deadline is refused"
+# (Paid admissions also serialize on the liability lock since PR #96, so the
+# last-slot race no longer depends on this row lock alone; the lock-wait test,
+# which holds this row from a second session, still does.)
 prove_killed "no deadline" "$adm_sql" "or a.deadline_at <= v_now" "" \
   "$adm_tests" "deadline: absolute, from the queue row, read after the lock, never renewed"
 prove_killed "clock read before the lock wait" "$adm_sql" "v_now := clock_timestamp();  -- after the lock wait" "v_now := now();  --" \

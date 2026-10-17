@@ -305,6 +305,9 @@ Deno.test("18a. the noun 'posting' after 'job' or 'open <role>' is hiring, never
   for (const q of [
     "companies with an open Account Executive posting",
     "companies with open SDR postings",
+    // A recognised role that begins with a content noun (Codex review, PR #96).
+    "companies with an open Content Marketing posting",
+    "companies with an open senior SDR posting",
     "companies with a job posting for SDRs",
     "companies with recent job postings",
   ]) {

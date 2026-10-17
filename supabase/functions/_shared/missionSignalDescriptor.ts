@@ -291,18 +291,26 @@ export const OPEN_ROLES_RE = new RegExp(String.raw`\bopen\s+(?!source\b)(?:[a-z]
 export const POSTED_JOBS_RE = new RegExp(String.raw`\bpost(?:ed|s|ing)?\s+${JOB_OBJECT}`, "i");
 /**
  * "A job posting", "an open Account Executive posting": the NOUN for an
- * opening. The words between "open" and "posting" name a role, never a
- * preposition, so "open to posting" is still a person posting. Without this
- * the smoke's own request ("…and an open Account Executive posting dated
- * within 30 days") compiled into a leadership POST — a signal nothing the
- * mission bought could answer — because the social reading is tried first.
+ * opening. Without this the smoke's own request ("…and an open Account
+ * Executive posting dated within 30 days") compiled into a leadership POST — a
+ * signal nothing the mission bought could answer — because the social reading
+ * is tried first.
+ *
+ * Between "open" and "posting" must stand a ROLE this system recognises (the
+ * role-family aliases, optionally after a seniority word), not any words: "an
+ * open LinkedIn posting about AI" is still a person posting, and "an open
+ * Content Marketing posting" is still an opening (Codex review, PR #96).
  */
-// Never a preposition, and never a channel or a kind of content: "an open
-// LinkedIn posting about AI" is still a person posting (Codex review, PR #96).
-const ROLE_WORDS = String.raw`(?:(?!(?:source|to|about|on|regarding|that|for|and|in|with|of|up|linkedin|social|blog|twitter|x|instagram|facebook|tiktok|youtube|reddit|substack|medium|media|content|newsletter|public|personal|forum|video|podcast)\b)[a-z][a-z/&-]*\s+){0,3}`;
-export const JOB_POSTING_RE = new RegExp(String.raw`\b(?:job\s+|open\s+${ROLE_WORDS})postings?\b`, "i");
+const ROLE_ALIAS_SOURCE = [...new Set(Object.values(ROLE_FAMILY_ALIASES).flat().map((a) => a.toLowerCase().trim()))]
+  .filter(Boolean)
+  .sort((a, b) => b.length - a.length)
+  .map((a) => a.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&").replace(/\s+/g, "\\s+"))
+  .join("|");
+const ROLE_QUALIFIER = String.raw`(?:(?:new|senior|junior|lead|principal|staff|founding|remote|full-time|part-time|contract)\s+){0,2}`;
+const OPEN_ROLE_POSTING = String.raw`job\s+|open\s+${ROLE_QUALIFIER}(?:${ROLE_ALIAS_SOURCE})\s+`;
+export const JOB_POSTING_RE = new RegExp(String.raw`\b(?:${OPEN_ROLE_POSTING})postings?\b`, "i");
 const POST_MARKER_RE = new RegExp(
-  String.raw`\bpost(?:ed|s)?\b(?!\s+${JOB_OBJECT})|(?<!\b(?:job\s+|open\s+${ROLE_WORDS}))\bposting\b(?!\s+${JOB_OBJECT})|\bshar(?:ed|ing) (?:a|an|their)\b|\bwrote about\b|\bdiscuss(?:ed|ing|es)\b|\btalking about\b|\bannounc(?:ed|ing)\b`);
+  String.raw`\bpost(?:ed|s)?\b(?!\s+${JOB_OBJECT})|(?<!\b(?:${OPEN_ROLE_POSTING}))\bposting\b(?!\s+${JOB_OBJECT})|\bshar(?:ed|ing) (?:a|an|their)\b|\bwrote about\b|\bdiscuss(?:ed|ing|es)\b|\btalking about\b|\bannounc(?:ed|ing)\b`);
 const HIRING_MARKER_RE = new RegExp(
   String.raw`\bhiring\b|\brecruit\w*\b|\bopen roles?\b|\bjob postings?\b|\bsellers?\b|\bhires?\b|${OPEN_ROLES_RE.source}|${POSTED_JOBS_RE.source}|${JOB_POSTING_RE.source}`);
 
