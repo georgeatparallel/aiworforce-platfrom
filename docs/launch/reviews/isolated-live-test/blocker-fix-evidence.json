@@ -1,0 +1,246 @@
+{
+  "recorded_utc": "2026-10-17T16:48:26.593713+00:00",
+  "integration_base": "a4eb32099992f404cf00b729a25b9d28856432a0",
+  "pr100": {
+    "head": "554eadc94724dda559d5f0fb1f991c3ccff1f406",
+    "checks": [
+      {
+        "name": "Edge functions, worker, deploy safety",
+        "status": "IN_PROGRESS",
+        "conclusion": null,
+        "url": "https://github.com/kathmanducreatives-code/aiworforce-platfrom/actions/runs/39050638187/job/117448395673"
+      },
+      {
+        "name": "Database contract (Postgres + PostgREST)",
+        "status": "IN_PROGRESS",
+        "conclusion": null,
+        "url": "https://github.com/kathmanducreatives-code/aiworforce-platfrom/actions/runs/39050638174/job/117448565006"
+      },
+      {
+        "name": "Frontend build, UI tests, type and lint ratchets",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/kathmanducreatives-code/aiworforce-platfrom/actions/runs/39050638187/job/117448395808"
+      }
+    ]
+  },
+  "pr101": {
+    "head": "87dcf34d1833f641d226516ba5c7acfe6b3b07b8",
+    "checks": [
+      {
+        "name": "Database contract (Postgres + PostgREST)",
+        "status": "IN_PROGRESS",
+        "conclusion": null,
+        "url": "https://github.com/kathmanducreatives-code/aiworforce-platfrom/actions/runs/39050088383/job/117446859844"
+      },
+      {
+        "name": "Edge functions, worker, deploy safety",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/kathmanducreatives-code/aiworforce-platfrom/actions/runs/39050088351/job/117446895220"
+      },
+      {
+        "name": "Frontend build, UI tests, type and lint ratchets",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/kathmanducreatives-code/aiworforce-platfrom/actions/runs/39050088351/job/117446895098"
+      }
+    ]
+  },
+  "local_results": {
+    "unknown_reads_and_runtime": {
+      "pass": 40,
+      "fail": 0
+    },
+    "gate_and_read_plan_units": {
+      "pass": 28,
+      "fail": 0
+    },
+    "no_brain_native": {
+      "pass": 7,
+      "fail": 0
+    },
+    "setup_infra": {
+      "pass": 17,
+      "fail": 0
+    },
+    "baseline_unknown_count_regression": {
+      "pass": 1,
+      "fail": 6
+    },
+    "delayed_count_concurrent_credit_regression_before_final_fix": {
+      "pass": 0,
+      "fail": 1,
+      "observed": "one paid start and one durable provider operation; shared credit wrongly not_charged/refunded",
+      "corrected": "no further start; credit remains reserved and provider liability unchanged"
+    },
+    "combined_unchanged_p1_and_guarded_missions": {
+      "pass": 4,
+      "fail": 0
+    }
+  },
+  "fresh_install_results": [
+    {
+      "cron": [
+        "release-stale-credit-reservations",
+        "sweep-stuck-runs"
+      ],
+      "http_cron": 0,
+      "rls": [
+        {
+          "table": "discovery_smoke_authorizations",
+          "rls": true,
+          "worker_insert": false,
+          "worker_update": false,
+          "worker_delete": false
+        },
+        {
+          "table": "discovery_smoke_operations",
+          "rls": true,
+          "worker_insert": false,
+          "worker_update": false,
+          "worker_delete": false
+        },
+        {
+          "table": "discovery_smoke_reconciliations",
+          "rls": true,
+          "worker_insert": false,
+          "worker_update": false,
+          "worker_delete": false
+        }
+      ],
+      "authorize": false,
+      "reconcile": false,
+      "fresh_install": 1,
+      "applied_files": 51,
+      "lease_lock_before_clock": true,
+      "reinstall": "refused populated schema, before writes",
+      "guard_verifier": "PASS"
+    },
+    {
+      "cron": [
+        "release-stale-credit-reservations",
+        "sweep-stuck-runs"
+      ],
+      "http_cron": 0,
+      "rls": [
+        {
+          "table": "discovery_smoke_authorizations",
+          "rls": true,
+          "worker_insert": false,
+          "worker_update": false,
+          "worker_delete": false
+        },
+        {
+          "table": "discovery_smoke_operations",
+          "rls": true,
+          "worker_insert": false,
+          "worker_update": false,
+          "worker_delete": false
+        },
+        {
+          "table": "discovery_smoke_reconciliations",
+          "rls": true,
+          "worker_insert": false,
+          "worker_update": false,
+          "worker_delete": false
+        }
+      ],
+      "authorize": false,
+      "reconcile": false,
+      "fresh_install": 2,
+      "applied_files": 51,
+      "lease_lock_before_clock": true,
+      "reinstall": "refused populated schema, before writes",
+      "guard_verifier": "PASS"
+    }
+  ],
+  "combined_review_sha": "7b7da2a56361c20cf32cfdf98cf2a307b9645c07",
+  "combined_scope": "Final #100 + #101 runtime SQL/installer; #101 follow-up only adds tested role/DDL assertion and changes no runtime file",
+  "original_p1_harness_sha256": "f3adeeb37079058e43ed88e61ed99d56d5f9f3d315d6c687de6efb971b777c45",
+  "combined_worker_traces": [
+    {
+      "variant": "two-actor",
+      "verdict": "PASS: 1 qualified, 1 persisted",
+      "duration_ms": 10688,
+      "qualified_persisted_retrieved": 1,
+      "model_attempts": 4,
+      "provider_starts": 2,
+      "reads": 5,
+      "read_allocation": {
+        "apify:harvestapi~linkedin-job-search": 3,
+        "apify:harvestapi~linkedin-company": 2
+      },
+      "admitted_sends": 11,
+      "model_commitment_microusd": 49920,
+      "provider_commitment_microusd": 10000,
+      "planner_bytes": 29417,
+      "errors": []
+    },
+    {
+      "variant": "two-actor-slow",
+      "verdict": "PASS (slow job search): 1 qualified, 1 persisted",
+      "duration_ms": 369,
+      "qualified_persisted_retrieved": 1,
+      "model_attempts": 4,
+      "provider_starts": 2,
+      "reads": 5,
+      "read_allocation": {
+        "apify:harvestapi~linkedin-job-search": 3,
+        "apify:harvestapi~linkedin-company": 2
+      },
+      "admitted_sends": 11,
+      "model_commitment_microusd": 49920,
+      "provider_commitment_microusd": 10000,
+      "planner_bytes": 29417,
+      "errors": []
+    }
+  ],
+  "production_workflow_state": "active (read-only metadata); operator must disable",
+  "discovery_test_environment": "404 absent or not visible; approval protection unverified",
+  "boundaries": "No hosted setup, migration, worker activation, production data or real vendor request; no increased limit; no PR merged",
+  "beta_p2": "Cache-write telemetry and discovery fallback provenance remain unresolved, not included in blocker PRs",
+  "raw_local_log_sha256": {
+    "read-count-before.log": "7c8b2a5aa079ab12323576d9d8f92f72c85fa8647ea0358763c6569ac6f076ff",
+    "concurrent-credit-before.log": "35842e7e2986cee648a23346fc590d9ea7115e8824bdcd94e6d8844d13eb1c61",
+    "read-count-after.log": "26edba33ee3bb5edfe42b9529a85fe17ddfd5afd154001a3e7b56e8da1a96665",
+    "read-units.log": "4b7488818ebc9a712eeb354c9c65e800b57f1db91371d70f12fb1b10cd592053",
+    "no-brain.log": "9b809aff30bf78e4739530c1c8eedcf21f9bf9c411f17c27d3957a561311c92c",
+    "setup-infra.log": "9fa0b7ce3f1fd7367da57bf0bf49729d391771c0665e5f39467fa3ca41007224",
+    "combined-missions-final.log": "33fd4cebb8e6dc4fd6676bea70c649a1ac4d5ee6e5c87cbabaf158f8f9c2abef",
+    "concurrent-credit-final.log": "b3ecaa935bcd3e76e8ffe28a478e61a0a247f9c071fc2b29dd467e6fd5cf8436",
+    "workspace-seed.log": "8778997b0160e8931f2f03716a6433ca95621f7f7bb030308eee026d58b82f44",
+    "provisioning-caveat.log": "7d5c0ddd8ffc61507414382457108f1e5814a88e0f74c3ed748a8096cf9318a4"
+  },
+  "latest_target_sha": "cb2121d556b169294740e2bc0bb83fcc706bb5a7",
+  "latest_target_delta_from_tested_base": [
+    ".github/workflows/db-contract.yml"
+  ],
+  "latest_target_delta_effect": "PR #99 only: timeout 30 to 45 minutes; worker/schema/installer/admission identical to tested base",
+  "pr93_snapshot": "OPEN at 7d1aa801ef1adc07c3db8875c62ddae6686d2e27",
+  "targeted_mutations": [
+    {
+      "guard": "unknown_start_guard",
+      "removed_guard_causes_regression": "PASS: mutant killed"
+    },
+    {
+      "guard": "concurrent_credit_guard",
+      "removed_guard_causes_regression": "PASS: mutant killed"
+    }
+  ],
+  "operator_workspace_seed": {
+    "result": "PASS locally: one membership, one Scout, zero Company Brain rows",
+    "authenticated_rls": [
+      {
+        "role": "member",
+        "visible_test_workspaces": 1
+      },
+      {
+        "role": "stranger",
+        "visible_test_workspaces": 0
+      }
+    ],
+    "normal_provisioner": "confirmed rejected under guard; inserts an empty Brain; rolled back",
+    "fresh_seed_agents_for_workspace": "confirmed returns 0 without a template workspace; use explicit approved administrator seed"
+  }
+}

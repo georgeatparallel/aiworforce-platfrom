@@ -1,5 +1,7 @@
 # Isolated Discovery live-test preparation — 2026-10-17
 
+**Update:** use [HANDOFF.md](HANDOFF.md) for the current operator sequence and fixes in draft #100/#101. The original audit below remains historical evidence; the no-Brain workaround is replaced by a mandatory test-project database write guard.
+
 **Preparation complete; first real-provider mission BLOCKED. No hosted setup, deployment, migration or vendor request was performed.** This document supersedes stale first-smoke settings in `test-worker-hosting.md`; it changes no runtime code, catalog or financial limit.
 
 ## Reviewed state and evidence

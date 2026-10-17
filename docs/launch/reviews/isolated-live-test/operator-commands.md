@@ -1,5 +1,7 @@
 # Operator commands — NOT EXECUTED
 
+Requires reviewed fixes #100/#101 and their exact final release. See `HANDOFF.md` for the current blockers and approval gates.
+
 Every hosted command below is **NOT EXECUTED**. These are staged procedures, not permission to run them. Stop at every unmet prerequisite in README.md. Never use production/retired credentials, linked CLI defaults, or production deployment scripts. Use an administrator terminal with shell tracing/history disabled for credentials; source a protected local secret file or secure prompt, never paste secrets into this document. Run from a clean checkout of the final reviewed SHA.
 
 ## 1. Read-only GitHub inspection; production stop prerequisite
@@ -37,14 +39,49 @@ print('endpoint guard passed; operator must also confirm project ownership in Su
 PY
 # Enable pg_cron and pg_net in the approved TEST project UI first.
 bash scripts/test-project/build-test-schema.sh --confirm "$TEST_PROJECT_REF" \
-  --with-held-billing-fix --with-held-admission
+  --with-held-billing-fix --with-held-admission --with-test-no-brain-guard
+```
+
+After installation and before any workspace exists, verify the permanent test-only guard with:
+
+```bash
+# NOT EXECUTED — read-only on the independently confirmed test project.
+psql "$TEST_DB_URL" -X -v ON_ERROR_STOP=1 -f scripts/test-project/verify-no-brain-guard.sql
 ```
 
 No platform shim, `supabase db push`, generic migration glob or production rollback command belongs in this procedure. If installation fails, stop and review the partially installed test schema; do not bypass the empty-schema refusal.
 
 ## 3. Internal test workspace and read-only checks
 
-Create the Auth test user and workspace through the supported test-project flow. Record membership, Scout agent, user ID, workspace ID and one fresh plan ID. Keep all users/automations except the operator out. Do not import fixtures into hosted auth.users. Use the existing credits function after its small grant is approved:
+Create only the Auth test user via the TEST Supabase Auth admin UI (without entering normal application onboarding); record its UUID. Do not import contract fixtures into hosted auth.users. The regular `provision_workspace_for_user` inserts a Brain and is intentionally incompatible with this project. `seed_agents_for_workspace` returns zero on a fresh project because there is no canonical template workspace. Therefore use the following explicitly approved administrator seed for the NEW internal workspace/membership/Scout, then the existing credit grant below. Keep every other user/automation out; do not invoke normal workspace provisioning or onboarding.
+
+```bash
+# NOT EXECUTED — hosted administrator writes, separate setup approval required.
+# TEST_USER_ID is the already-created Auth user's UUID. TEST_WORKSPACE_ID is
+# the approved fresh workspace UUID, also used by kickoff and Environment vars.
+psql "$TEST_DB_URL" -X -v ON_ERROR_STOP=1 \
+ -v workspace_id="$TEST_WORKSPACE_ID" -v user_id="$TEST_USER_ID" <<'SQL'
+begin;
+select set_config('agentory.test_user', :'user_id', true);
+do $$ begin
+ if not exists(select 1 from auth.users where id=current_setting('agentory.test_user')::uuid) then
+  raise exception 'create the internal TEST Auth user first'; end if;
+ if not exists(select 1 from pg_trigger where tgrelid='public.company_brain'::regclass
+   and tgname='discovery_test_no_company_brain' and tgenabled='A') then
+  raise exception 'mandatory test no-Brain guard is missing'; end if;
+end $$;
+insert into public.workspaces(id,name,created_by)
+ values(:'workspace_id'::uuid,'Discovery isolated smoke',:'user_id'::uuid);
+insert into public.workspace_members(workspace_id,user_id,role)
+ values(:'workspace_id'::uuid,:'user_id'::uuid,'owner');
+insert into public.agents(workspace_id,slug,name,role_prompt,department,model)
+ values(:'workspace_id'::uuid,'scout','Offline Scout',
+ 'Find and verify the requested company using source evidence.','research','gpt-5.6-luna');
+commit;
+SQL
+```
+
+This is a one-time seed and refuses duplicate workspace IDs. It creates no Brain or paid operation. Use the existing credits function only after the small test grant is approved:
 
 ```bash
 # NOT EXECUTED. Read its exact deployed signature before any grant.
@@ -68,7 +105,7 @@ psql "$TEST_DB_URL" -X -v ON_ERROR_STOP=1 -v workspace_id="$TEST_WORKSPACE_ID" \
   -f scripts/test-project/discovery-smoke-preflight.sql
 ```
 
-Expect only the two local cron jobs, all three RLS flags true and insert/update false. Compare deployed admission function with the pinned file, including global lock before `clock_timestamp()` and ownership checks after the wait. Do not merely look for the migration filename. The read-only guard is copied unchanged from draft #97 and locally tested. Passing does not freeze future Brain edits.
+Expect only the two local cron jobs, all three RLS flags true and insert/update false. Compare deployed admission function with the pinned file, including global lock before `clock_timestamp()` and ownership checks after the wait. Do not merely look for the migration filename. The read-only guard is copied unchanged from draft #97 and locally tested. The mandatory test-only database guard now prevents future Brain writes; preflight alone still does not.
 
 ## 4. Finalize the offline request and plan
 
@@ -98,7 +135,7 @@ The reviewed template cannot know the future account IDs, quote, queue or releas
 
 Only after every blocker is closed and explicit execution approval: activate the reviewed workflow through its own approved PR, then dispatch its **final approved filename** from the reviewed branch/ref. Do not dispatch the production workflow. Approve the `discovery-test` Environment job while queue is empty; confirm worker readiness/identity. No automatic second run. Do not queue before a GitHub approval wait.
 
-In the administrator terminal, rerun endpoint guard and preflight. Verify TEST_WORKSPACE_ID, QUEUE_ID, PRICING_VERSION and file contents against the signed approval. Freeze all other workspace writers. This transaction creates the matching minimal plan and final queue body, asserts no Brain before authorization, and records the immutable DB hash. It is prepared only; it has **NOT** been executed against a hosted database.
+In the administrator terminal, rerun endpoint guard and preflight. Verify TEST_WORKSPACE_ID, QUEUE_ID, PRICING_VERSION and file contents against the signed approval. Verify the mandatory no-Brain guard remains ALWAYS enabled; freeze other configuration writers. This transaction creates the matching minimal plan and final queue body, asserts no Brain before authorization, and records the immutable DB hash. It is prepared only; it has **NOT** been executed against a hosted database.
 
 ```bash
 # NOT EXECUTED — HOSTED WRITE / AUTHORIZATION / MAY SPEND after commit.
