@@ -35,7 +35,7 @@
       "request_limits": {
         "max_request_bytes": 1024,
         "pin_query": { "timeout": "120", "memory": "256" },
-        "max_array_items": { "companies": 1 }
+        "max_array_items": { "companies": 1, "searches": 0 }
       }
     },
     "reads": {
@@ -61,6 +61,10 @@
       "observed_at": "<ISO time>",
       "request_limits": { "max_request_bytes": 32768, "max_output_tokens": 4000 }
     }
+  },
+  "request_bounds_basis": {
+    "details": "The actor bills per company looked up, and both `companies[]` (URLs) and `searches[]` (names to search) are looked up (experiments/hiring-actor-benchmark-2026-08-01/schemas/harvestapi__linkedin-company.input.json; compileHarvestCompanyDetailsInput bills companies + searches). The engine sends one LinkedIn URL in `companies` and never `searches`, so `searches` is refused outright and the purchase is one company.",
+    "jobs": "Billed rows are maxItems per job title per location: the actor runs once per `jobTitles` entry, and maxItems applies per title and location input (harvestapi__linkedin-job-search.input.json). `jobTitles`, `locations` and `geoIds` (the other location filter) are therefore bounded, and `maxItems` is mandatory. `company`, `industryIds`, `workplaceType`, `employmentType`, `experienceLevel`, `salary`, `postedLimit`, `sortBy`, `under10Applicants` and `easyApply` are filters that narrow each search, and `page` only chooses where a search starts, so none of them multiplies the rows. They are left unbounded, and the gate-pinned maxTotalChargeUsd caps the run either way."
   },
   "actor_limits": {
     "apify:harvestapi~linkedin-job-search": 1,

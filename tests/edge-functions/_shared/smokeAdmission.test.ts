@@ -424,3 +424,30 @@ Deno.test("R7: Apify charges are read from the start response as from status rea
   assertEquals(receipts.length, 1, "ids and charge in one write");
   assertEquals([receipts[0].p_run_id, receipts[0].p_dataset_id, receipts[0].p_reported_microusd], ["run-1", "ds-1", 1_000_000]);
 });
+
+Deno.test("proposal: the two-actor catalog bounds every billed multiplier of both purchases (final hardening)", () => {
+  const p = JSON.parse(Deno.readTextFileSync(
+    new URL("../../../docs/launch/proposals/smoke-catalog-two-actor.json", import.meta.url))).approved_quotes;
+  const start = (actor: string) =>
+    classify("POST", `https://api.apify.com/v2/acts/${actor}/runs`) as Exclude<Classified, { kind: "free" | "forbidden" }>;
+  const details = (b: Record<string, unknown>) => boundRequest(
+    req("POST", "https://api.apify.com/v2/acts/harvestapi~linkedin-company/runs", JSON.stringify(b)),
+    start("harvestapi~linkedin-company"), p.details.request_limits, 5000);
+  const url = "https://www.linkedin.com/company/acme/";
+  // The details actor bills per company looked up, by URL OR by name search.
+  assert(details({ companies: [url] }).ok, "the engine's request: one company URL");
+  assertEquals(details({ companies: [url, "https://www.linkedin.com/company/b/"] }), { ok: false, reason: "array_unbounded:companies" });
+  assertEquals(details({ companies: [url], searches: ["Acme"] }), { ok: false, reason: "array_unbounded:searches" });
+  assertEquals(details({ searches: Array.from({ length: 30 }, (_, i) => `co${i}`) }), { ok: false, reason: "array_unbounded:searches" });
+  // The job search bills maxItems per title per location.
+  const jobs = (b: Record<string, unknown>) => boundRequest(
+    req("POST", "https://api.apify.com/v2/acts/harvestapi~linkedin-job-search/runs", JSON.stringify(b)),
+    start("harvestapi~linkedin-job-search"), p.jobs.request_limits, 5000);
+  const one = { jobTitles: ["Account Executive"], locations: ["United States"], postedLimit: "week", maxItems: 3 };
+  assert(jobs(one).ok);
+  assertEquals(jobs({ ...one, jobTitles: ["a", "b"] }), { ok: false, reason: "array_unbounded:jobTitles" });
+  assertEquals(jobs({ ...one, locations: ["a", "b"] }), { ok: false, reason: "array_unbounded:locations" });
+  assertEquals(jobs({ ...one, geoIds: ["103644278"] }), { ok: false, reason: "array_unbounded:geoIds" });
+  assertEquals(jobs({ ...one, maxItems: 4 }), { ok: false, reason: "field_unbounded:maxItems" });
+  assertEquals(jobs({ jobTitles: ["a"], locations: ["b"] }), { ok: false, reason: "field_unbounded:maxItems" });
+});
