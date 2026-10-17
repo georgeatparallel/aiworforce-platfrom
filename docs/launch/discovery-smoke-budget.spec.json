@@ -35,7 +35,7 @@
     "provider_polls": 5,
     "slices": 2,
     "provider_actor_purchases": {
-      "apify:curious_coder~linkedin-jobs-scraper": 2,
+      "apify:harvestapi~linkedin-job-search": 2,
       "apify:harvestapi~linkedin-company": 1,
       "firecrawl:map": 1,
       "firecrawl:scrape": 1
@@ -55,14 +55,15 @@
     "MODEL_SPEND_PERIOD_DAYS": "1",
     "MODEL_RUN_MAX_CALLS": "2",
     "LEAD_WORKER_MAX_RUNTIME_MS": "150000",
-    "LEAD_MAX_AUTO_CONTINUATIONS": "1"
+    "LEAD_MAX_AUTO_CONTINUATIONS": "1",
+    "LEAD_V2_SMOKE_ORCHESTRATION": "minimal"
   },
   "enforcement": {
     "combined_provider_model_usd": "DURABLE_ADMISSION_HELD_MIGRATION",
     "provider_purchases_and_actor_limits": "DURABLE_ADMISSION_HELD_MIGRATION",
     "model_attempts_including_retries_fallbacks_strategist": "DURABLE_ADMISSION_TRANSPORT_GATE",
     "discovery_page_independent_of_polls": "DURABLE_ADMISSION_HELD_MIGRATION",
-    "status_dataset_and_receipt_reads": "DURABLE_ADMISSION_POLLS_WITH_ADMITTED_PARENT",
+    "status_dataset_and_receipt_reads": "DURABLE_ADMISSION_POLLS_WITH_ADMITTED_PARENT; SMOKE_READ_PLAN_RESERVES_DATASET_AND_RECEIPT",
     "unknown_provider_or_model_price": "REFUSED_NO_APPROVED_TEMPLATE",
     "mandatory_request_bounds": "REFUSED_BEFORE_ADMISSION",
     "uncertain_purchase_holds": "DURABLE_NO_REFUND_AND_CREDIT_HELD",
@@ -71,7 +72,9 @@
     "non_fetch_transports": "INFRA_TEST_IMPORT_GRAPH_SCAN",
     "actual_vendor_charge_maximum": "BLOCKED_REQUIRES_VERIFIED_UPPER_QUOTES_AND_EXTERNAL_CONTROLS",
     "test_target_billing_and_schema": "BLOCKED_REQUIRES_ISOLATED_TARGET_AND_SEPARATE_AUTHORIZATION",
-    "lovable_ai_gateway": "REFUSED_HOST_NOT_ALLOWED"
+    "lovable_ai_gateway": "REFUSED_HOST_NOT_ALLOWED",
+    "firecrawl_without_account_rate": "REFUSED_UNPRICED_UNDER_USD_CAP",
+    "firecrawl_first_smoke": "OMITTED_NO_TEMPLATE_NO_KEY"
   },
   "accounting": {
     "committed_estimates": "Approved template maxima, including pending and uncertain operations; never refunded, never free after checkpoint loss.",
@@ -91,6 +94,51 @@
     "approved_quote_catalog_reviewed": false,
     "live_receipts_and_credits_reconciled": false,
     "strategist_provider_is_openai": true,
-    "worker_proposal_remains_inactive": true
+    "worker_proposal_remains_inactive": true,
+    "firecrawl_included": false
+  },
+  "first_smoke_profile": {
+    "why": "The company's own record is the qualification evidence, so the smoke buys the job search (whose rows carry the employer's LinkedIn record and declared band) and one company-details lookup of that employer. Five reads, allocated 3 + 2 by the reads template, cover both runs: the final run's receipt is deferred to the durable reconciliation (#96). Firecrawl's variable credits cannot yet be bounded or receipted.",
+    "actor_limits": {
+      "apify:harvestapi~linkedin-job-search": 1,
+      "apify:harvestapi~linkedin-company": 1
+    },
+    "omitted": [
+      "firecrawl:map",
+      "firecrawl:scrape",
+      "apify:curious_coder~linkedin-jobs-scraper"
+    ],
+    "job_search_request": {
+      "jobTitles": 1,
+      "locations": 1,
+      "geoIds": 0,
+      "maxItems": 3
+    },
+    "company_details_request": {
+      "companies": 1,
+      "searches": 0
+    },
+    "apify_vendor_cap": "maxTotalChargeUsd on every start, never above the template maximum (set by the gate)",
+    "reads": {
+      "total": 5,
+      "allocation": {
+        "apify:harvestapi~linkedin-job-search": 3,
+        "apify:harvestapi~linkedin-company": 2
+      },
+      "job_search": "1-2 long-polled status reads (waitForFinish <= 60 s) + 1 settled receipt (deferred if two status reads were needed) + 1 dataset",
+      "company_details": "1 long-polled status read + 1 dataset; its receipt is deferred",
+      "reconciliation": "scripts/test-project/smoke-reconciliation.sql lists every open purchase; reconcile_discovery_smoke_operation closes it, and until then no later smoke can be authorized or spend"
+    },
+    "models": {
+      "approved": [
+        "openai:gpt-5.6-luna"
+      ],
+      "refused": [
+        "openai:gpt-5.6-terra (maximum above the $0.05 model allocation)",
+        "anthropic:* (not on the mission path)",
+        "openai:gpt-4.1*, legacy tier (no template)"
+      ],
+      "orchestration": "LEAD_V2_SMOKE_ORCHESTRATION=minimal: execution plan, batch evaluation, mission evaluation, opportunity reasoning"
+    }
   }
 }

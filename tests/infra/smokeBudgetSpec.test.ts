@@ -60,6 +60,36 @@ Deno.test("smoke spec: the inactive worker proposal sets exactly the candidate e
   assert(/secrets\.TEST_OPENAI_API_KEY/.test(env.OPENAI_API_KEY ?? ""), "gptProvider needs a TEST_ OpenAI key");
 });
 
+Deno.test("smoke spec: the first smoke omits Firecrawl; an unset rate would still refuse it", async () => {
+  const env = proposal.jobs.worker.env;
+  for (const k of ["FIRECRAWL_API_KEY", "FIRECRAWL_USD_PER_CREDIT", "FIRECRAWL_PRICE_TIER"]) assert(!(k in env), `${k} is not mapped`);
+  const p = spec.first_smoke_profile;
+  assert(!Object.keys(p.actor_limits).some((a) => a.startsWith("firecrawl:")), "no Firecrawl allowance");
+  assert(p.omitted.includes("firecrawl:scrape") && p.omitted.includes("firecrawl:map"));
+  assertEquals(spec.activation_gate.firecrawl_included, false);
+  // Defence in depth: were a key ever mapped without a rate, a capped run refuses.
+  const { webEvidenceCreditRate } = await import("../../supabase/functions/_shared/webEvidenceSpec.ts");
+  for (const unset of ["", undefined, "0", "-1", "abc"]) {
+    assertEquals(webEvidenceCreditRate(() => unset, { usd_capped: true }), { usd_per_credit: null, basis: "unpriced" }, String(unset));
+  }
+});
+
+Deno.test("smoke spec: the smoke buys one job search (one title, one location, three rows) and one company-details lookup", () => {
+  const p = spec.first_smoke_profile;
+  assertEquals(p.actor_limits, { "apify:harvestapi~linkedin-job-search": 1, "apify:harvestapi~linkedin-company": 1 });
+  assertEquals(p.job_search_request, { jobTitles: 1, locations: 1, geoIds: 0, maxItems: 3 });
+  assertEquals(p.job_search_request.maxItems, spec.limits.discovery_rows);
+  // The company-details actor bills per company looked up, by URL or by name.
+  assertEquals(p.company_details_request, { companies: 1, searches: 0 });
+  assertEquals(p.reads.total, spec.limits.provider_polls);
+  assertEquals(Object.values(p.reads.allocation).reduce((a, b) => a + b, 0), spec.limits.provider_polls, "3 + 2 = the five");
+  assertEquals(Object.keys(p.reads.allocation).sort(), Object.keys(p.actor_limits).sort(), "a share for each actor");
+  for (const [a, n] of Object.entries(p.actor_limits)) {
+    assert(n <= (spec.limits.provider_actor_purchases as Record<string, number>)[a], `${a} within its allowance`);
+  }
+  assertEquals(p.models.approved, ["openai:gpt-5.6-luna"]);
+});
+
 Deno.test("smoke spec: activation stays blocked until the target, prices and a separate approval exist", () => {
   assertEquals(spec.status, "BLOCKED");
   assertEquals(spec.authorizes_execution, false);
@@ -68,7 +98,7 @@ Deno.test("smoke spec: activation stays blocked until the target, prices and a s
   assert(g.separate_execution_approval_required);
   assert(g.worker_proposal_remains_inactive);
   for (const k of ["held_migration_applied_anywhere", "isolated_test_target_provisioned", "all_required_prices_verified",
-    "approved_quote_catalog_reviewed", "live_receipts_and_credits_reconciled"] as const) {
+    "approved_quote_catalog_reviewed", "live_receipts_and_credits_reconciled", "firecrawl_included"] as const) {
     assertEquals(g[k], false, k);
   }
   assert(spec.enforcement.actual_vendor_charge_maximum.startsWith("BLOCKED"));
