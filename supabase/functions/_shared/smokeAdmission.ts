@@ -613,12 +613,12 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
     // read before this attempt asks for admission (so its own admission, even
     // one whose answer is lost, never counts as "earlier").
     let prior: "yes" | "no" | "unknown" | null = null;
-    const refuse = (decision: string, detail?: unknown, purchaseUncertain = false) => {
+    const refuse = (decision: string, detail?: unknown) => {
       // A PROVIDER request refused now is not proof the same purchase was
       // never made before: it is reported uncertain whenever an earlier one
       // exists or could not be ruled out, so an earlier uncertain credit hold
       // is never refunded by a later refusal.
-      const earlier = c.kind === "provider" && (purchaseUncertain || authUnavailable || (prior !== null && prior !== "no"));
+      const earlier = c.kind === "provider" && (authUnavailable || (prior !== null && prior !== "no"));
       log("[smoke-admission] refused", { decision, detail: detail ?? null, earlier_purchase: earlier, host: req.url.hostname, path: req.url.pathname, queue: ctx?.queueId ?? null });
       return refusal(decision, detail, earlier);
     };
@@ -661,12 +661,11 @@ export function createAdmissionFetch(d: AdmissionGateDeps): typeof fetch {
     // not bought. Here, after `prior`, so a refused replay stays uncertain.
     if (c.kind === "provider" && c.vendor === "apify") {
       const plan = planSmokeStart(await readState(ctx, auth, actor!));
-      if (!plan.ok) {
-        // Count reads can wait/fail after `prior=no`. A concurrent attempt may
-        // have bought this same run meanwhile. Unknown is never proof of a
-        // non-start: send nothing, but keep a shared/earlier credit HELD.
-        return refuse("read_plan", plan.reason, plan.reason === "read_state_unknown");
-      }
+      // Count reads can wait/fail after `prior=no`. A concurrent attempt may
+      // have bought this run meanwhile; the old lookup cannot prove absence.
+      // Refuse without sending, but retain shared/earlier credit uncertainty.
+      if (!plan.ok && plan.reason === "read_state_unknown") prior = "unknown";
+      if (!plan.ok) return refuse("read_plan", plan.reason);
     }
 
     const decision = await admitOperation(d.db, {

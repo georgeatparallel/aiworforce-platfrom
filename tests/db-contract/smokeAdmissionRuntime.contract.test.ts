@@ -801,7 +801,7 @@ Deno.test("read availability: a count failure delayed behind a concurrent uncert
     // Both attempts identify the same purchase/credit key. The first already
     // observed no purchase, then waits in its count query. The second buys it.
     const first = runTool("source_with_apify", jobsSearch(), toolCtx(m));
-    await counting.promise;
+    await Promise.race([counting.promise, first.then(() => { throw new Error("count query was never reached"); })]);
     try {
       const second = await runTool("source_with_apify", jobsSearch(), toolCtx(m));
       assert(String(second.error).startsWith(APIFY_START_UNCERTAIN));
