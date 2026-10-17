@@ -779,3 +779,36 @@ Deno.test("read availability: count outage on uncertain replay preserves the com
   assertEquals(await ops(m), before, "committed liability unchanged");
   assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] });
 });
+
+Deno.test("read availability: a count failure delayed behind a concurrent uncertain start cannot refund its credit", opts, async () => {
+  const m = await fundedMission();
+  const v = fakeVendor(() => json(503, { error: "uncertain concurrent start" }));
+  const counting = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let counts = 0;
+  const db = {
+    rpc: (fn: string, args: Record<string, unknown>) => client.rpc(fn, args),
+    from: (table: string) => ({ select: (cols: string) => {
+      if (table !== "discovery_smoke_operations" || cols !== "operation_key" || counts++ > 0) return client.from(table).select(cols);
+      const q = { eq: () => q, then: (resolve: (v: unknown) => unknown) => {
+        counting.resolve();
+        return release.promise.then(() => ({ data: null, error: { message: "delayed count failure" } })).then(resolve);
+      }};
+      return q;
+    }}),
+  } as unknown as AdmissionDb;
+  await inMission(m, v, async () => {
+    // Both attempts identify the same purchase/credit key. The first already
+    // observed no purchase, then waits in its count query. The second buys it.
+    const first = runTool("source_with_apify", jobsSearch(), toolCtx(m));
+    await counting.promise;
+    try {
+      const second = await runTool("source_with_apify", jobsSearch(), toolCtx(m));
+      assert(String(second.error).startsWith(APIFY_START_UNCERTAIN));
+    } finally { release.resolve(); }
+    await first;
+  }, {}, db);
+  assertEquals(v.seen.length, 1);
+  assertEquals((await ops(m)).length, 1, "vendor liability remains committed");
+  assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, "a stale prior=no cannot refund the concurrent uncertain purchase");
+});

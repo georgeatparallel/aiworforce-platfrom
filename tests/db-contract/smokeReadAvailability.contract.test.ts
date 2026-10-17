@@ -134,12 +134,12 @@ for (
     async () => {
       const f = await fixture(failure);
       const response = await f.send();
-      assertEquals(response.status, 409);
+      assertEquals(response.status, 503);
       const { error } = await response.json();
       assertEquals([error.decision, error.detail, error.purchase_may_exist], [
         "read_plan",
         "read_state_unknown",
-        false,
+        true,
       ]);
       assertEquals([
         f.seen.length,
@@ -155,7 +155,7 @@ Deno.test(
   async () => {
     const f = await fixture("error", true);
     const r = await f.send();
-    assertEquals(r.status, 409);
+    assertEquals(r.status, 503);
     assertEquals(
       [f.seen.length, f.admissions(), (await f.operations()).length],
       [0, 0, 0],
@@ -168,7 +168,7 @@ Deno.test(
   async () => {
     const f = await fixture("error");
     const r = await Promise.all([f.send(), f.send(), f.send()]);
-    assertEquals(r.map((x) => x.status), [409, 409, 409]);
+    assertEquals(r.map((x) => x.status), [503, 503, 503]);
     assertEquals(
       [f.seen.length, f.admissions(), (await f.operations()).length],
       [0, 0, 0],
