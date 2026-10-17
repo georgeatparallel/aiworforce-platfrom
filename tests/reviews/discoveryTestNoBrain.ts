@@ -184,6 +184,15 @@ Deno.test(
  has_function_privilege('service_role','public.authorize_discovery_smoke(uuid,text,jsonb,jsonb,integer)','execute') as authorize,
  has_function_privilege('service_role','public.reconcile_discovery_smoke_operation(uuid,text,bigint,text,text)','execute') as reconcile,
  has_table_privilege('service_role','public.discovery_smoke_authorizations','insert') as insert_auth`;
+    await assertRejects(
+      () =>
+        sql.begin(async (tx) => {
+          await tx`set local role service_role`;
+          await tx`alter table public.company_brain disable trigger discovery_test_no_company_brain`;
+        }),
+      Error,
+      "must be owner",
+    );
     assertEquals(p, {
       write_fn: false,
       auth_fn: false,
