@@ -662,7 +662,7 @@ function limitsHeld(r: Rehearsal) {
   assert(of("poll").length <= 5, "five reads");
   assert(operations.reduce((a: number, o: Rehearsal) => a + Number(o.committed_microusd), 0) <= 250000, "$0.25 total");
   for (const q of trace.requests) {
-    if (q.url.includes("api.openai.com")) assert(q.bytes <= 32768, `model request ${q.bytes} bytes was sent`);
+    if (q.url.includes("api.openai.com")) assert(q.bytes <= PLANNER_BOUND, `model request ${q.bytes} bytes was sent`);
     if (q.method === "POST" && q.url.includes("api.apify.com")) {
       assert(/maxTotalChargeUsd=0\.00[0-5]\d*(&|$)/.test(q.url), `vendor cap on ${q.url}`);
     }
@@ -677,11 +677,13 @@ const opts = { sanitizeOps: false, sanitizeResources: false };
 const SKIPPED_STAGES = ["research_route_control", "discovery_actor_strategy", "You triage companies", "You compare prospect companies"];
 const stageRan = (r: Rehearsal, prefix: string) => (r.trace.model_stages as string[]).some((s) => s.startsWith(prefix.slice(0, 40)));
 const taskJson = (r: Rehearsal) => JSON.stringify(r.trace.tasks);
-const PLANNER_BOUND = 32768;
-// The full mission's planner request, with no Company Brain configured (the
-// smoke workspace's brain must be measured before a live run; it adds bytes).
-// The smaller unit mission keeps 4 KiB (smokePlannerRequestSize.test.ts).
-const PLANNER_MARGIN = 3072;
+/** The Luna template's byte bound, read from the proposed catalog (30,720 since input is priced at the cache-write rate). */
+const PLANNER_BOUND: number = PROPOSAL.approved_quotes.luna.request_limits.max_request_bytes;
+// The full mission's planner request, with no Company Brain configured. The
+// smoke's test workspace has none (runbook, Phase 2), so for the reviewed
+// kickoff this request is fixed; a Brain would add bytes and must be measured.
+// The smaller unit mission keeps 2 KiB (smokePlannerRequestSize.test.ts).
+const PLANNER_MARGIN = 1024;
 const reconciliation = Deno.readTextFileSync(new URL("../../scripts/test-project/smoke-reconciliation.sql", import.meta.url));
 const unreconciled = (queueId: string) => sql.unsafe(reconciliation.replace(":'queue_id'", `'${queueId}'`));
 
@@ -711,7 +713,9 @@ Deno.test("offline smoke, two actors: one evidence-backed lead is qualified and 
     assertEquals(compiledEvents(r), ["hiring"], "the request asks for one opening, nothing social");
     // ── MODEL: four attempts, each reserved at the template's maximum ──
     assertEquals(r.of("model").length, 4, "plan, batch evaluation, mission evaluation, opportunity reasoning");
-    assertEquals(r.of("model").map((o: Rehearsal) => Number(o.committed_microusd)), [11400, 11400, 11400, 11400]);
+    const luna = PROPOSAL.approved_quotes.luna.maximum_microusd;
+    assertEquals(r.of("model").map((o: Rehearsal) => Number(o.committed_microusd)), [luna, luna, luna, luna]);
+    assert(4 * luna <= 50_000, "four attempts at the template maximum fit the $0.05 model allocation");
     assertEquals((r.trace.model_stages as string[]).slice(1),
       ["lead_execution_plan", "You assess several companies in one requ", "Decide whether this company satisfies th", "opportunity_reasoning"]);
     // ── PROVIDERS: two purchases, vendor-capped, one settled and one deferred ──
@@ -732,7 +736,7 @@ Deno.test("offline smoke, two actors: one evidence-backed lead is qualified and 
     ]);
     // ── MONEY ──
     const sum = (k: string) => r.of(k).reduce((a: number, o: Rehearsal) => a + Number(o.committed_microusd), 0);
-    assertEquals([sum("model"), sum("provider"), sum("model") + sum("provider")], [45600, 10000, 55600]);
+    assertEquals([sum("model"), sum("provider"), sum("model") + sum("provider")], [4 * luna, 10000, 4 * luna + 10000]);
     // ── THE LEAD ──
     assertEquals(r.dashboard.error, null);
     assertEquals(r.dashboard.data?.length, 1, "one lead persisted");

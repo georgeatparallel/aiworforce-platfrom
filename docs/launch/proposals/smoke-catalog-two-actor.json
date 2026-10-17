@@ -55,11 +55,11 @@
     "luna": {
       "allowed_kinds": ["model"],
       "allowed_actors": ["openai:gpt-5.6-luna"],
-      "maximum_microusd": 11400,
-      "source": "<OpenAI project pricing: $<in>/1M in, $<out>/1M out>",
-      "liability_bound_ref": "B=32768 bytes (tokens <= bytes), O=4000",
+      "maximum_microusd": 12480,
+      "source": "<OpenAI project pricing, Standard: $<in>/1M input, $<cache write>/1M cache writes, $<out>/1M output>",
+      "liability_bound_ref": "B=30720 bytes (tokens <= bytes) priced at the cache-write rate, the dearest input rate ($0.25/1M listed 2026-10-17); O=4000 at $1.20/1M. 0.25*30720 + 1.2*4000 = 12480; four attempts 49920 <= 50000",
       "observed_at": "<ISO time>",
-      "request_limits": { "max_request_bytes": 32768, "max_output_tokens": 4000 }
+      "request_limits": { "max_request_bytes": 30720, "max_output_tokens": 4000 }
     }
   },
   "request_bounds_basis": {

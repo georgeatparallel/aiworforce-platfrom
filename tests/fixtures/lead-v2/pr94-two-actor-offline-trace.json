@@ -1,5 +1,5 @@
 {
-  "what": "Offline two-actor smoke rehearsal (tests/db-contract/offlineSmokeProgress.contract.test.ts, 'two actors'). Fake vendors, real compiler/worker/handler/admission/PostgREST/persistence. Request bodies omitted.",
+  "what": "Offline two-actor smoke rehearsal (tests/db-contract/offlineSmokeProgress.contract.test.ts, 'two actors'). Fake vendors, real compiler/worker/handler/admission/PostgREST/persistence. Request bodies omitted. Re-recorded after the Luna template was re-priced at the cache-write input rate (12,480 µ$, B = 30,720).",
   "synthetic": "details maximum_microusd = 5000 is NOT a vendor price (the proposal leaves it null); vendor usage figures are fixture values.",
   "requests_sent": [
     {
@@ -79,7 +79,7 @@
       "result": "sent",
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": 11400
+      "committed_microusd": 12480
     },
     {
       "result": "sent",
@@ -127,19 +127,19 @@
       "result": "sent",
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": 11400
+      "committed_microusd": 12480
     },
     {
       "result": "sent",
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": 11400
+      "committed_microusd": 12480
     },
     {
       "result": "sent",
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": 11400
+      "committed_microusd": 12480
     },
     {
       "result": "refused",
@@ -154,7 +154,7 @@
     {
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": "11400",
+      "committed_microusd": "12480",
       "reported_microusd": null,
       "report_source": null,
       "provider_run_id": null
@@ -218,7 +218,7 @@
     {
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": "11400",
+      "committed_microusd": "12480",
       "reported_microusd": null,
       "report_source": null,
       "provider_run_id": null
@@ -226,7 +226,7 @@
     {
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": "11400",
+      "committed_microusd": "12480",
       "reported_microusd": null,
       "report_source": null,
       "provider_run_id": null
@@ -234,7 +234,7 @@
     {
       "kind": "model",
       "actor": "openai:gpt-5.6-luna",
-      "committed_microusd": "11400",
+      "committed_microusd": "12480",
       "reported_microusd": null,
       "report_source": null,
       "provider_run_id": null
@@ -282,8 +282,8 @@
   "outcome": {
     "status": "completed",
     "terminal": true,
-    "taskId": "aaa20735-9f92-418e-b8c1-3d844b66d26e"
+    "taskId": "db4a4740-c983-4cfa-8c8a-eba8101b804b"
   },
   "verdict": "PASS: 1 qualified, 1 persisted",
-  "elapsed_ms": 11489
+  "elapsed_ms": 11198
 }

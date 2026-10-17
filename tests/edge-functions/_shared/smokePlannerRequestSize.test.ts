@@ -3,7 +3,8 @@
 // (request_too_large) before the mission's first purchase. In the smoke the
 // planner now sees only the approved actors, in unindented JSON. This measures
 // the request body gptStructured actually sends for the smoke's own mission.
-// Outside the smoke the prompt is byte-identical.
+// Outside the smoke the prompt is byte-identical. The bound is the proposed
+// catalog's (30,720 since Luna input is priced at its cache-write rate).
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { compileLeadMission } from "../../../supabase/functions/_shared/leadMissionCompiler.ts";
 import { buildCapabilityGraph } from "../../../supabase/functions/_shared/leadCapabilityGraph.ts";
@@ -15,12 +16,14 @@ import {
   ADMISSION_GATE_MARK, SMOKE_APPROVED_ACTORS_MARK,
 } from "../../../supabase/functions/_shared/smokeAdmissionRefusal.ts";
 
-/** The Luna template's byte bound in the first-smoke catalog (#93). */
-const LUNA_MAX_REQUEST_BYTES = 32_768;
+/** The Luna template's byte bound in the proposed catalog (input priced at the cache-write rate). */
+const LUNA_MAX_REQUEST_BYTES: number = JSON.parse(Deno.readTextFileSync(
+  new URL("../../../docs/launch/proposals/smoke-catalog-two-actor.json", import.meta.url),
+)).approved_quotes.luna.request_limits.max_request_bytes;
 const JOB_SEARCH = "apify:harvestapi~linkedin-job-search";
 const DETAILS = "apify:harvestapi~linkedin-company";
 /** The margin the smoke keeps below the template's bound (not "just under"). */
-const REQUIRED_MARGIN_BYTES = 4_096;
+const REQUIRED_MARGIN_BYTES = 2_048;
 
 const proposal = {
   requested_opportunity_count: 1, requested_contact_ready_count: null, company_types: ["B2B software"],
@@ -73,7 +76,7 @@ Deno.test("smoke planner: the execution-planner request for the smoke's mission 
   assert(smoke.bytes <= LUNA_MAX_REQUEST_BYTES, `smoke request ${smoke.bytes} bytes exceeds ${LUNA_MAX_REQUEST_BYTES}`);
 });
 
-Deno.test("smoke planner: the two-actor smoke (job search + company details) keeps a 4 KiB margin", async () => {
+Deno.test("smoke planner: the two-actor smoke (job search + company details) keeps a 2 KiB margin", async () => {
   const two = await sentBytes(smokeGate([JOB_SEARCH, DETAILS]));
   console.log(`two-actor execution-planner request: ${two.bytes} bytes (margin ${LUNA_MAX_REQUEST_BYTES - two.bytes})`);
   assert(two.bytes <= LUNA_MAX_REQUEST_BYTES - REQUIRED_MARGIN_BYTES,
