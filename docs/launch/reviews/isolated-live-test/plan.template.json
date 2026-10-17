@@ -1,0 +1,7 @@
+{
+  "id": "<TEST_PLAN_UUID>",
+  "workspace_id": "<TEST_WORKSPACE_UUID>",
+  "user_id": "<TEST_AUTH_USER_UUID>",
+  "user_instruction": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+  "status": "running"
+}

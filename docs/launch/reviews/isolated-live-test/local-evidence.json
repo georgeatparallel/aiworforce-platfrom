@@ -1,0 +1,198 @@
+{
+  "reviewed_sha": "a4eb32099992f404cf00b729a25b9d28856432a0",
+  "recorded_utc": "2026-10-17T15:53:48.381063+00:00",
+  "scope": "local PostgreSQL 17.6 + repository platform shim + PostgREST 12.2.3; fake providers only; no hosted migrations or vendor API calls",
+  "installer_files": [
+    "applied supabase/migrations-held/20260816120000_baseline_schema.sql",
+    "applied supabase/migrations/20260816180000_mcp_feed_views.sql",
+    "applied supabase/migrations/20260821120000_execution_cost_provenance.sql",
+    "applied supabase/migrations/20260822120000_model_call_ledger.sql",
+    "applied supabase/migrations/20260822130000_credit_kind_provider_call.sql",
+    "applied supabase/migrations/20260822140000_company_headcount_snapshots.sql",
+    "applied supabase/migrations/20260824120000_signal_events_origin.sql",
+    "applied supabase/migrations/20260824130000_signal_events_subject.sql",
+    "applied supabase/migrations/20260824140000_monitoring_subjects.sql",
+    "applied supabase/migrations/20260824180000_monitoring_runs.sql",
+    "applied supabase/migrations/20260824190000_backfill_signal_event_feed_payload.sql",
+    "applied supabase/migrations/20260825120000_monitoring_schedule.sql",
+    "applied supabase/migrations/20260825130000_monitoring_call_kind.sql",
+    "applied supabase/migrations/20260825140000_monitoring_cron.sql (+ cron detach, same transaction)",
+    "applied supabase/migrations/20260825150000_signal_cluster_relevance.sql",
+    "applied supabase/migrations/20260825160000_relevance_cites_check_fix.sql",
+    "applied supabase/migrations/20260825170000_canonical_dedupe_keys.sql",
+    "applied supabase/migrations/20260826100000_sweep_stuck_runs.sql (+ cron detach, same transaction)",
+    "applied supabase/migrations/20260826170000_resume_stalled_leads_cron.sql (+ cron detach, same transaction)",
+    "applied supabase/migrations/20260827090000_request_understanding_log.sql",
+    "applied supabase/migrations/20260828090000_messages_realtime_publication.sql",
+    "applied supabase/migrations/20260828100000_request_understanding_log_read.sql",
+    "applied supabase/migrations/20260829140000_lead_lineages.sql",
+    "applied supabase/migrations/20260829150000_lead_lineages_backfill.sql",
+    "applied supabase/migrations/20260829170000_hiring_evidence_unavailable_backfill.sql",
+    "applied supabase/migrations/20260903090000_company_web_evidence.sql",
+    "applied supabase/migrations/20260903120000_company_web_evidence_requirement.sql",
+    "applied supabase/migrations/20260903130000_company_web_evidence_soft_404_correction.sql",
+    "applied supabase/migrations/20260903160000_cancellation_row_fence.sql",
+    "applied supabase/migrations/20260904120000_claim_fences_on_lineage_status.sql",
+    "applied supabase/migrations/20260907090000_ops_archive_rls.sql",
+    "applied supabase/migrations/20260907120000_drop_permissive_policies.sql",
+    "applied supabase/migrations/20260907150000_drop_fake_token_policies.sql",
+    "applied supabase/migrations/20260907170000_close_screening_scenarios.sql",
+    "applied supabase/migrations/20260910120000_content_item.sql",
+    "applied supabase/migrations/20260910130000_content_item_versioning.sql",
+    "applied supabase/migrations/20260911120000_content_v1.sql",
+    "applied supabase/migrations/20260911140000_content_asset.sql",
+    "applied supabase/migrations/20260911150000_content_version_empty_draft.sql",
+    "applied supabase/migrations/20260916120000_lead_v2_p2_execution_spine.sql",
+    "applied supabase/migrations/20260917120000_signal_events_realtime_publication.sql",
+    "applied supabase/migrations/20260929120000_lock_down_definer_rpcs.sql",
+    "applied supabase/migrations/20260929130000_revoke_anon_writes_on_workspace_tables.sql",
+    "applied supabase/migrations/20260929140000_beta_access_requests.sql",
+    "applied supabase/migrations-held/20260910140000_lead_mission_v2_claim.sql",
+    "applied supabase/migrations-held/20260915120000_sweep_skips_v2_queue_tasks.sql",
+    "applied supabase/migrations-held/20261003120000_lead_mission_v2_continuations_not_retries.sql",
+    "applied supabase/migrations-held/20261011120000_lead_mission_v2_productive_continuation_no_backoff.sql",
+    "applied supabase/migrations-held/20261015130000_credits_rearm_settled_key.sql",
+    "applied supabase/migrations-held/20261015140000_discovery_smoke_admission.sql"
+  ],
+  "remaining_cron": [
+    "release-stale-credit-reservations",
+    "sweep-stuck-runs"
+  ],
+  "installed_lease_lock_precedes_clock": true,
+  "preflight_controls": [
+    {
+      "case": "clean",
+      "pass_": true,
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "case": "brain",
+      "pass_": true,
+      "exit": 3,
+      "stderr": "ERROR:  smoke preflight: Company Brain must be absent\nCONTEXT:  PL/pgSQL function inline_code_block line 9 at RAISE"
+    },
+    {
+      "case": "liability",
+      "pass_": true,
+      "exit": 3,
+      "stderr": "ERROR:  smoke preflight: unresolved provider liability\nCONTEXT:  PL/pgSQL function inline_code_block line 15 at RAISE"
+    },
+    {
+      "case": "hosted_cron",
+      "pass_": true,
+      "exit": 3,
+      "stderr": "ERROR:  smoke preflight: cron can call a hosted project\nCONTEXT:  PL/pgSQL function inline_code_block line 24 at RAISE"
+    }
+  ],
+  "prepared_admin_transaction": "PASS on localhost, synthetic quote and IDs; no worker connected",
+  "template_semantic_validator": "PASS (placeholders must still be finalized)",
+  "production_and_retired_origin_classification": "forbidden; zero transport",
+  "infra_test_count": 14,
+  "mission_traces": [
+    {
+      "variant": "two-actor",
+      "verdict": "PASS: 1 qualified, 1 persisted",
+      "elapsed_ms": 10999,
+      "operation_count": 11,
+      "model_attempts": 4,
+      "provider_starts": 2,
+      "reads": 5,
+      "read_allocation": {
+        "apify:harvestapi~linkedin-company": 2,
+        "apify:harvestapi~linkedin-job-search": 3
+      },
+      "model_commitment_microusd": 49920,
+      "provider_commitment_microusd": 10000,
+      "retrieved_leads": 1,
+      "admitted_send_count": 11,
+      "errors": [],
+      "attempted_model_body_bytes": [
+        29417,
+        11099,
+        16046,
+        4810,
+        102
+      ],
+      "post_stop_control": "102-byte request is refused after stop, not a fifth paid model send"
+    },
+    {
+      "variant": "two-actor-slow",
+      "verdict": "PASS (slow job search): 1 qualified, 1 persisted",
+      "elapsed_ms": 447,
+      "operation_count": 11,
+      "model_attempts": 4,
+      "provider_starts": 2,
+      "reads": 5,
+      "read_allocation": {
+        "apify:harvestapi~linkedin-company": 2,
+        "apify:harvestapi~linkedin-job-search": 3
+      },
+      "model_commitment_microusd": 49920,
+      "provider_commitment_microusd": 10000,
+      "retrieved_leads": 1,
+      "admitted_send_count": 11,
+      "errors": [],
+      "attempted_model_body_bytes": [
+        29417,
+        11099,
+        16046,
+        4810
+      ]
+    },
+    {
+      "variant": "weak-evidence",
+      "verdict": "negative case assertions PASS",
+      "elapsed_ms": 10665,
+      "operation_count": 10,
+      "model_attempts": 3,
+      "provider_starts": 2,
+      "reads": 5,
+      "read_allocation": {
+        "apify:harvestapi~linkedin-company": 2,
+        "apify:harvestapi~linkedin-job-search": 3
+      },
+      "model_commitment_microusd": 37440,
+      "provider_commitment_microusd": 10000,
+      "retrieved_leads": 0,
+      "admitted_send_count": 10,
+      "errors": [],
+      "attempted_model_body_bytes": [
+        29417,
+        11059,
+        16006
+      ]
+    }
+  ],
+  "ci_snapshot": [
+    {
+      "conclusion": "success",
+      "event": "push",
+      "head_sha": "a4eb32099992f404cf00b729a25b9d28856432a0",
+      "id": 39044499376,
+      "name": "CI",
+      "status": "completed"
+    },
+    {
+      "conclusion": "cancelled",
+      "event": "push",
+      "head_sha": "a4eb32099992f404cf00b729a25b9d28856432a0",
+      "id": 39044499456,
+      "name": "Database contract",
+      "status": "completed"
+    }
+  ],
+  "production_workflow": {
+    "name": "Deploy held-back functions (production)",
+    "path": ".github/workflows/deploy-held-back-functions.yml",
+    "state": "active"
+  },
+  "github_discovery_test_environment": "404: absent or not visible; protection unverified",
+  "raw_local_log_sha256": {
+    "installer.log": "74593b7fbfc426dc3ba1511720141d7517859ad25584c992e92e2349c44fc4f1",
+    "missions.log": "9656fe65ffd799933f57915b2ff4ad6617b5a80ea2ab2c6465762d233ce690c6",
+    "negative.log": "f242cf8c1ccacf9140b7b1c22e9913f0ae22137d2c7c15d3d4a43d55f7b599d0",
+    "prepared-kickoff.log": "2701c3edcda173796a2cfd8ab1e7551adc441daf090dc2bcbb21e992d5a2e419"
+  },
+  "prepared_admin_transaction_brain_control": "PASS: populated Brain rejects before plan/queue/authorization"
+}

@@ -1,0 +1,441 @@
+{
+  "plan_id": "<TEST_PLAN_UUID>",
+  "step_index": 0,
+  "agent_slug": "scout",
+  "workspace_id": "<TEST_WORKSPACE_UUID>",
+  "user_id": "<TEST_AUTH_USER_UUID>",
+  "instruction": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+  "requested_lead_count": 1,
+  "workflow_kind": "qualified_lead_sourcing",
+  "execution_mode": "company_first",
+  "tool_needed": "source_with_apify",
+  "lead_mission": {
+    "version": "lead-mission-v1",
+    "original_user_query": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+    "mission_type": "company_research",
+    "target_entity": "company",
+    "requested_output": "qualified_companies",
+    "requested_count": 1,
+    "company_profile": {
+      "business_models": [],
+      "verticals": [
+        "B2B software"
+      ],
+      "stages": [],
+      "locations": [
+        "United States"
+      ],
+      "employee_range": {
+        "min": 11,
+        "max": 50
+      }
+    },
+    "required_signals": [
+      {
+        "type": "hiring",
+        "role_families": [
+          "gtm_sales"
+        ],
+        "timeframe_days": 30,
+        "event": "hiring",
+        "subject": "company",
+        "qualifier": {
+          "role_families": [
+            "gtm_sales"
+          ],
+          "role_terms": [
+            "account executive"
+          ]
+        },
+        "phrase": "hiring Account Executive"
+      }
+    ],
+    "decision_makers": {
+      "roles": [],
+      "current_employment_required": false
+    },
+    "hard_constraints": {
+      "company_profile.locations": {
+        "operator": "in",
+        "value": [
+          "United States"
+        ],
+        "reason": "stated explicitly in the user's query"
+      }
+    },
+    "soft_preferences": {},
+    "required_capabilities": [
+      "general_company_discovery",
+      "company_brain_qualification"
+    ],
+    "prohibited_capabilities": [
+      "founder_discovery",
+      "employer_verification",
+      "contact_enrichment"
+    ],
+    "field_provenance": {
+      "company_profile.locations": "explicit_user_request",
+      "required_signals": "explicit_user_request",
+      "target_entity": "explicit_user_request",
+      "requested_output": "explicit_user_request",
+      "requested_count": "explicit_user_request",
+      "company_profile.verticals": "gpt_inference",
+      "company_profile.stages": "gpt_inference",
+      "company_profile.business_models": "gpt_inference",
+      "decision_makers.roles": "gpt_inference"
+    },
+    "confidence": 0.99,
+    "required_signal_terms": [
+      "Account Executive"
+    ],
+    "geography_is_hard": true,
+    "directives": {
+      "preferred_signals": [
+        "hiring Account Executive"
+      ],
+      "adjacent_signals": [],
+      "excluded_signals": [],
+      "required_evidence": [],
+      "allowed_broadening": {
+        "role_families": [],
+        "company_types": [],
+        "geographies": [],
+        "employee_range": {
+          "min": null,
+          "max": null
+        }
+      },
+      "disallowed_broadening": [
+        "geography",
+        "role",
+        "size"
+      ],
+      "evaluation_instructions": "All requirements must be verified; unknown is never match.",
+      "source_strategy": [],
+      "requested_contact_ready_count": null,
+      "founder_unlock_recommended": false,
+      "execution_preference": "balanced"
+    },
+    "mission_semantics": {
+      "version": "mission-semantics-v1",
+      "goal": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+      "requested_count": 1,
+      "canonical_signals": [
+        {
+          "kind": "hiring",
+          "legacy_event": "hiring",
+          "subject": "company",
+          "phrase": "an open Account Executive posting dated within 30 days.",
+          "alias": "reader",
+          "source": "user_explicit"
+        }
+      ],
+      "hypotheses": [],
+      "unmapped_signal_language": [],
+      "stage": null,
+      "window_sources": {
+        "hiring": {
+          "source": "user_inferred",
+          "confidence": 0.99
+        }
+      },
+      "corrections": []
+    },
+    "criteria": [
+      {
+        "kind": "hard",
+        "dimension": "industry",
+        "value": "B2B software",
+        "label": "Industry: B2B software",
+        "source": "user_explicit",
+        "user_phrase": "B2B software",
+        "rationale": "stated in the request",
+        "id": "industry:b2b_software",
+        "status": "ok"
+      },
+      {
+        "kind": "hard",
+        "dimension": "geography",
+        "value": "United States",
+        "label": "Geography: United States",
+        "source": "user_explicit",
+        "user_phrase": "",
+        "rationale": "stated in the request",
+        "id": "geography:united_states",
+        "status": "ok"
+      },
+      {
+        "kind": "hard",
+        "dimension": "company_size",
+        "value": {
+          "min": 11,
+          "max": 50
+        },
+        "label": "Company size: 11–50 employees",
+        "source": "user_explicit",
+        "user_phrase": "",
+        "rationale": "stated in the request",
+        "id": "company_size:_min_11_max_50_",
+        "status": "ok"
+      },
+      {
+        "kind": "hard",
+        "dimension": "hiring",
+        "value": {
+          "event": "hiring",
+          "subject": "company",
+          "qualifier": {
+            "role_families": [
+              "gtm_sales"
+            ],
+            "role_terms": [
+              "account executive"
+            ]
+          }
+        },
+        "label": "Hiring: account executive",
+        "source": "user_explicit",
+        "time_window": {
+          "days": 30,
+          "basis": "posted",
+          "source": "user_inferred",
+          "rule": "currently / actively hiring",
+          "enforced": false
+        },
+        "user_phrase": "an open Account Executive posting dated within 30 days.",
+        "rationale": "a signal the request states as a present fact the company must have",
+        "id": "hiring:_event_hiring_subject_company_qualifier_role_families_gtm_sa",
+        "status": "ok"
+      }
+    ],
+    "planner_runtime": {
+      "role": "planner",
+      "function": "offline-rehearsal",
+      "git_sha": "<FINAL_REVIEWED_WORKER_SHA>",
+      "git_short": "<SHA8>",
+      "build_timestamp": "<OFFLINE_BUILD_TIMESTAMP>",
+      "lead_intelligence_contract_version": "v1",
+      "dirty": false
+    },
+    "lead_intelligence_contract_version": "v1",
+    "mission_parser_source": "gpt_validated"
+  },
+  "tool_input": {
+    "lead_mission": {
+      "version": "lead-mission-v1",
+      "original_user_query": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+      "mission_type": "company_research",
+      "target_entity": "company",
+      "requested_output": "qualified_companies",
+      "requested_count": 1,
+      "company_profile": {
+        "business_models": [],
+        "verticals": [
+          "B2B software"
+        ],
+        "stages": [],
+        "locations": [
+          "United States"
+        ],
+        "employee_range": {
+          "min": 11,
+          "max": 50
+        }
+      },
+      "required_signals": [
+        {
+          "type": "hiring",
+          "role_families": [
+            "gtm_sales"
+          ],
+          "timeframe_days": 30,
+          "event": "hiring",
+          "subject": "company",
+          "qualifier": {
+            "role_families": [
+              "gtm_sales"
+            ],
+            "role_terms": [
+              "account executive"
+            ]
+          },
+          "phrase": "hiring Account Executive"
+        }
+      ],
+      "decision_makers": {
+        "roles": [],
+        "current_employment_required": false
+      },
+      "hard_constraints": {
+        "company_profile.locations": {
+          "operator": "in",
+          "value": [
+            "United States"
+          ],
+          "reason": "stated explicitly in the user's query"
+        }
+      },
+      "soft_preferences": {},
+      "required_capabilities": [
+        "general_company_discovery",
+        "company_brain_qualification"
+      ],
+      "prohibited_capabilities": [
+        "founder_discovery",
+        "employer_verification",
+        "contact_enrichment"
+      ],
+      "field_provenance": {
+        "company_profile.locations": "explicit_user_request",
+        "required_signals": "explicit_user_request",
+        "target_entity": "explicit_user_request",
+        "requested_output": "explicit_user_request",
+        "requested_count": "explicit_user_request",
+        "company_profile.verticals": "gpt_inference",
+        "company_profile.stages": "gpt_inference",
+        "company_profile.business_models": "gpt_inference",
+        "decision_makers.roles": "gpt_inference"
+      },
+      "confidence": 0.99,
+      "required_signal_terms": [
+        "Account Executive"
+      ],
+      "geography_is_hard": true,
+      "directives": {
+        "preferred_signals": [
+          "hiring Account Executive"
+        ],
+        "adjacent_signals": [],
+        "excluded_signals": [],
+        "required_evidence": [],
+        "allowed_broadening": {
+          "role_families": [],
+          "company_types": [],
+          "geographies": [],
+          "employee_range": {
+            "min": null,
+            "max": null
+          }
+        },
+        "disallowed_broadening": [
+          "geography",
+          "role",
+          "size"
+        ],
+        "evaluation_instructions": "All requirements must be verified; unknown is never match.",
+        "source_strategy": [],
+        "requested_contact_ready_count": null,
+        "founder_unlock_recommended": false,
+        "execution_preference": "balanced"
+      },
+      "mission_semantics": {
+        "version": "mission-semantics-v1",
+        "goal": "Find 1 US B2B software company with a current declared 11–50 employee band and an open Account Executive posting dated within 30 days.",
+        "requested_count": 1,
+        "canonical_signals": [
+          {
+            "kind": "hiring",
+            "legacy_event": "hiring",
+            "subject": "company",
+            "phrase": "an open Account Executive posting dated within 30 days.",
+            "alias": "reader",
+            "source": "user_explicit"
+          }
+        ],
+        "hypotheses": [],
+        "unmapped_signal_language": [],
+        "stage": null,
+        "window_sources": {
+          "hiring": {
+            "source": "user_inferred",
+            "confidence": 0.99
+          }
+        },
+        "corrections": []
+      },
+      "criteria": [
+        {
+          "kind": "hard",
+          "dimension": "industry",
+          "value": "B2B software",
+          "label": "Industry: B2B software",
+          "source": "user_explicit",
+          "user_phrase": "B2B software",
+          "rationale": "stated in the request",
+          "id": "industry:b2b_software",
+          "status": "ok"
+        },
+        {
+          "kind": "hard",
+          "dimension": "geography",
+          "value": "United States",
+          "label": "Geography: United States",
+          "source": "user_explicit",
+          "user_phrase": "",
+          "rationale": "stated in the request",
+          "id": "geography:united_states",
+          "status": "ok"
+        },
+        {
+          "kind": "hard",
+          "dimension": "company_size",
+          "value": {
+            "min": 11,
+            "max": 50
+          },
+          "label": "Company size: 11–50 employees",
+          "source": "user_explicit",
+          "user_phrase": "",
+          "rationale": "stated in the request",
+          "id": "company_size:_min_11_max_50_",
+          "status": "ok"
+        },
+        {
+          "kind": "hard",
+          "dimension": "hiring",
+          "value": {
+            "event": "hiring",
+            "subject": "company",
+            "qualifier": {
+              "role_families": [
+                "gtm_sales"
+              ],
+              "role_terms": [
+                "account executive"
+              ]
+            }
+          },
+          "label": "Hiring: account executive",
+          "source": "user_explicit",
+          "time_window": {
+            "days": 30,
+            "basis": "posted",
+            "source": "user_inferred",
+            "rule": "currently / actively hiring",
+            "enforced": false
+          },
+          "user_phrase": "an open Account Executive posting dated within 30 days.",
+          "rationale": "a signal the request states as a present fact the company must have",
+          "id": "hiring:_event_hiring_subject_company_qualifier_role_families_gtm_sa",
+          "status": "ok"
+        }
+      ],
+      "planner_runtime": {
+        "role": "planner",
+        "function": "offline-rehearsal",
+        "git_sha": "<FINAL_REVIEWED_WORKER_SHA>",
+        "git_short": "<SHA8>",
+        "build_timestamp": "<OFFLINE_BUILD_TIMESTAMP>",
+        "lead_intelligence_contract_version": "v1",
+        "dirty": false
+      },
+      "lead_intelligence_contract_version": "v1",
+      "mission_parser_source": "gpt_validated"
+    },
+    "source_type": "jobs"
+  },
+  "run_budget": {
+    "provider_usd": 0.2,
+    "max_candidates": 3
+  }
+}
