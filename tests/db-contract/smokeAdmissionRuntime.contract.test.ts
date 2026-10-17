@@ -17,6 +17,7 @@ import { gptStructured } from "../../supabase/functions/_shared/gptProvider.ts";
 import { generateText } from "../../supabase/functions/_shared/aiProvider.ts";
 import { APIFY_START_UNCERTAIN } from "../../supabase/functions/_shared/verifierPurchaseRecovery.ts";
 import { createLeadMissionRunner } from "../../worker/leadMissionRunner.ts";
+import { APIFY_SETTLED_SOURCE } from "../../supabase/functions/_shared/smokeAdmissionRefusal.ts";
 import { completeOpenAiCompatible } from "../../supabase/functions/_shared/leadStrategy/adapters/shared.ts";
 import { OPENAI_CHAT_URL } from "../../supabase/functions/_shared/leadStrategy/adapters/openai.ts";
 import { LOVABLE_GATEWAY_URL } from "../../supabase/functions/_shared/leadStrategy/adapters/lovableAi.ts";
@@ -41,6 +42,7 @@ for (const [k, v] of Object.entries({
 
 interface Seen { method: string; url: URL; body: string | null }
 type Script = (r: Seen) => Response | Promise<Response>;
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -89,7 +91,7 @@ async function credits(ws: string) {
   return { balance: b.balance_credits as number, reserved: b.reserved_credits as number, statuses: tx.map((t) => t.status as string) };
 }
 async function ops(m: SmokeMission) {
-  return await sql`select o.kind, o.actor, o.provider_run_id, o.provider_dataset_id, o.reported_microusd, o.committed_microusd
+  return await sql`select o.kind, o.actor, o.provider_run_id, o.provider_dataset_id, o.reported_microusd, o.committed_microusd, o.report_source
     from public.discovery_smoke_operations o join public.discovery_smoke_authorizations a on a.id = o.authorization_id
     where a.queue_id = ${m.queueId} order by o.admitted_at`;
 }
@@ -101,7 +103,8 @@ Deno.test("apify: admitted with the template's vendor caps, run id durable, poll
   const v = fakeVendor((r) => {
     if (r.method === "POST") return json(201, { data: { id: "run-1", defaultDatasetId: "ds-1", status: "RUNNING" } });
     if (r.url.pathname.endsWith("/actor-runs/run-1")) {
-      return json(200, { data: { id: "run-1", status: "SUCCEEDED", defaultDatasetId: "ds-1", usageTotalUsd: 0.012 } });
+      // Finished 11 s ago: this terminal status read is already the settled receipt.
+      return json(200, { data: { id: "run-1", status: "SUCCEEDED", defaultDatasetId: "ds-1", usageTotalUsd: 0.012, finishedAt: ago(11_000) } });
     }
     if (r.url.pathname.endsWith("/datasets/ds-1/items")) return json(200, []);
     return json(404, {});
@@ -118,6 +121,7 @@ Deno.test("apify: admitted with the template's vendor caps, run id durable, poll
   assertEquals(o[0].provider_run_id, "run-1");
   assertEquals(o[0].provider_dataset_id, "ds-1");
   assertEquals(o[0].reported_microusd, "12000", "Apify's reported usage is recorded against the purchase");
+  assertEquals(o[0].report_source, APIFY_SETTLED_SOURCE, "and recorded as settled");
   assertEquals(await credits(m.ws), { balance: 9, reserved: 0, statuses: ["charged"] }, "the credit rule is unchanged");
 
   // A restarted slice asks the same question: no second purchase reaches Apify.
@@ -158,7 +162,9 @@ Deno.test("apify: an uncertain start keeps its credit HELD and is never bought a
 
 Deno.test("apify: when polls run out the wait stops at once; the run stays pending with its id", opts, async () => {
   const m = await fundedMission();
-  await sql`update public.discovery_smoke_authorizations set provider_polls = 1 where queue_id = ${m.queueId}`;
+  // Three reads: exactly one run's lifecycle. One status read leaves the two the
+  // dataset and the receipt need, so the plan stops waiting after it.
+  await sql`update public.discovery_smoke_authorizations set provider_polls = 3 where queue_id = ${m.queueId}`;
   const v = fakeVendor((r) => r.method === "POST"
     ? json(201, { data: { id: "run-p", defaultDatasetId: "ds-p", status: "RUNNING" } })
     : json(200, { data: { id: "run-p", status: "RUNNING", defaultDatasetId: "ds-p" } }));
@@ -467,4 +473,196 @@ Deno.test("strategist: concurrent attempts in flight never exceed the mission's 
   assertEquals(v.seen.length, 4, "four physical starts, never more");
   assertEquals(results.filter((r) => r.ok).length, 4);
   assertEquals((await ops(m)).map((o) => o.kind), ["model", "model", "model", "model"]);
+});
+
+// ── THE SMOKE'S APIFY READ LIFECYCLE (five reads, shared) ───────────────────
+//
+// Every status, dataset, resume and receipt GET is one admitted read. A run is
+// bought only when its lifecycle fits; a status read is long-polled and spent
+// only while the dataset and receipt reads still fit; the receipt is either
+// settled (`apify_run(settled).receipt`) or listed by the reconciliation.
+const reconciliation = Deno.readTextFileSync(new URL("../../scripts/test-project/smoke-reconciliation.sql", import.meta.url));
+const unsettled = async (m: SmokeMission) =>
+  await sql.unsafe(reconciliation.replace(":'queue_id'", `'${m.queueId}'`));
+const reads = async (m: SmokeMission) => (await ops(m)).filter((o) => o.kind === "poll").length;
+/** An Apify that honours `waitForFinish`: `finishAfter` status reads, then SUCCEEDED with `finishedAt` `settleLeftMs` short of settled. */
+function apify(o: { id: string; finishAfter: number; settleLeftMs?: number; usd?: number; finalUsd?: number; statusDelayMs?: number }) {
+  let statusReads = 0;
+  let finishedAt: string | null = null;
+  const kinds: string[] = [];
+  const v = fakeVendor((r) => {
+    if (r.method === "POST") return json(201, { data: { id: o.id, defaultDatasetId: `ds-${o.id}`, status: "RUNNING" } });
+    if (r.url.pathname.endsWith(`/datasets/ds-${o.id}/items`)) { kinds.push("dataset"); return json(200, []); }
+    if (r.url.pathname.endsWith(`/actor-runs/${o.id}`)) {
+      const longPoll = r.url.searchParams.has("waitForFinish");
+      kinds.push(longPoll ? `status(wait=${r.url.searchParams.get("waitForFinish")})` : "receipt");
+      if (longPoll && ++statusReads < o.finishAfter) return json(200, { data: { id: o.id, status: "RUNNING", defaultDatasetId: `ds-${o.id}` } });
+      if (o.finishAfter === Infinity) return json(200, { data: { id: o.id, status: "RUNNING", defaultDatasetId: `ds-${o.id}` } });
+      finishedAt ??= ago(10_000 - (o.settleLeftMs ?? 200));
+      const body = json(200, { data: { id: o.id, status: "SUCCEEDED", defaultDatasetId: `ds-${o.id}`, finishedAt,
+        usageTotalUsd: longPoll ? (o.usd ?? 0.004) : (o.finalUsd ?? o.usd ?? 0.004) } });
+      // A snapshot taken now, answered late: the delay must not make it "settled".
+      return longPoll && o.statusDelayMs ? new Promise<Response>((r) => setTimeout(() => r(body), o.statusDelayMs)) : body;
+    }
+    return json(404, {});
+  });
+  return { ...v, kinds };
+}
+
+Deno.test("read lifecycle: a run finishing in its first long poll uses exactly three reads, and its receipt is settled", opts, async () => {
+  const m = await fundedMission();
+  const v = apify({ id: "r1", finishAfter: 1, usd: 0.004, finalUsd: 0.0045 });
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  assertEquals(v.kinds, ["status(wait=60)", "receipt", "dataset"], "long-poll, settle, then the rows");
+  assertEquals(await reads(m), 3, "three of the mission's five reads");
+  const [p] = (await ops(m)).filter((o) => o.kind === "provider");
+  assertEquals(p.reported_microusd, "4500", "the settled figure, not the preliminary one");
+  assertEquals(p.report_source, APIFY_SETTLED_SOURCE);
+  assertEquals((await unsettled(m)).length, 0, "nothing left to reconcile");
+});
+
+Deno.test("read lifecycle: a slow run takes four reads; a second run that could not be settled is never bought", opts, async () => {
+  const m = await fundedMission();
+  const v = apify({ id: "r2", finishAfter: 2 });
+  const first = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(first.ok, JSON.stringify(first).slice(0, 300));
+  assertEquals(v.kinds, ["status(wait=60)", "status(wait=60)", "receipt", "dataset"]);
+  assertEquals(await reads(m), 4);
+  // One read left: a second run's lifecycle needs three, so the gate does not
+  // buy it. Company details: not a discovery page, so only the read plan refuses it.
+  const second = await inMission(m, v, () => fetch("https://api.apify.com/v2/acts/harvestapi~linkedin-company/runs?token=t",
+    { method: "POST", body: JSON.stringify({ companies: ["https://www.linkedin.com/company/x"] }) }));
+  const why = (await second.json()).error;
+  assertEquals([second.status, why.decision, why.detail], [409, "read_plan", "reads_exhausted"], "a definite non-start");
+  assertEquals(v.seen.filter((s) => s.method === "POST").length, 1, "nothing more was bought");
+  assertEquals(await reads(m), 4, "and nothing more was read");
+  assertEquals(await credits(m.ws), { balance: 9, reserved: 0, statuses: ["charged"] }, "one credit, for the one run");
+});
+
+Deno.test("read lifecycle: a run still RUNNING at the reserve stays pending, its receipt explicitly unsettled and listed", opts, async () => {
+  const m = await fundedMission();
+  const v = apify({ id: "r3", finishAfter: Infinity });
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  const d = res.data as { run_id?: string; pending?: boolean; receipt?: string };
+  assertEquals([res.ok, d.run_id, d.pending, d.receipt], [false, "r3", true, "unsettled"]);
+  assertEquals(await reads(m), 3, "status reads stop while the dataset and receipt reads are still reserved");
+  // The next slice's resume is a status read too: two reads left are the reserve, so it is not made.
+  const resumed = await inMission(m, v, () => runTool("source_with_apify", { ...jobsSearch(), resume_run_id: "r3" }, toolCtx(m)));
+  assertEquals(resumed.error, "smoke_read_plan:reads_reserved");
+  assertEquals(resumed.data as Record<string, unknown>, { run_id: "r3", pending: true, resumable: true, receipt: "unsettled", actor_id: "curious_coder/linkedin-jobs-scraper" });
+  assertEquals(await reads(m), 3);
+  const rows = await unsettled(m);
+  assertEquals(rows.map((r) => r.provider_run_id), ["r3"], "the reconciliation lists the run whose charge was never settled");
+});
+
+Deno.test("read lifecycle: the long poll is clamped to the time left; too little time buys nothing", opts, async () => {
+  const m = await fundedMission();
+  const v = apify({ id: "r4", finishAfter: 1, settleLeftMs: -1_000 }); // already settled when first seen
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)), { remainingMs: () => 90_000 });
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  assertEquals(v.kinds, ["status(wait=40)", "dataset"], "90 s left: 40 s of waiting, the rest kept for the dataset and receipt; a settled status is the receipt");
+  assertEquals(await reads(m), 2);
+  const late = await fundedMission();
+  const v2 = apify({ id: "r5", finishAfter: 1 });
+  const refused = await inMission(late, v2, () => runTool("source_with_apify", jobsSearch(), toolCtx(late)), { remainingMs: () => 60_000 });
+  assertEquals(refused.error, "apify_start_failed:409", "a definite non-start");
+  const direct = await inMission(late, v2, () => fetch("https://api.apify.com/v2/acts/harvestapi~linkedin-company/runs?token=t",
+    { method: "POST", body: JSON.stringify({ companies: ["https://www.linkedin.com/company/x"] }) }), { remainingMs: () => 60_000 });
+  const why = (await direct.json()).error;
+  assertEquals([why.decision, why.detail], ["read_plan", "no_time"], "refused by the read plan, not by a cap");
+  assertEquals(v2.seen.length, 0, "a run whose lifecycle cannot fit in the time left is not bought");
+});
+
+// ── THE JOBS ACTORS' BILLED-RESULT BOUNDS ───────────────────────────────────
+
+const HARVEST_JOBS = "apify:harvestapi~linkedin-job-search";
+const harvestQuotes = () => syntheticQuotes({
+  harvest_jobs: {
+    allowed_kinds: ["provider"], allowed_actors: [HARVEST_JOBS], maximum_microusd: 5000, discovery_page: true,
+    observed_at: ago(3_600_000), source: "synthetic contract control", liability_bound_ref: "tests/db-contract (not a vendor quote)",
+    request_limits: {
+      max_request_bytes: 4096, pin_query: { timeout: "120", memory: "256" },
+      max_fields: { maxItems: 3 }, max_array_items: { jobTitles: 1, locations: 1, geoIds: 0 },
+    },
+  },
+});
+const HARVEST_START = "https://api.apify.com/v2/acts/harvestapi~linkedin-job-search/runs?token=t";
+
+Deno.test("jobs: more titles, locations or rows than one search of three is refused before purchase; the vendor cap never exceeds the quote", opts, async () => {
+  const m = await fundedMission({ quotes: harvestQuotes(), actorLimits: { ...syntheticActorLimits, [HARVEST_JOBS]: 1 } });
+  const v = fakeVendor(() => json(201, { data: { id: "h1", defaultDatasetId: "ds-h1", status: "RUNNING" } }));
+  const ok = { jobTitles: ["Account Executive"], locations: ["United States"], maxItems: 3, postedLimit: "week" };
+  for (const [why, body] of [
+    ["two titles multiply the rows", { ...ok, jobTitles: ["Account Executive", "Sales Executive"] }],
+    ["two locations multiply the rows", { ...ok, locations: ["United States", "Canada"] }],
+    ["a second location filter", { ...ok, geoIds: ["103644278"] }],
+    ["more rows per search", { ...ok, maxItems: 4 }],
+    ["no row bound at all", { jobTitles: ok.jobTitles, locations: ok.locations, postedLimit: "week" }],
+    ["a title that is not an array", { ...ok, jobTitles: "Account Executive" }],
+  ] as Array<[string, unknown]>) {
+    const r = await inMission(m, v, () => fetch(HARVEST_START, { method: "POST", body: JSON.stringify(body) }));
+    const e = (await r.json()).error;
+    assertEquals([r.status, e.decision], [409, "request_limits"], why);
+  }
+  assertEquals([v.seen.length, (await ops(m)).length], [0, 0], "none of them was sent or admitted");
+  const sent = await inMission(m, v, () =>
+    fetch(`${HARVEST_START}&maxTotalChargeUsd=1`, { method: "POST", body: JSON.stringify(ok) }));
+  await sent.body?.cancel();
+  assertEquals(sent.status, 201);
+  assertEquals(v.seen.length, 1);
+  assertEquals(v.seen[0].url.searchParams.get("maxTotalChargeUsd"), "0.005", "a larger caller cap is replaced by the authorized maximum");
+});
+
+Deno.test("jobs: the legacy LinkedIn jobs actor gets one URL, three per source, no `count`, in the smoke", opts, async () => {
+  const m = await fundedMission();
+  const v = apify({ id: "c1", finishAfter: 1, settleLeftMs: -1_000 });
+  const urls = ["growth", "sales", "marketing"].map((k) => `https://www.linkedin.com/jobs/search/?keywords=${k}&position=1&pageNum=0`);
+  const res = await inMission(m, v, () => runTool("source_with_apify", { ...jobsSearch(), input: { urls } }, toolCtx(m)));
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  const [post] = v.seen.filter((s) => s.method === "POST");
+  assertEquals(JSON.parse(post.body!), { urls: [urls[0]], limitPerSource: 3, splitByLocation: false, scrapeCompany: true },
+    "three URLs would have been three billed searches; exactly one is sent");
+  assertEquals(post.url.searchParams.get("maxTotalChargeUsd"), "0.06", "capped at the template's maximum");
+});
+
+Deno.test("models: a Terra template priced above the model allocation is never admitted", opts, async () => {
+  const quotes = syntheticQuotes({
+    terra: { allowed_kinds: ["model"], allowed_actors: ["openai:gpt-5.6-terra"], maximum_microusd: 113_536, observed_at: ago(3_600_000),
+      source: "synthetic contract control", liability_bound_ref: "tests/db-contract (not a vendor quote)",
+      request_limits: { max_request_bytes: 32_768, max_output_tokens: 4_000 } },
+  });
+  const m = await fundedMission({ quotes });
+  const v = fakeVendor(() => json(200, { choices: [{ message: { content: "{}" } }] }));
+  const r = await inMission(m, v, () => gptStructured({ purpose: "t", system: "s", user: "u", model: "gpt-5.6-terra", maxTokens: 500 }));
+  assertEquals(r.ok, false);
+  assertEquals([v.seen.length, (await ops(m)).length], [0, 0], "its maximum exceeds the $0.05 model allocation: refused, nothing sent");
+});
+
+Deno.test("read lifecycle: a replay of an uncertain start refused by the read plan keeps its credit HELD", opts, async () => {
+  // SAF-001/002's rule holds for the read plan too: refusing a purchase that may
+  // already exist is uncertain, never a refund (the gate decides, after `prior`).
+  const m = await fundedMission();
+  const v = fakeVendor((r) => r.method === "POST" ? json(503, { error: "upstream" }) : json(404, {}));
+  const first = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(String(first.error).startsWith(APIFY_START_UNCERTAIN), String(first.error));
+  assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, "held (#88)");
+  const replay = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)), { remainingMs: () => 30_000 });
+  assert(String(replay.error).startsWith(APIFY_START_UNCERTAIN), `refused by the read plan, still uncertain: ${replay.error}`);
+  assertEquals(v.seen.filter((s) => s.method === "POST").length, 1, "not sent again");
+  assertEquals(await credits(m.ws), { balance: 9, reserved: 1, statuses: ["reserved"] }, "still held, never refunded");
+});
+
+Deno.test("read lifecycle (Codex P2): a preliminary snapshot answered late is not taken as settled", opts, async () => {
+  // The terminal status is snapshotted 150 ms before it settles, and arrives
+  // 400 ms later. Judged against arrival it would look settled; judged against
+  // when the request left (the snapshot's lower bound) it is not.
+  const m = await fundedMission();
+  const v = apify({ id: "r6", finishAfter: 1, settleLeftMs: 150, statusDelayMs: 400, usd: 0.004, finalUsd: 0.0045 });
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  assertEquals(v.kinds, ["status(wait=60)", "receipt", "dataset"], "the settled receipt is still read");
+  const [p] = (await ops(m)).filter((o) => o.kind === "provider");
+  assertEquals([p.reported_microusd, p.report_source], ["4500", APIFY_SETTLED_SOURCE], "the settled figure, from the receipt read");
+  assertEquals((await unsettled(m)).length, 0);
 });

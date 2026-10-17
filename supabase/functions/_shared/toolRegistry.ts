@@ -21,7 +21,7 @@ import {
   assertResponseKindConsistent, buildCountLedger,
 } from "./providerResponseContract.ts";
 import { buildHarvestApiPeopleInput, buildHarvestApiCompanyEmployeesInput } from "./harvestApiPeople.ts";
-import { buildCuriousCoderLinkedInJobsInput } from "./curiousCoderJobsInput.ts";
+import { buildCuriousCoderLinkedInJobsInput, buildCuriousCoderSmokeJobsInput } from "./curiousCoderJobsInput.ts";
 // ONE OBSERVABILITY LAYER for every paid lead-sourcing call. Observes only —
 // it never selects a provider, sets a budget, decides a retry or gates a result.
 import {
@@ -406,7 +406,16 @@ import {
   CREDIT_REFUSED_ERROR, type CreditDb,
 } from "./creditAuthorization.ts";
 import { priceFor } from "./creditPricing.ts";
-import { FIRECRAWL_UNCERTAIN, isAdmissionRefusal, smokeAdmissionActive } from "./smokeAdmissionRefusal.ts";
+import {
+  APIFY_RECEIPT_TIMEOUT_MS, apifyRunSettled, FIRECRAWL_UNCERTAIN, isAdmissionRefusal, planSmokeReceipt,
+  planSmokeStatusRead, smokeAdmissionActive, smokeReadState,
+} from "./smokeAdmissionRefusal.ts";
+
+/** A smoke-mode Apify call the read plan would not start or keep reading (smokeAdmissionRefusal.ts). */
+export const SMOKE_READ_PLAN = "smoke_read_plan";
+const APIFY_TERMINAL_STATUSES = new Set(["SUCCEEDED", "FAILED", "TIMED-OUT", "ABORTED"]);
+/** No mission has more reads than this (the admission's `provider_polls` ceiling). */
+const SMOKE_MAX_STATUS_READS = 5;
 
 const APIFY_BASE = "https://api.apify.com/v2";
 
@@ -449,6 +458,12 @@ const APIFY_ACTORS: Record<string, ApifyActorCfg> = {
         ? role_keywords.join(" ")
         : null;
       const keywords = (user_input?.keywords as string | undefined) ?? kwFromRoles ?? query ?? null;
+      // THE SMOKE: one URL, `limitPerSource`, no `count` (curiousCoderJobsInput.ts).
+      if (smokeAdmissionActive()) {
+        return buildCuriousCoderSmokeJobsInput({
+          urls: Array.isArray(user_input?.urls) ? (user_input!.urls as string[]) : null, keywords, location,
+        }) as unknown as Record<string, unknown>;
+      }
       return buildCuriousCoderLinkedInJobsInput({
         urls: Array.isArray(user_input?.urls) ? (user_input!.urls as string[]) : null,
         keywords, location, maxResults: max_results,
@@ -1154,10 +1169,33 @@ async function execSourceWithApify(
     ? String((i as { resume_run_id?: unknown }).resume_run_id).trim()
     : "";
 
+  // ── THE SMOKE'S READ PLAN (smoke mode only; smokeAdmissionRefusal.ts) ─────
+  //
+  // Five reads per mission, shared. Whether a NEW run may be bought is the
+  // gate's decision (`read_plan`), made after it knows whether this purchase
+  // may already exist. A resume is a long-polled status read under the plan;
+  // not read, the run stays pending, its id kept and its receipt unsettled.
+  const smokeReads = smokeAdmissionActive();
+  let resumeWait: { waitS: number; timeoutMs: number } | null = null;
+  if (smokeReads && resumeRunId) {
+    const st = await smokeReadState();
+    const plan = st ? planSmokeStatusRead(st) : { ok: false as const, reason: "read_state_unknown" };
+    if (!plan.ok) {
+      console.warn("[toolRegistry] smoke: resume not read; the run stays pending, its receipt unsettled", { run_id: resumeRunId, reason: plan.reason });
+      return { ok: false, error: `${SMOKE_READ_PLAN}:${plan.reason}`,
+        data: { run_id: resumeRunId, pending: true, resumable: true, receipt: "unsettled", actor_id } };
+    }
+    resumeWait = plan;
+  }
+
+  // SETTLEMENT IS JUDGED AT SEND TIME. A response is a snapshot taken no
+  // earlier than its request left; judged against a later clock (after the
+  // gate's own writes), a preliminary figure could read as settled.
+  let finalRunSentAt = Date.now();
   const startRes = resumeRunId
-    ? await apifyFetch(`/actor-runs/${resumeRunId}?token=${APIFY_API_TOKEN}`, {
+    ? await apifyFetch(`/actor-runs/${resumeRunId}?${resumeWait ? `waitForFinish=${resumeWait.waitS}&` : ""}token=${APIFY_API_TOKEN}`, {
       method: "GET",
-      timeoutMs: 20_000,
+      timeoutMs: resumeWait?.timeoutMs ?? 20_000,
     }).catch((e) => ({ ok: false, status: 0, data: { error: String(e) } }))
     : await apifyFetch(`/acts/${actorPath}/runs?token=${APIFY_API_TOKEN}`, {
       method: "POST",
@@ -1249,7 +1287,33 @@ async function execSourceWithApify(
   const deadline = Date.now() + 90_000;
   let status: string = run.status ?? "READY";
   let finalRun: any = run;
-  while (Date.now() < deadline) {
+  // SMOKE: long-polled status reads, each planned against the reads and time
+  // the dataset and receipt still need. The 3 s cadence below is not used.
+  // Bounded by the database's read count (each admitted read lowers it); the
+  // iteration cap is a second bound that holds even if that count stalls.
+  for (let n = 0; smokeReads && !APIFY_TERMINAL_STATUSES.has(status) && n < SMOKE_MAX_STATUS_READS; n++) {
+    if (ctx?.stopWaiting?.()) break;
+    const st = await smokeReadState();
+    const plan = st ? planSmokeStatusRead(st) : { ok: false as const, reason: "read_state_unknown" };
+    if (!plan.ok) {
+      console.log("[toolRegistry] smoke: status read not planned; the Apify run stays pending", { run_id, status, reason: plan.reason });
+      break;
+    }
+    const pollSentAt = Date.now();
+    const poll = await apifyFetch(`/actor-runs/${run_id}?waitForFinish=${plan.waitS}&token=${APIFY_API_TOKEN}`, {
+      method: "GET",
+      timeoutMs: plan.timeoutMs,
+    }).catch(() => null);
+    if (!poll) continue; // a lost answer still spent its read; the plan decides again
+    if (isAdmissionRefusal(poll)) break;
+    if (poll.status === 401 || poll.status === 403) {
+      return { ok: false, unavailable: true, error: "apify_unauthorized", data: { run_id } };
+    }
+    finalRun = poll.data?.data ?? poll.data ?? finalRun;
+    finalRunSentAt = pollSentAt;
+    status = finalRun?.status ?? status;
+  }
+  while (!smokeReads && Date.now() < deadline) {
     if (status === "SUCCEEDED" || status === "FAILED" || status === "TIMED-OUT" || status === "ABORTED") break;
     if (ctx?.stopWaiting?.()) {
       console.log("[toolRegistry] stopped waiting on a running Apify run; it stays pending", { run_id, status });
@@ -1277,6 +1341,48 @@ async function execSourceWithApify(
 
   const resolvedDatasetId: string | undefined = finalRun?.defaultDatasetId ?? dataset_id;
 
+  // ── SMOKE: THE SETTLED RECEIPT ───────────────────────────────────────────
+  //
+  // A terminal run's figures settle about 10 s after it finishes. The terminal
+  // status read is the receipt when it was already settled; otherwise one more
+  // status read is made once settled, if the plan leaves a read (and the
+  // dataset's) and the time. Either way the outcome is explicit: the gate
+  // records a settled figure as `apify_run(settled).receipt`, and anything else
+  // is listed by the reconciliation, never silently taken as final.
+  let receipt: "settled" | "unsettled" | null = null;
+  if (smokeReads) {
+    if (!APIFY_TERMINAL_STATUSES.has(status)) {
+      receipt = "unsettled";
+    } else if (apifyRunSettled(finalRun, finalRunSentAt)) {
+      receipt = "settled";
+    } else {
+      const st = await smokeReadState();
+      const finishedAtMs = typeof finalRun?.finishedAt === "string" ? Date.parse(finalRun.finishedAt) : NaN;
+      const plan = st
+        ? planSmokeReceipt(st, {
+          finishedAtMs: Number.isFinite(finishedAtMs) ? finishedAtMs : null, nowMs: Date.now(),
+          needDataset: status === "SUCCEEDED" && !!resolvedDatasetId,
+        })
+        : { ok: false as const, reason: "read_state_unknown" };
+      receipt = "unsettled";
+      if (plan.ok) {
+        if (plan.waitMs > 0) await new Promise((r) => setTimeout(r, plan.waitMs));
+        const receiptSentAt = Date.now();
+        const r = await apifyFetch(`/actor-runs/${run_id}?token=${APIFY_API_TOKEN}`, {
+          method: "GET",
+          timeoutMs: APIFY_RECEIPT_TIMEOUT_MS,
+        }).catch(() => null);
+        if (r?.ok && !isAdmissionRefusal(r)) {
+          finalRun = r.data?.data ?? r.data ?? finalRun;
+          if (apifyRunSettled(finalRun, receiptSentAt)) receipt = "settled";
+        }
+      }
+    }
+    if (receipt === "unsettled") {
+      console.warn("[toolRegistry] smoke: Apify receipt NOT settled; this purchase needs reconciliation", { run_id, status });
+    }
+  }
+
   // THE BUILD IS RECORDED, NOT PINNED BLIND. Apify reports the build the run
   // actually used; persisting it is what makes "which schema did this validate
   // against" answerable later without guessing.
@@ -1293,6 +1399,7 @@ async function execSourceWithApify(
       data: {
         run_id, dataset_id: resolvedDatasetId, status,
         pending, resumable: pending, actor_id, build_id, build_number,
+        ...(receipt ? { receipt } : {}),
         resumed_from: resumeRunId || null,
         outbound_input_hash: outboundHash,
       },

@@ -235,7 +235,8 @@ Deno.test("7c. toolRegistry resumes instead of starting, and reports pending", a
   const src = await Deno.readTextFile(
     new URL("../../../supabase/functions/_shared/toolRegistry.ts", import.meta.url));
   assert(src.includes("const resumeRunId ="), "resume must be an explicit branch");
-  assert(src.includes("`/actor-runs/${resumeRunId}?token="),
+  // The smoke's read plan may add `waitForFinish=…&` (a long-polled read).
+  assert(/`\/actor-runs\/\$\{resumeRunId\}\?[^\n]*token=/.test(src),
     "a resume READS the run; it must not POST a new one");
   assert(src.includes('const pending = status === "RUNNING" || status === "READY";'),
     "RUNNING/READY must be classified as pending");

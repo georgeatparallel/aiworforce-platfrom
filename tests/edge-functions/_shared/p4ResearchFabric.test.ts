@@ -163,7 +163,11 @@ Deno.test("both sources' evidence survives the merge, and provenance survives a 
   addCompany(set, ycRow("Entropy", "useentropy.com"), [], null, undefined, ycCtx);
   const c = set[0];
   assertEquals(c.observations!.map((o) => o.actor_key), ["apify_linkedin_job_search", "apify_yc_companies_memo23"]);
-  const fabric = projectResearchFabric({ companies: set, state: {} }, { required: ["hiring", "company_stage", "funding"] });
+  // The clock is the fixture's own observation time: the job row is a probe from
+  // 2026-09-16, and against the real clock its posting ages out of the hiring
+  // window (from 2026-10-17 this test failed on every branch).
+  const fabric = projectResearchFabric({ companies: set, state: {} },
+    { required: ["hiring", "company_stage", "funding"], now: new Date("2026-09-17T10:00:00.000Z") });
   const f = fabric.companies[0];
   assertEquals(f.discovery_sources, 2);
   assert(f.evidence_sources.includes("apify_linkedin_job_search") && f.evidence_sources.includes("apify_yc_companies_memo23"));

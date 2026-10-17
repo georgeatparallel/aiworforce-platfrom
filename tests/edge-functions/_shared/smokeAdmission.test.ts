@@ -348,6 +348,8 @@ Deno.test("R1: a refused PROVIDER request reads as uncertain when an earlier pur
   const start = () => fetch("https://api.apify.com/v2/acts/a~b/runs?token=t", { method: "POST", body: "{}" });
   const quotes = {
     ...AUTH,
+    // The smoke's 300 s window, so these reach the admission (not the read plan).
+    deadline_at: new Date(Date.now() + 300_000).toISOString(),
     approved_quotes: { jobs: { allowed_kinds: ["provider"], allowed_actors: ["apify:a~b"], maximum_microusd: 1, source: "s",
       liability_bound_ref: "r", observed_at: new Date().toISOString(), request_limits: { max_request_bytes: 1000 } } },
   };
@@ -398,6 +400,8 @@ Deno.test("R7: Apify charges are read from the start response as from status rea
   const real = globalThis.fetch;
   const quotes = {
     ...AUTH,
+    // The smoke's 300 s window: an Apify run is bought only when its read lifecycle fits.
+    deadline_at: new Date(Date.now() + 300_000).toISOString(),
     approved_quotes: { jobs: { allowed_kinds: ["provider"], allowed_actors: ["apify:a~b"], maximum_microusd: 1, source: "s",
       liability_bound_ref: "r", observed_at: new Date().toISOString(), request_limits: { max_request_bytes: 1000 } } },
   };

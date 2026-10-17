@@ -37,6 +37,8 @@ import {
 } from "./agentoryBriefing.ts";
 import type { LeadMissionV1 } from "./leadMission.ts";
 import type { CapabilityPlan } from "./leadCapabilityGraph.ts";
+import { hiringActorCard } from "./hiringActorCatalog.ts";
+import { apifyGateActor, smokeAdmissionActive, smokeApprovedActors } from "./smokeAdmissionRefusal.ts";
 
 export const GPT_EXECUTION_PLANNER_VERSION = "gpt-execution-planner-v1" as const;
 
@@ -189,9 +191,29 @@ export interface GptPlanExecutionInput {
 
 function systemPromptFor(
   brain: CompanyBrainBriefing | null, results?: DiscoveryResultsSummary | null,
-  actorKeys?: readonly string[] | null,
+  actorKeys?: readonly string[] | null, compact = false,
 ): string {
-  return [buildAgentoryBriefing({ brain, results, actorKeys }), "", STAGE_RULES].join("\n");
+  return [buildAgentoryBriefing({ brain, results, actorKeys, ...(compact ? { compact } : {}) }), "", STAGE_RULES].join("\n");
+}
+
+/**
+ * THE SMOKE'S PLANNER PAYLOAD: only the actors the authorization approves for
+ * purchase, each capability left with at least one. Everything else is
+ * unchanged. A planner that cannot be shown an approved actor for a capability
+ * does not see that capability (the gate would refuse its purchase anyway).
+ */
+export function smokePlannerPayload(payload: Record<string, unknown>, approved: readonly string[]): Record<string, unknown> {
+  const ok = (key: string) => {
+    const card = hiringActorCard(key);
+    return !!card && approved.includes(apifyGateActor(card.actor_id));
+  };
+  const caps = (payload.authorised_capabilities ?? []) as Array<Record<string, unknown> & { actors?: Array<{ actor_key?: string }> }>;
+  return {
+    ...payload,
+    authorised_capabilities: caps
+      .map((c) => ({ ...c, actors: (c.actors ?? []).filter((a) => ok(String(a.actor_key ?? ""))) }))
+      .filter((c) => c.actors.length > 0),
+  };
 }
 
 /** P2 — the actors a payload authorises, for the playbook subset. */
@@ -294,6 +316,11 @@ export function makeGptExecutionPlanner(
     results?: DiscoveryResultsSummary | null;
   }): Promise<unknown> => {
     const feedback = i.validation_feedback ?? [];
+    // THE SMOKE: approved actors only, unindented JSON, so the request fits the
+    // model template's byte bound (smokeAdmissionRefusal.ts). Unchanged otherwise.
+    const smoke = smokeAdmissionActive();
+    const approved = smoke ? await smokeApprovedActors() : null;
+    const payload = approved ? smokePlannerPayload(i.payload, approved) : i.payload;
     // THREE DISTINCT STAGES, because they answer different questions and a
     // trace that collapses them cannot show which one is going wrong: the first
     // plan, a plan repaired after refusal, and an amendment made once the pool
@@ -311,9 +338,9 @@ export function makeGptExecutionPlanner(
     const r: GptResult<GptExecutionProposal> = await gptStructured<GptExecutionProposal>({
       purpose: route.stage,
       system: systemPromptFor(ctx.brain ?? null, i.results ?? null,
-          ctx.playbookSubset ? authorisedActorKeys(i.payload) : null) +
+          ctx.playbookSubset || smoke ? authorisedActorKeys(payload) : null, smoke) +
         feedbackSection(feedback),
-      user: JSON.stringify(i.payload, null, 2),
+      user: smoke ? JSON.stringify(payload) : JSON.stringify(payload, null, 2),
       schema: RESPONSE_SCHEMA as unknown as { name: string; schema: Record<string, unknown> },
       maxTokens: 3000,
       // THE ROUTER'S MODEL, NOT A TIER LOOKUP. Luna on the first attempt;

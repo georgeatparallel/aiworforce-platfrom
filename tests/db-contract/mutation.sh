@@ -62,8 +62,10 @@ tools_ts="$root/supabase/functions/_shared/toolRegistry.ts"
 credit_ts="$root/supabase/functions/_shared/creditAuthorization.ts"
 runner_ts="$root/worker/leadMissionRunner.ts"
 clock_ts="$root/supabase/functions/_shared/missionWallClock.ts"
+plan_ts="$root/supabase/functions/_shared/smokeAdmissionRefusal.ts"
+planner_ts="$root/supabase/functions/_shared/gptExecutionPlanner.ts"
 restore_list=()
-for f in "$adm_sql" "$gate_ts" "$tools_ts" "$credit_ts" "$runner_ts" "$clock_ts"; do
+for f in "$adm_sql" "$gate_ts" "$tools_ts" "$credit_ts" "$runner_ts" "$clock_ts" "$plan_ts" "$planner_ts"; do
   cp "$f" "$f.mutation-backup"; restore_list+=("$f")
 done
 trap 'cp "$backup" "$real"; for f in "${restore_list[@]}"; do mv -f "$f.mutation-backup" "$f"; done; rm -f "$backup" "$out"' EXIT
@@ -71,6 +73,7 @@ adm_tests="$root/tests/db-contract/smokeAdmission.contract.test.ts"
 gate_tests="$root/tests/db-contract/smokeAdmissionRuntime.contract.test.ts"
 unit_tests="$root/tests/edge-functions/_shared/smokeAdmission.test.ts"
 clock_tests="$root/tests/edge-functions/_shared/missionWallClock.test.ts"
+planner_tests="$root/tests/edge-functions/_shared/smokePlannerRequestSize.test.ts"
 
 # prove_killed <label> <file> <literal to find> <replacement> <test file> <test name that must FAIL>
 prove_killed() {
@@ -113,6 +116,8 @@ prove_killed "clock read before the lock wait" "$adm_sql" "v_now := clock_timest
   "$adm_tests" "deadline: an admission that waited on the lock past the deadline is refused"
 prove_killed "no generation fence" "$adm_sql" "or t.checkpoint_version is distinct from p_generation" "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
+prove_killed "any task status admitted" "$adm_sql" "or t.status not in ('running', 'ready')" "" \
+  "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "no lineage lease check" "$adm_sql" "or l.lease_holder is distinct from p_task " "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "re-keyed payload buys again" "$adm_sql" \
@@ -140,8 +145,37 @@ prove_killed "replayed purchase reported as a definite refusal" "$gate_ts" \
   "$gate_tests" "apify: an uncertain start keeps its credit HELD and is never bought again"
 prove_killed "vendor caps not pinned" "$gate_ts" "url.searchParams.set(k, String(v));" "void [k, v];" \
   "$gate_tests" "apify: admitted with the template's vendor caps, run id durable, polls admitted, one credit charged"
-prove_killed "poll loop ignores a refusal" "$tools_ts" "    if (isAdmissionRefusal(poll)) {" "    if (false) {" \
-  "$gate_tests" "apify: when polls run out the wait stops at once; the run stays pending with its id"
+# The smoke's Apify read lifecycle (its loop replaced the 3 s poll loop in smoke mode).
+prove_killed "smoke status read ignores the read reserve" "$plan_ts" \
+  '  if (s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_reserved" };' "" \
+  "$gate_tests" "read lifecycle: a run still RUNNING at the reserve stays pending, its receipt explicitly unsettled and listed"
+prove_killed "smoke start ignores the lifecycle's reads" "$plan_ts" \
+  '  if (s.readsLeft !== null && s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_exhausted" };' "" \
+  "$gate_tests" "read lifecycle: a slow run takes four reads; a second run that could not be settled is never bought"
+prove_killed "read plan refusal reads as a refund for a replay" "$gate_ts" \
+  '      if (!plan.ok) return refuse("read_plan", plan.reason);' '      if (!plan.ok) return refusal("read_plan", plan.reason);' \
+  "$gate_tests" "read lifecycle: a replay of an uncertain start refused by the read plan keeps its credit HELD"
+prove_killed "smoke start ignores the time left" "$plan_ts" \
+  "    s.remainingMs < APIFY_START_TIMEOUT_MS + SMOKE_MIN_WAIT_S * 1000 + SMOKE_READ_SLACK_MS + SMOKE_TAIL_MS) {" "    false) {" \
+  "$gate_tests" "read lifecycle: the long poll is clamped to the time left; too little time buys nothing"
+prove_killed "long poll not clamped to the time left" "$plan_ts" \
+  "Math.min(APIFY_MAX_WAIT_S, Math.floor((s.remainingMs - SMOKE_TAIL_MS - SMOKE_READ_SLACK_MS) / 1000))" "APIFY_MAX_WAIT_S" \
+  "$gate_tests" "read lifecycle: the long poll is clamped to the time left; too little time buys nothing"
+prove_killed "receipt read skipped" "$tools_ts" \
+  $'      receipt = "unsettled";\n      if (plan.ok) {' $'      receipt = "unsettled";\n      if (plan.ok && plan.waitMs < 0) {' \
+  "$gate_tests" "read lifecycle: a run finishing in its first long poll uses exactly three reads, and its receipt is settled"
+prove_killed "settled receipt not labelled" "$gate_ts" \
+  'source: apifyRunSettled(j?.data ?? null, sentAt) ? APIFY_SETTLED_SOURCE : "apify_run(status).receipt",' 'source: "apify_run(status).receipt",' \
+  "$gate_tests" "read lifecycle: a run finishing in its first long poll uses exactly three reads, and its receipt is settled"
+prove_killed "vendor cap above the quote kept" "$gate_ts" \
+  "asked >= 0 && asked < quote ? asked : quote" "asked >= 0 ? asked : quote" \
+  "$gate_tests" "jobs: more titles, locations or rows than one search of three is refused before purchase; the vendor cap never exceeds the quote"
+prove_killed "billed-per-entry arrays unbounded" "$gate_ts" \
+  '      if (!Array.isArray(pinned[k]) || (pinned[k] as unknown[]).length > max) return { ok: false, reason: `array_unbounded:${k}` };' "" \
+  "$gate_tests" "jobs: more titles, locations or rows than one search of three is refused before purchase; the vendor cap never exceeds the quote"
+prove_killed "legacy jobs actor keeps its customer shape in the smoke" "$tools_ts" \
+  $'      if (smokeAdmissionActive()) {\n        return buildCuriousCoderSmokeJobsInput({' $'      if (false) {\n        return buildCuriousCoderSmokeJobsInput({' \
+  "$gate_tests" "jobs: the legacy LinkedIn jobs actor gets one URL, three per source, no \`count\`, in the smoke"
 
 # Codex review R1–R7: each fix removed in turn must fail its own regression.
 prove_killed "R1 later refusal refunds an earlier hold" "$gate_ts" \
@@ -175,7 +209,7 @@ prove_killed "R2 uncertain crawl start refunded (Codex P2)" "$tools_ts" \
   '  if (false) {' \
   "$gate_tests" "R2 (Codex P2): in the smoke, an uncertain Firecrawl CRAWL start keeps its credit HELD"
 prove_killed "SAF-008 bodyless purchase skips mandatory fields" "$gate_ts" \
-  "  if (hasBody || limits.pin_body || mandatory) {" "  if (hasBody || limits.pin_body) {" \
+  "  if (hasBody || limits.pin_body || mandatory || limits.max_array_items) {" "  if (hasBody || limits.pin_body || limits.max_array_items) {" \
   "$gate_tests" "SAF-008: an absent or empty body never bypasses the quote's mandatory fields"
 # The opt-in mission wall clock (from codex/smoke-execution-guards).
 prove_killed "wall clock: expired mission still reaches the handler" "$runner_ts" \
@@ -187,3 +221,9 @@ prove_killed "wall clock: deadline extended past 300 s" "$clock_ts" \
 prove_killed "wall clock: far-future queue timestamp accepted" "$clock_ts" \
   "at > now + QUEUE_CLOCK_SKEW_MS) return null;" "false) return null;" \
   "$clock_tests" "wall clock: unreadable or future queue timestamp 2026-10-14T00:00:30.001Z refuses before the handler"
+prove_killed "settlement judged at arrival, not send time (Codex P2)" "$tools_ts" \
+  "    } else if (apifyRunSettled(finalRun, finalRunSentAt)) {" "    } else if (apifyRunSettled(finalRun, Date.now())) {" \
+  "$gate_tests" "read lifecycle (Codex P2): a preliminary snapshot answered late is not taken as settled"
+prove_killed "smoke planner shown every authorised actor (Codex P1)" "$planner_ts" \
+  "    const payload = approved ? smokePlannerPayload(i.payload, approved) : i.payload;" "    const payload = i.payload;" \
+  "$planner_tests" "smoke planner: the execution-planner request for the smoke's mission fits the Luna template"

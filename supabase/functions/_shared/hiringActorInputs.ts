@@ -613,6 +613,27 @@ export function compileHarvestJobSearchInput(
 export const JOB_DISCOVERY_LIMITS = Object.freeze({ jobTitles: 3, locations: 2, maxItems: 50, industryIds: 10 });
 
 /**
+ * THE FIRST SMOKE'S DISCOVERY CALL: one title, one location, at most three rows.
+ * `maxItems` is per title PER location (the Actor's own schema), so any second
+ * title or location multiplies the billed rows. The durable gate refuses a
+ * larger request; this makes the engine ask for one it admits. Smoke only.
+ */
+export const SMOKE_JOB_DISCOVERY_LIMITS = Object.freeze({ jobTitles: 1, locations: 1, maxItems: 3 });
+export function boundJobDiscoveryForSmoke(input: Record<string, unknown>, maxCandidates: number): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...input };
+  if (Array.isArray(out.jobTitles)) out.jobTitles = out.jobTitles.slice(0, SMOKE_JOB_DISCOVERY_LIMITS.jobTitles);
+  if (Array.isArray(out.locations)) out.locations = out.locations.slice(0, SMOKE_JOB_DISCOVERY_LIMITS.locations);
+  // Another location filter would be another multiplier; the smoke uses `locations` only.
+  delete out.geoIds;
+  const asked = Number(out.maxItems);
+  out.maxItems = Math.max(1, Math.min(
+    SMOKE_JOB_DISCOVERY_LIMITS.maxItems, Math.floor(maxCandidates) || 1,
+    Number.isFinite(asked) && asked >= 1 ? Math.floor(asked) : SMOKE_JOB_DISCOVERY_LIMITS.maxItems,
+  ));
+  return out;
+}
+
+/**
  * THE TITLES A JOB-DISCOVERY CALL MAY SEND, BOUNDED BEFORE IT IS COMPILED.
  *
  * Query B a9a6791a: route control proposed FOUR titles to an actor that accepts
