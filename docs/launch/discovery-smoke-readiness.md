@@ -166,12 +166,15 @@ A fix needs one of:
 
 **Approved:**
 - **`openai:gpt-5.6-luna` only.** One template per model.
-  - Input bound B = 32,768 bytes (tokens ≤ bytes).
+  - Input bound B = 30,720 bytes (tokens ≤ bytes) since #96 (was 32,768).
   - Output bound O = 4,000 tokens; the largest mission call is 4,000
     (`gptStrategistModel` and `gptMissionModel` defaults).
-  - Maximum 0.2·B + 1.2·O = **11,354 → 11,400 µ$**, using the repo's list
-    price, re-observed within 24 h.
-  - **4 attempts = 45,600 µ$ ≤ $0.05.**
+  - Maximum 0.25·B + 1.2·O = **12,480 µ$**. Input is priced at the
+    cache-write rate ($0.25/1M), the dearest of input, cached input and cache
+    write (OpenAI Standard list, 2026-10-17: $0.20 / $0.02 / $0.25 in,
+    $1.20 out). The first draft's 0.2·B (11,400 µ$) understated a
+    cache-written request. Re-observe within 24 h.
+  - **4 attempts = 49,920 µ$ ≤ $0.05.**
 
 **Refused:**
 - **`gpt-5.6-terra`** — 2·B + 12·O = 113,536 µ$ exceeds the whole $0.05 model
@@ -245,7 +248,7 @@ until it is.
 | 1 | Migration design: queue-keyed, hard caps, no refund of capacity | Implemented, merged and verified; held, not applied | **Yes**: approve applying it to the test project only |
 | 2 | Poll allowance vs cadence | Five reads, 3 + 2 (#96): the job search settled, the company details' receipt deferred to reconciliation | **Yes**: approve the two-run smoke |
 | 3 | Template-pinned vendor caps | `maxTotalChargeUsd` now automatic; billed-entry bounds implemented | **Yes**: the job-search template in §4 (`timeout`, `memory`, `maxItems`, entry bounds) |
-| 4 | Input-token bound (tokens ≤ bytes) | Implemented | **Yes**: accept it, with B = 32,768 |
+| 4 | Input-token bound (tokens ≤ bytes) | Implemented | **Yes**: accept it, with B = 30,720 (#96) |
 | 5 | Refuse model calls without `maxTokens` | Implemented; every mission call site sets one | **Yes, confirm.** No stage on the mission path is affected. |
 | 6 | The quote catalog | Not written | **Yes**: every price in §5, each with a source and a 24 h observation |
 | 7 | Uncertain replays keep their credit held until the 30-minute reaper | Implemented | **Yes, confirm** |
@@ -343,7 +346,7 @@ the workflow refuse both.
 3. **The templates** in `smoke-catalog-two-actor.json`, the company-details
    maximum once observed, and the actor limits
    `{apify:harvestapi~linkedin-job-search: 1, apify:harvestapi~linkedin-company: 1}`.
-4. **The Luna template** (B = 32,768, O = 4,000, 11,400 µ$) once its price is
+4. **The Luna template** (B = 30,720, O = 4,000, 12,480 µ$) once its price is
    observed; Terra and Anthropic refused.
 5. **The remaining §6 rows** (1, 4, 5, 7–10), the account limits in §5, and
    the hosting-dashboard confirmations.

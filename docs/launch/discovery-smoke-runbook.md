@@ -61,6 +61,14 @@ select r.rolname, f,
                ('public.record_discovery_smoke_receipt(uuid,text,uuid,text,text,bigint,text)'),
                ('public.stop_discovery_smoke(uuid,text)')) x(f) order by 1, 2;
 --   service_role: authorize, reconcile = false; admit, record, stop = true. anon and authenticated: all false.
+-- 2e. The test workspace has NO Company Brain (the planner request is measured without one).
+select count(*) from public.company_brain where workspace_id = '<TEST_WORKSPACE_ID>';   -- 0
+-- 2f. Zero open liability before anything is authorized.
+select count(*) from public.discovery_smoke_operations o
+ where o.kind = 'provider'
+   and not exists (select 1 from public.discovery_smoke_reconciliations r
+                    where r.authorization_id = o.authorization_id and r.operation_key = o.operation_key
+                      and r.vendor_microusd <= o.committed_microusd);                     -- 0
 select has_table_privilege('service_role', 'public.discovery_smoke_operations', 'insert'),
        has_table_privilege('service_role', 'public.discovery_smoke_operations', 'update'),
        has_table_privilege('service_role', 'public.discovery_smoke_authorizations', 'update');  -- all false
@@ -99,6 +107,28 @@ and keep them as the two inserts of Phase 5.
 The admission binds the authorization to `sha256(request::text)`. The body
 cannot change after authorization.
 
+## Pre-flight: what is verified, and what the operator must still confirm
+
+Each row must be ✅ before Phase 5. "Offline" means proven in the DB contract
+lane (real Postgres, PostgREST, admission, gate, worker and handler; fake
+vendors) at the merged #94 → #96 → #93 tree.
+
+| Item | State | Evidence or action |
+|---|---|---|
+| Separate non-production Supabase project | ⛔ operator | Phase 1; `build-test-schema.sh` refuses production and the abandoned project |
+| Held billing + admission migrations | ✅ offline | 50 files build in the DB lane; Phase 2 verifies them on the project |
+| Worker: minimal orchestration, two vendor keys | ✅ proposal | `discovery-test-worker.workflow.yml`: `LEAD_V2_SMOKE_ORCHESTRATION=minimal`, Apify + OpenAI keys only (infra test) |
+| Apify permission for both actors | ⛔ operator | The test account must be able to run `harvestapi/linkedin-job-search` and `harvestapi/linkedin-company` (Phase 3) |
+| Actor prices and billing units | ✅ public list, 2026-10-17 · ⛔ account tier | Job search: start $0.001 + job $0.001 (3 jobs → $0.004). Company details: start $0.00005 per GB (256 MB → 1 event) + company $0.004 FREE/BRONZE, $0.0035 SILVER, $0.003 GOLD+ (1 company → ≤ $0.00405). Confirm the tier. |
+| Vendor-side caps | ✅ offline · ⛔ account | The gate pins `maxTotalChargeUsd` = each template maximum on every start; confirm it caps `harvestapi/linkedin-company` on the account; set the account usage limit to its minimum |
+| Luna pricing and limits | ✅ public list, 2026-10-17 · ⛔ project | $0.20 in, $0.25 cache writes, $1.20 out per 1M → 12,480 µ$ at B = 30,720, O = 4,000. Confirm on the test project; set its hard budget |
+| Five reads, 3 + 2 | ✅ offline | `read_allocation` in the database; normal and slow job search both rehearsed |
+| Four model attempts | ✅ offline | `model_attempt_limit`; 4 × 12,480 = 49,920 ≤ 50,000 µ$ |
+| Administrator reconciliation | ✅ offline | Phase 7; terminal status, not while live, over-quote held |
+| Zero unresolved charges before starting | ⛔ operator | Phase 2, query 2f returns 0 |
+| Company Brain request size | ✅ offline (no Brain) · ⛔ operator | Phase 2, query 2e returns 0 |
+| Cancellation and emergency stop | ✅ offline | Phase 6; `stop_discovery_smoke` refuses every later admission at once |
+
 ## Phase 5 — Authorize and dispatch (the only phase that can spend)
 
 1. **Separate execution approval.** Prior liability must be zero (Phase 7 from
@@ -131,7 +161,7 @@ placeholder replaced by an observation made within 24 h:
 | `jobs` | provider, `apify:harvestapi~linkedin-job-search` | 5,000 µ$ (`discovery_page`) | ≤ 4,096 bytes; `timeout` 120, `memory` 256; `maxItems` ≤ 3 (mandatory); `jobTitles` 1, `locations` 1, `geoIds` 0 |
 | `details` | provider, `apify:harvestapi~linkedin-company` | **`null`: the observed per-run maximum goes here** | ≤ 1,024 bytes; `timeout` 120, `memory` 256; `companies` 1, `searches` 0 |
 | `reads` | poll, both actors | 0 (reads must be free) | `max_reads_per_actor`: job search 3, company details 2 |
-| `luna` | model, `openai:gpt-5.6-luna` | 11,400 µ$ | ≤ 32,768 bytes; ≤ 4,000 output tokens |
+| `luna` | model, `openai:gpt-5.6-luna` | 12,480 µ$ | ≤ 30,720 bytes; ≤ 4,000 output tokens |
 
 The gate pins `maxTotalChargeUsd` on each Apify start to its template's
 maximum. **As written, the catalog cannot be authorized:** `details` has no
@@ -154,23 +184,42 @@ looked up, through `companies` (URLs) **or** `searches` (names). The job
 search bills `maxItems` per title per location. Its other fields only filter
 each search or choose its start page (`request_bounds_basis` in the catalog).
 
-If Luna's observed price differs from $0.20 in / $1.20 out per 1M, recompute
-`0.2·B + 1.2·O` with the real figures. If four attempts no longer fit in
-50,000 µ$, **stop**: the model allocation is not raised.
+**Luna's maximum prices every input token at the dearest input rate.**
+OpenAI bills each input token as exactly one of input, cached input or cache
+write. The Standard list price on 2026-10-17 was:
+
+| Input | Cached input | Cache writes | Output |
+|---|---|---|---|
+| $0.20 / 1M | $0.02 / 1M | **$0.25 / 1M** | $1.20 / 1M |
+
+So the maximum is `0.25·B + 1.2·O` = 0.25·30,720 + 1.2·4,000 = **12,480 µ$**,
+and four attempts are **49,920 µ$**, within the $0.05 allocation. (The earlier
+`0.2·B` template, at 11,400 µ$, understated a cache-written request; #96
+re-priced it.) If the test project's prices differ, recompute with its
+dearest input rate. If four attempts no longer fit in 50,000 µ$, **stop**:
+the model allocation is not raised.
 
 **Request size (Codex P1 on #94).**
 - **The fix.** The execution planner's request was 53,922 bytes. In smoke
-  mode, #94 shows the planner only the approved actors, in unindented JSON:
-  **29,417 bytes** measured for the two-actor mission with no Company Brain
-  (#96's offline rehearsal), against B = 32,768: a margin of 3,351.
-- **Where it gets measured.** The full-path rehearsal must measure every
-  stage with the test workspace's real brain.
-- **If a stage still exceeds 32,768,** that stage is refused before transport
-  and nothing is bought.
-- **The only bound-preserving fallback is B ≤ 38,400.** At that size
-  0.2·38,400 + 1.2·4,000 = 12,480 µ$, and four attempts are 49,920 µ$, still
-  inside the $0.05 model allocation. That is decision D2; it raises no
-  authorized limit.
+  mode, #94 shows the planner only the approved actors, in unindented JSON.
+- **Measured** (#96's offline rehearsal, two actors, no Company Brain):
+
+  | Stage | Request bytes | Max output tokens |
+  |---|---|---|
+  | Execution plan | 29,417 | 3,000 |
+  | Batch evaluation | 11,099 | 4,000 |
+  | Mission evaluation | 16,046 | 4,000 |
+  | Opportunity reasoning | 4,810 | 1,200 |
+
+  Against B = 30,720, the planner's margin is **1,303 bytes**.
+- **The Company Brain is the variable** (Codex P1 on #94: the Brain's arrays
+  are not capped, and 30 entries measured 34,384 bytes). **The test workspace
+  must have no Company Brain** (Phase 2 checks it). The kickoff body is then
+  the one the rehearsal measured, so the request is fixed.
+- **If a stage still exceeds 30,720,** it is refused before admission and
+  transport: nothing is committed or bought, and the mission ends.
+- **No fallback raises B.** At four attempts, 0.25·B + 4,800 ≤ 12,500 caps B
+  at 30,800.
 
 ## Phase 6 — Stop and cancellation (in this order, any time)
 
@@ -250,7 +299,7 @@ mission is closed.
 | # | Decision |
 |---|---|
 | D1 | The two-actor profile above (one job search, one company-details lookup, Luna only, minimal orchestration, no Firecrawl) |
-| D2 | The catalog values, once the prices are observed: job search 5,000 µ$; **company details: its observed maximum** (unset today); Luna B = 32,768 → 11,400 µ$, or B ≤ 38,400 → 12,480 µ$ if the live brain makes the planner larger (both keep 4 attempts within $0.05) |
+| D2 | The catalog values, once observed on the test accounts: job search 5,000 µ$ (list $0.004 for 3 jobs); **company details 4,050 µ$** (list start $0.00005 + company $0.004 on FREE/BRONZE, 2026-10-17; unset in the catalog until confirmed on the account's tier); Luna 12,480 µ$ at B = 30,720 (cache-write input rate) |
 | D3 | Resolved in #96: the worker proposal maps no Anthropic or Firecrawl key |
 | D4 | The deferred company-details receipt is closed by Phase 7's durable reconciliation (#96); no later smoke can be authorized or spend until it is |
 | D5 | Create the test project; set the account limits (Phase 1, Phase 3) |
