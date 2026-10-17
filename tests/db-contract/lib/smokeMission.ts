@@ -96,8 +96,10 @@ export async function reconcilePriorLiability(): Promise<number> {
      and not exists (select 1 from public.discovery_smoke_reconciliations r
                       where r.authorization_id = o.authorization_id and r.operation_key = o.operation_key)`;
   for (const o of open) {
+    // A live authorization cannot be reconciled: the operator stops the finished mission first.
+    await sql`select public.stop_discovery_smoke(${o.queue_id}, 'contract test: the mission is over')`;
     await sql`select public.reconcile_discovery_smoke_operation(${o.queue_id}, ${o.operation_key},
-      ${o.committed_microusd}, 'synthetic contract control: vendor run history')`;
+      ${o.committed_microusd}, 'synthetic contract control: vendor run history', 'SUCCEEDED')`;
   }
   return open.length;
 }

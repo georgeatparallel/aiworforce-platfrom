@@ -273,7 +273,9 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
     const quotes: Record<string, unknown> = {
       jobs: fill(p.jobs),
       model: fill(p.luna),
-      reads: { ...fill(p.reads), allowed_actors: v.companyDetails ? p.reads.allowed_actors : [JOBS] },
+      // One actor: its own share of the proposal's allocation (an allocation names exactly the allowed actors).
+      reads: v.companyDetails ? fill(p.reads) : { ...fill(p.reads), allowed_actors: [JOBS],
+        request_limits: { max_reads_per_actor: { [JOBS]: (p.reads.request_limits as Rehearsal).max_reads_per_actor[JOBS] } } },
       ...(v.companyDetails ? { details: { ...fill(p.details), maximum_microusd: SYNTHETIC_DETAILS_MAXIMUM } } : {}),
     };
     const m = await seedSmokeMission({ quotes, actorLimits: { [JOBS]: 1, ...(v.companyDetails ? { [DETAILS]: 1 } : {}) } });

@@ -402,6 +402,14 @@ Deno.test("authorize: refuses stale, future, unbounded or evidence-free prices",
     ["unknown kind", { gpt: { ...syntheticQuotes().gpt as object, allowed_kinds: ["page"] } }],
     ["no request limits", { gpt: { ...syntheticQuotes().gpt as object, request_limits: null } }],
   ];
+  // Final hardening: a MISSING key is malformed too, never a NULL that passes.
+  for (const k of ["allowed_kinds", "allowed_actors", "maximum_microusd", "request_limits", "source", "observed_at"]) {
+    const rest = { ...syntheticQuotes().apify_jobs as Record<string, unknown> };
+    delete rest[k];
+    bad.push([`no ${k}`, { apify_jobs: rest }]);
+  }
+  bad.push(["a non-string kind", { apify_jobs: { ...syntheticQuotes().apify_jobs as object, allowed_kinds: [1] } }]);
+  bad.push(["a blank actor", { apify_jobs: { ...syntheticQuotes().apify_jobs as object, allowed_actors: [JOBS, " "] } }]);
   for (const [why, over] of bad) {
     const m = await seedSmokeMission({ authorize: false });
     await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes(over) }), Error, undefined, why);
@@ -486,8 +494,15 @@ for (const [why, change, refusedAs] of R8_CHANGES) {
 // ── reconciliation: no new smoke over unreconciled liability ────────────────
 
 const tokenOf = (d: unknown) => (d as { reservation_token: string }).reservation_token;
-const reconcile = (m: SmokeMission, key: string, usd: number, ref = "apify run history: synthetic") =>
-  sql`select public.reconcile_discovery_smoke_operation(${m.queueId}, ${key}, ${usd}, ${ref}) as r`;
+/** The operator's reconciliation of a finished mission: stop it (unless `live`), then record the vendor's figure. */
+const reconcile = async (m: SmokeMission, key: string, usd: number, ref = "apify run history: synthetic",
+  o: { status?: string | null; live?: boolean } = {}) => {
+  if (!o.live) await sql`select public.stop_discovery_smoke(${m.queueId}, 'contract test: the mission is over')`;
+  return sql`select public.reconcile_discovery_smoke_operation(${m.queueId}, ${key}, ${usd}, ${ref},
+    ${o.status === undefined ? "SUCCEEDED" : o.status}) as r`;
+};
+const authorizationOf = async (m: SmokeMission) =>
+  (await sql`select status, stop_reason from public.discovery_smoke_authorizations where queue_id = ${m.queueId}`)[0];
 
 Deno.test("reconciliation: an unsettled purchase blocks the next authorization until a person reconciles it", opts, async () => {
   const first = await seedSmokeMission();
@@ -505,7 +520,7 @@ Deno.test("reconciliation: an unsettled purchase blocks the next authorization u
   // The worker can never close it.
   const svc = await serviceClient();
   const { error } = await svc.rpc("reconcile_discovery_smoke_operation",
-    { p_queue: first.queueId, p_key: buy.key, p_vendor_microusd: 0, p_vendor_ref: "worker" });
+    { p_queue: first.queueId, p_key: buy.key, p_vendor_microusd: 0, p_vendor_ref: "worker", p_vendor_status: "SUCCEEDED" });
   assert(error, "service_role cannot reconcile");
 
   const [{ r }] = await reconcile(first, buy.key, 3800);
@@ -516,7 +531,7 @@ Deno.test("reconciliation: an unsettled purchase blocks the next authorization u
   assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }), "reconciled: the next smoke may be authorized");
 });
 
-Deno.test("reconciliation: immutable, provider purchases only, and a figure above the quote stops the authorization", opts, async () => {
+Deno.test("reconciliation: immutable, provider purchases only, terminal, and a padded reference is the same record", opts, async () => {
   const m = await seedSmokeMission();
   const buy = provider(m, JOBS, "apify_jobs");
   assertEquals((await admit(buy)).decision, "admitted");
@@ -525,12 +540,75 @@ Deno.test("reconciliation: immutable, provider purchases only, and a figure abov
   await assertRejects(() => reconcile(m, model.key, 0), Error, "not a provider purchase");
   await assertRejects(() => reconcile(m, buy.key, -1), Error, "required");
   await assertRejects(() => reconcile(m, buy.key, 1, " "), Error, "required");
-  const [{ r }] = await reconcile(m, buy.key, 70000);
-  assertEquals(r.exceeded, true, "above the 60000 committed maximum");
-  const [a] = await sql`select status, stop_reason from public.discovery_smoke_authorizations where queue_id = ${m.queueId}`;
-  assertEquals([a.status, a.stop_reason], ["stopped", `reconciled_charge_exceeded_quote:${buy.key}`]);
-  assertEquals((await reconcile(m, buy.key, 70000))[0].r.vendor_microusd, 70000, "the same record again is a no-op");
-  await assertRejects(() => reconcile(m, buy.key, 60000), Error, "already reconciled differently");
+  const [{ r }] = await reconcile(m, buy.key, 4000, "  apify run history: r-1 ");
+  assertEquals([r.exceeded, r.closes_liability, r.vendor_status], [false, true, "SUCCEEDED"]);
+  const [row] = await sql`select vendor_ref, reconciled_by from public.discovery_smoke_reconciliations
+    where operation_key = ${buy.key}`;
+  assertEquals(row.vendor_ref, "apify run history: r-1", "stored trimmed");
+  assertEquals(row.reconciled_by, (await sql`select session_user as u`)[0].u, "the person's login, not the definer");
+  // The same record again, however it is padded, is a no-op; anything different refuses.
+  for (const ref of ["apify run history: r-1", " apify run history: r-1\t"]) {
+    assertEquals((await reconcile(m, buy.key, 4000, ref))[0].r.vendor_microusd, 4000, `idempotent for ${JSON.stringify(ref)}`);
+  }
+  await assertRejects(() => reconcile(m, buy.key, 3000, "apify run history: r-1"), Error, "already reconciled differently");
+  await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history: r-2"), Error, "already reconciled differently");
+  await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history: r-1", { status: "FAILED" }), Error,
+    "already reconciled differently");
+});
+
+Deno.test("reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)", opts, async () => {
+  const m = await seedSmokeMission();
+  const buy = provider(m, JOBS, "apify_jobs");
+  const d = await admit(buy);
+  assertEquals(d.decision, "admitted");
+  // Live: the mission may still read, record or be billed for its run.
+  await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history", { live: true }), Error, "still live");
+  // No status, or a status that is not terminal.
+  for (const status of [null, "", "RUNNING", "READY", "TIMING-OUT", "ABORTING"]) {
+    await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history", { status }), Error, "terminal status", String(status));
+  }
+  // NO_RUN: only for a start with no run id, and only at zero.
+  await assertRejects(() => reconcile(m, buy.key, 1, "apify run history: none", { status: "NO_RUN" }), Error, "NO_RUN");
+  assert(await recordReceipt(await db(), { queueId: m.queueId, key: buy.key, token: tokenOf(d), runId: `run-${uuid()}` }));
+  await assertRejects(() => reconcile(m, buy.key, 0, "apify run history: none", { status: "NO_RUN" }), Error, "NO_RUN");
+  assertEquals((await sql`select count(*)::int as n from public.discovery_smoke_reconciliations
+    where operation_key = ${buy.key}`)[0].n, 0, "nothing was recorded");
+  const [{ r }] = await reconcile(m, buy.key, 4000, "apify run history", { status: " timed-out " });
+  assertEquals(r.vendor_status, "TIMED-OUT", "normalized");
+  // An uncertain start the vendor never ran closes at zero.
+  const n = await seedSmokeMission();
+  const lost = provider(n, JOBS, "apify_jobs");
+  assertEquals((await admit(lost)).decision, "admitted");
+  assertEquals((await reconcile(n, lost.key, 0, "apify run history: no run", { status: "no_run" }))[0].r.closes_liability, true);
+});
+
+Deno.test("reconciliation: a figure above the quote is recorded, HELD open, and blocks every later smoke (final hardening)", opts, async () => {
+  // A two-second window, so the authorization is past its deadline but still `active`.
+  // Authorized first: seeding it reconciles every open purchase (the shared database's helper).
+  const other = await seedSmokeMission();
+  const m = await seedSmokeMission({ windowSeconds: 2 });
+  const buy = provider(m, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  await new Promise((r) => setTimeout(r, 2100));
+  try {
+    const [{ r }] = await reconcile(m, buy.key, 70000, "apify run history: over", { live: true });
+    assertEquals([r.exceeded, r.closes_liability], [true, false], "above the 60000 committed maximum");
+    const a = await authorizationOf(m);
+    assertEquals([a.status, a.stop_reason], ["stopped", `reconciled_charge_exceeded_quote:${buy.key}`]);
+    assertEquals((await reconcile(m, buy.key, 70000, "apify run history: over"))[0].r.vendor_microusd, 70000, "the same record again is a no-op");
+    await assertRejects(() => reconcile(m, buy.key, 60000, "apify run history: over"), Error, "already reconciled differently");
+    // Still liability: no new smoke, and no other authorization may spend.
+    const next = await seedSmokeMission({ authorize: false });
+    await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+    assertEquals((await admit(op(other))).decision, "prior_liability_unreconciled");
+    const listed = await sql.unsafe(Deno.readTextFileSync(new URL("../../scripts/test-project/smoke-reconciliation.sql", import.meta.url))
+      .replace(":'queue_id'", `'${m.queueId}'`));
+    assertEquals(listed.map((x) => [x.operation_key, x.state, x.vendor_microusd]), [[buy.key, "held_above_quote", "70000"]]);
+  } finally {
+    // Only the database owner lifts a hold (a reviewed decision outside these
+    // functions). The contract database is shared, so this test lifts its own.
+    await sql`delete from public.discovery_smoke_reconciliations where operation_key = ${buy.key}`;
+  }
 });
 
 Deno.test("reconciliation: a worker-written 'settled' label is not a reconciliation (Codex review, PR #96)", opts, async () => {
@@ -611,7 +689,7 @@ Deno.test("reconciliation: a pre-authorized mission cannot spend over a CANCELLE
 
 Deno.test("polls: a reads template's per-actor allocation holds each actor to its share of the five (independent review, PR #96)", opts, async () => {
   const quotes = syntheticQuotes({
-    polls: { ...(syntheticQuotes().polls as Record<string, unknown>),
+    polls: { ...(syntheticQuotes().polls as Record<string, unknown>), allowed_actors: [JOBS, DETAILS],
       request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 2 } } },
   });
   const m = await seedSmokeMission({ quotes });
@@ -630,4 +708,52 @@ Deno.test("polls: a reads template's per-actor allocation holds each actor to it
   await assertRejects(() => authorizeSmoke(bad.queueId, { quotes: syntheticQuotes({
     polls: { ...(syntheticQuotes().polls as Record<string, unknown>), request_limits: { max_reads_per_actor: { [JOBS]: "3" } } },
   }) }), Error, "malformed");
+});
+
+Deno.test("authorize: a read allocation covers exactly the reads template's actors and fits the five (final hardening)", opts, async () => {
+  const polls = syntheticQuotes().polls as Record<string, unknown>;
+  const reads = (over: Record<string, unknown>) => ({ ...polls, allowed_actors: [JOBS, DETAILS], ...over });
+  const bad: Array<[string, Record<string, unknown>]> = [
+    ["an actor without a share", reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3 } } })],
+    ["a share for an actor the template does not allow", reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 1, [SCRAPE]: 1 } } })],
+    ["shares above the shared five", reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 3 } } })],
+    ["an allocation on a template that is not reads-only",
+      reads({ allowed_kinds: ["poll", "model"], allowed_actors: [JOBS, DETAILS], request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 2 } } })],
+  ];
+  for (const [why, t] of bad) {
+    const m = await seedSmokeMission({ authorize: false });
+    await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({ polls: t }) }), Error, "read allocation", why);
+  }
+  const ok = await seedSmokeMission({ authorize: false });
+  assert(await authorizeSmoke(ok.queueId, { quotes: syntheticQuotes({ polls: reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 2 } } }) }) }),
+    "the proposal's 3 + 2");
+});
+
+Deno.test("authorize: reads are free, and one template per kind and actor (final hardening)", opts, async () => {
+  const polls = syntheticQuotes().polls as Record<string, unknown>;
+  const m = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({ polls: { ...polls, maximum_microusd: 1 } }) }),
+    Error, "reads must be free");
+  // A provider template that also allows reads prices them too.
+  await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({
+    polls: { ...polls, allowed_actors: [DETAILS, "firecrawl:crawl"] },
+    apify_jobs: { ...syntheticQuotes().apify_jobs as object, allowed_kinds: ["provider", "poll"] },
+  }) }), Error, "reads must be free");
+  // A second, cheaper template for the same purchase: the worker could name either.
+  await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({
+    apify_jobs_cheap: { ...syntheticQuotes().apify_jobs as object, maximum_microusd: 1 },
+  }) }), Error, "two templates cover the same kind and actor");
+  assertEquals((await sql`select count(*)::int as n from public.discovery_smoke_authorizations where queue_id = ${m.queueId}`)[0].n, 0);
+});
+
+Deno.test("admission: a template missing a key admits nothing, even one written outside authorize (final hardening)", opts, async () => {
+  const m = await seedSmokeMission();
+  // Only the database owner can write this; authorize itself refuses it.
+  await sql`update public.discovery_smoke_authorizations
+               set approved_quotes = approved_quotes #- '{apify_jobs,allowed_kinds}' #- '{gpt,maximum_microusd}' #- '{apify_details,observed_at}'
+             where queue_id = ${m.queueId}`;
+  assertEquals((await admit(provider(m, JOBS, "apify_jobs"))).decision, "unknown_quote", "no allowed_kinds");
+  assertEquals((await admit(op(m))).decision, "unknown_quote", "no maximum");
+  assertEquals((await admit(provider(m, DETAILS, "apify_details"))).decision, "stale_quote", "no observation");
+  assertEquals((await ops(m)).length, 0);
 });

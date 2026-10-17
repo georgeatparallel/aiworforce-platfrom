@@ -587,7 +587,9 @@ Deno.test("read lifecycle: the FINAL run is bought with two reads; its receipt i
 
 Deno.test("read lifecycle: with a 3 + 2 allocation, a slow job search keeps company details' two reads (independent review, PR #96)", opts, async () => {
   const quotes = syntheticQuotes({
+    // A complete allocation: one share for each actor the reads template allows.
     polls: { ...(syntheticQuotes().polls as Record<string, unknown>),
+      allowed_actors: ["apify:curious_coder~linkedin-jobs-scraper", "apify:harvestapi~linkedin-company"],
       request_limits: { max_reads_per_actor: { "apify:curious_coder~linkedin-jobs-scraper": 3, "apify:harvestapi~linkedin-company": 2 } } },
   });
   const m = await fundedMission({ quotes });

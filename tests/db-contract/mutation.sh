@@ -142,6 +142,41 @@ prove_killed "one actor's slow run spends another's reads: allocation ignored by
 prove_killed "one actor's reads exceed its share: database allocation removed" "$adm_sql" \
   "    return jsonb_build_object('decision', 'read_allocation');" "    null;" \
   "$adm_tests" "polls: a reads template's per-actor allocation holds each actor to its share of the five (independent review, PR #96)"
+# Final offline hardening: the template catalog and reconciliation.
+prove_killed "a template missing a required key is authorized" "$adm_sql" \
+  "or jsonb_typeof(v_t -> 'allowed_kinds') is distinct from 'array' or" \
+  "or jsonb_typeof(v_t -> 'allowed_kinds') <> 'array' or" \
+  "$adm_tests" "authorize: refuses stale, future, unbounded or evidence-free prices"
+prove_killed "a template missing allowed_kinds admits" "$adm_sql" \
+  "not coalesce((v_tpl -> 'allowed_kinds') ? p_kind, false)" "not ((v_tpl -> 'allowed_kinds') ? p_kind)" \
+  "$adm_tests" "admission: a template missing a key admits nothing, even one written outside authorize (final hardening)"
+prove_killed "an incomplete or oversized read allocation is authorized" "$adm_sql" \
+  "    if (v_t -> 'request_limits') ? 'max_reads_per_actor' and (" "    if false and (" \
+  "$adm_tests" "authorize: a read allocation covers exactly the reads template's actors and fits the five (final hardening)"
+prove_killed "a priced read template is authorized" "$adm_sql" \
+  "and (v_t ->> 'maximum_microusd')::bigint <> 0 then" "and false then" \
+  "$adm_tests" "authorize: reads are free, and one template per kind and actor (final hardening)"
+prove_killed "two templates for one kind and actor are authorized" "$adm_sql" \
+  "group by k, x having count(distinct t.key) > 1) then" "group by k, x having false) then" \
+  "$adm_tests" "authorize: reads are free, and one template per kind and actor (final hardening)"
+prove_killed "an above-quote reconciliation closes liability for authorization" "$adm_sql" \
+  "                        and r.vendor_microusd <= o.committed_microusd);" "                        );" \
+  "$adm_tests" "reconciliation: a figure above the quote is recorded, HELD open, and blocks every later smoke (final hardening)"
+prove_killed "an above-quote reconciliation lets another authorization spend" "$adm_sql" \
+  "                                     and r.vendor_microusd <= x.committed_microusd)) then" "                                     )) then" \
+  "$adm_tests" "reconciliation: a figure above the quote is recorded, HELD open, and blocks every later smoke (final hardening)"
+prove_killed "a live authorization's purchase is reconciled" "$adm_sql" \
+  "    if a.status = 'active' and a.deadline_at > clock_timestamp() then" "    if false then" \
+  "$adm_tests" "reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)"
+prove_killed "a nonterminal vendor status is accepted" "$adm_sql" \
+  "  if v_status is null or v_status not in ('SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT', 'NO_RUN') then" "  if false then" \
+  "$adm_tests" "reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)"
+prove_killed "NO_RUN closes a purchase that ran" "$adm_sql" \
+  "    if v_status = 'NO_RUN' and (o.provider_run_id is not null or p_vendor_microusd <> 0) then" "    if false then" \
+  "$adm_tests" "reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)"
+prove_killed "a padded reference is a different record" "$adm_sql" \
+  "or r.vendor_ref is distinct from v_ref" "or r.vendor_ref is distinct from p_vendor_ref" \
+  "$adm_tests" "reconciliation: immutable, provider purchases only, terminal, and a padded reference is the same record"
 prove_killed "no lineage lease check" "$adm_sql" "or l.lease_holder is distinct from p_task " "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "re-keyed payload buys again" "$adm_sql" \

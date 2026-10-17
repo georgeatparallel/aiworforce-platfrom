@@ -68,6 +68,14 @@ Deno.test("smoke admission: the rollback refuses while there is anything to acco
   }
 });
 
+Deno.test("smoke admission: the rollback drops each function by the signature its revoke names", () => {
+  const revoked = [...UP.matchAll(/revoke all on function public\.(\w+\([^)]*\)) from/g)].map((m) => m[1]).sort();
+  const dropped = [...DOWN.matchAll(/drop function public\.(\w+\([^)]*\));/g)].map((m) => m[1]).sort();
+  assertEquals(dropped, revoked);
+  // Final hardening: reconciliation states the vendor's terminal status.
+  assert(revoked.includes("reconcile_discovery_smoke_operation(uuid, text, bigint, text, text)"));
+});
+
 Deno.test("smoke admission: the worker installs the gate only when enforced, before run-agent loads", () => {
   const main = read("worker/main.ts");
   const at = main.indexOf("if (admissionEnforced) {");
