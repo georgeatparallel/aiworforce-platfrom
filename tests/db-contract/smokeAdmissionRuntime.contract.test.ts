@@ -484,7 +484,7 @@ Deno.test("strategist: concurrent attempts in flight never exceed the mission's 
 // settled (`apify_run(settled).receipt`) or listed by the reconciliation.
 const reconciliation = Deno.readTextFileSync(new URL("../../scripts/test-project/smoke-reconciliation.sql", import.meta.url));
 const unsettled = async (m: SmokeMission) =>
-  await sql.unsafe(reconciliation.replace(":'queue_id'", `'${m.queueId}'`));
+  (await sql.unsafe(reconciliation.replace(":'queue_id'", `'${m.queueId}'`))).filter((r) => r.receipt === "unsettled");
 const reads = async (m: SmokeMission) => (await ops(m)).filter((o) => o.kind === "poll").length;
 /** An Apify that honours `waitForFinish`: `finishAfter` status reads, then SUCCEEDED with `finishedAt` `settleLeftMs` short of settled. */
 function apify(o: { id: string; finishAfter: number; settleLeftMs?: number; usd?: number; finalUsd?: number; statusDelayMs?: number }) {

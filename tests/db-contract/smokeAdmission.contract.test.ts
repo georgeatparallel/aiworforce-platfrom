@@ -533,14 +533,46 @@ Deno.test("reconciliation: immutable, provider purchases only, and a figure abov
   await assertRejects(() => reconcile(m, buy.key, 60000), Error, "already reconciled differently");
 });
 
-Deno.test("reconciliation: a settled receipt needs no reconciliation", opts, async () => {
+Deno.test("reconciliation: a worker-written 'settled' label is not a reconciliation (Codex review, PR #96)", opts, async () => {
   const first = await seedSmokeMission();
   const buy = provider(first, JOBS, "apify_jobs");
   const d = await admit(buy);
-  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token: tokenOf(d),
-    runId: `run-${uuid()}`, reportedMicrousd: 2000, source: "apify_run(settled).receipt" }));
+  const token = tokenOf(d);
+  // The worker can write any label with its token: first the preliminary
+  // figure, then the same figure re-labelled as settled.
+  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token,
+    runId: `run-${uuid()}`, reportedMicrousd: 4000, source: "apify_run(status).receipt" }));
+  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token,
+    reportedMicrousd: 4000, source: "apify_run(settled).receipt" }));
   const next = await seedSmokeMission({ authorize: false });
-  assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }));
+  await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+  await reconcile(first, buy.key, 4000);
+  assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }), "only a person's record closes it");
+});
+
+Deno.test("reconciliation: an earlier authorization cannot spend over another's open liability (Codex review, PR #96)", opts, async () => {
+  // Both authorized before either buys: the authorization check passed for both.
+  const a = await seedSmokeMission();
+  const b = await seedSmokeMission();
+  const buy = provider(a, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  // A spends within its own liability; B may not spend at all while A's is open.
+  assertEquals((await admit(op(a))).decision, "admitted", "a mission is not blocked by its own purchases");
+  assertEquals((await admit(op(b))).decision, "prior_liability_unreconciled", "no model attempt");
+  assertEquals((await admit(provider(b, JOBS, "apify_jobs"))).decision, "prior_liability_unreconciled", "no purchase");
+  assertEquals((await ops(b)).length, 0, "nothing was admitted, so nothing is owed");
+  await reconcile(a, buy.key, 5000);
+  assertEquals((await admit(op(b))).decision, "admitted", "reconciled: B may spend");
+});
+
+Deno.test("reconciliation: two smokes racing to buy first — exactly one purchase is admitted", opts, async () => {
+  for (let round = 0; round < 3; round++) {
+    const a = await seedSmokeMission();
+    const b = await seedSmokeMission();
+    const [da, dbb] = await Promise.all([admit(provider(a, JOBS, "apify_jobs")), admit(provider(b, JOBS, "apify_jobs"))]);
+    const decisions = [da.decision, dbb.decision].sort();
+    assertEquals(decisions, ["admitted", "prior_liability_unreconciled"], `round ${round}`);
+  }
 });
 
 Deno.test("proposal: the two-actor catalog cannot be authorized as written (no invented price; live stays blocked)", opts, async () => {

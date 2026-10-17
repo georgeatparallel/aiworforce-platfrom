@@ -122,6 +122,17 @@ prove_killed "any task status admitted" "$adm_sql" "or t.status not in ('running
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "no new smoke over unreconciled liability: gate removed" "$adm_sql" "  if v_open > 0 then" "  if false then" \
   "$adm_tests" "reconciliation: an unsettled purchase blocks the next authorization until a person reconciles it"
+prove_killed "an earlier authorization spends over open liability: admission recheck removed" "$adm_sql" \
+  "  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock" \
+  "  if false then
+    perform pg_advisory_xact_lock" \
+  "$adm_tests" "reconciliation: an earlier authorization cannot spend over another's open liability (Codex review, PR #96)"
+prove_killed "two smokes race past the recheck: admission lock removed" "$adm_sql" \
+  "  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));" \
+  "  if p_kind in ('provider', 'model') then" \
+  "$adm_tests" "reconciliation: two smokes racing to buy first — exactly one purchase is admitted"
 prove_killed "no lineage lease check" "$adm_sql" "or l.lease_holder is distinct from p_task " "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "re-keyed payload buys again" "$adm_sql" \

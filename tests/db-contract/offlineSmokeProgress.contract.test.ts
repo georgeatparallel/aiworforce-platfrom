@@ -201,6 +201,7 @@ const STRONG_SELF_DESCRIPTION = "sales software for revenue teams at mid-size co
 const WEAK_SELF_DESCRIPTION = "business software platform to business customers";
 let selfDescription = STRONG_SELF_DESCRIPTION;
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- trace rows and SQL results, read field by field
 type Rehearsal = Record<string, any>;
 
 async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void>) {
@@ -635,7 +636,8 @@ async function rehearse(v: Variant, check: (r: Rehearsal) => void | Promise<void
       }
       globalThis.fetch = originalFetch;
       for (const [k, v] of saved) {
-        v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+        if (v === undefined) Deno.env.delete(k);
+        else Deno.env.set(k, v);
       }
     }
   }
@@ -733,7 +735,9 @@ Deno.test("offline smoke, two actors: one evidence-backed lead is qualified and 
     assertEquals(raw.job_evidence.url, "https://www.linkedin.com/jobs/view/offline-ae");
     assertEquals(r.credits.filter((c: Rehearsal) => c.status === "charged").length, 2, "one credit per purchase, none refunded");
     // ── THE DEFERRED RECEIPT IS LIABILITY UNTIL A PERSON CLOSES IT ──
-    assertEquals((await unreconciled(r.m.queueId)).map((o) => o.actor), [DETAILS]);
+    // Both purchases wait for a person; only the company details needs its figure looked up.
+    assertEquals((await unreconciled(r.m.queueId)).map((o) => [o.actor, o.receipt]),
+      [[JOBS, "settled"], [DETAILS, "unsettled"]]);
     const next = await seedSmokeMission({ authorize: false });
     await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
     // ── RECOVERY CONTROLS (Codex's harness): no restart renews the mission; a stop is final ──

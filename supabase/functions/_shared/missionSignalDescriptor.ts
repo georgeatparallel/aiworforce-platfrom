@@ -297,7 +297,9 @@ export const POSTED_JOBS_RE = new RegExp(String.raw`\bpost(?:ed|s|ing)?\s+${JOB_
  * within 30 days") compiled into a leadership POST — a signal nothing the
  * mission bought could answer — because the social reading is tried first.
  */
-const ROLE_WORDS = String.raw`(?:(?!(?:source|to|about|on|regarding|that|for|and|in|with|of|up)\b)[a-z][a-z/&-]*\s+){0,3}`;
+// Never a preposition, and never a channel or a kind of content: "an open
+// LinkedIn posting about AI" is still a person posting (Codex review, PR #96).
+const ROLE_WORDS = String.raw`(?:(?!(?:source|to|about|on|regarding|that|for|and|in|with|of|up|linkedin|social|blog|twitter|x|instagram|facebook|tiktok|youtube|reddit|substack|medium|media|content|newsletter|public|personal|forum|video|podcast)\b)[a-z][a-z/&-]*\s+){0,3}`;
 export const JOB_POSTING_RE = new RegExp(String.raw`\b(?:job\s+|open\s+${ROLE_WORDS})postings?\b`, "i");
 const POST_MARKER_RE = new RegExp(
   String.raw`\bpost(?:ed|s)?\b(?!\s+${JOB_OBJECT})|(?<!\b(?:job\s+|open\s+${ROLE_WORDS}))\bposting\b(?!\s+${JOB_OBJECT})|\bshar(?:ed|ing) (?:a|an|their)\b|\bwrote about\b|\bdiscuss(?:ed|ing|es)\b|\btalking about\b|\bannounc(?:ed|ing)\b`);

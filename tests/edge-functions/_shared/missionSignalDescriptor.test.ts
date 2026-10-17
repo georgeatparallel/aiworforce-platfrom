@@ -321,6 +321,12 @@ Deno.test("18b. a PERSON posting is unchanged: still a post, with its subject an
   assertEquals([founders.event, founders.subject], ["post", "leadership"]);
   // "open" followed by a preposition is not an opening.
   assertEquals(one("founders who are open to posting about hiring").event, "post");
+  // A channel or a kind of content is not a role (Codex review, PR #96).
+  // Read exactly as before the fix: a leadership post, and no hiring requirement.
+  const ceo = one("companies whose CEO has an open LinkedIn posting about AI");
+  assertEquals([ceo.event, ceo.subject], ["post", "leadership"]);
+  const blog = one("founders with an open blog posting about pricing");
+  assertEquals([blog.event, blog.subject, blog.qualifier.topic], ["post", "leadership", "pricing"]);
   // "open source" is software, never an opening.
   assertEquals(one("open source maintainers posting about Rust").event, "post");
   assertEquals(one("companies whose leadership posted about US expansion").event, "post");
@@ -337,4 +343,5 @@ Deno.test("18c. the canonical reader agrees: an open-role posting is a REAL hiri
   assertEquals(kinds("companies with a job posting for SDRs"), ["hiring"]);
   assertEquals(kinds("companies whose CEO is posting about AI"), ["social_activity"]);
   assertEquals(kinds("open source maintainers posting about Rust"), ["social_activity"]);
+  assertEquals(kinds("companies whose CEO has an open LinkedIn posting about AI"), ["social_activity"]);
 });

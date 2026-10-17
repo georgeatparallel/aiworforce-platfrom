@@ -116,13 +116,14 @@ create unique index discovery_smoke_dataset_id on public.discovery_smoke_operati
 
 -- ── RECONCILIATION: THE VENDOR'S OWN FIGURE, RECORDED BY A PERSON ─────────
 --
--- A provider purchase without a settled receipt (`apify_run(settled).receipt`)
--- — the final run whose receipt read the five-read plan deferred, a run left
--- pending, an uncertain start — is LIABILITY, carried at its committed
--- maximum. It is closed only here, against the vendor's run history, by an
--- administrator. Immutable, and it never changes a commitment: the record of
--- what the mission was allowed to cost stays as it was. Until every such
--- purchase is reconciled, no new smoke can be authorized.
+-- Every provider purchase is LIABILITY, carried at its committed maximum,
+-- until an administrator records the vendor's own figure here — the final run
+-- whose receipt the five-read plan deferred, a run left pending, an uncertain
+-- start, and a "settled" receipt too: `report_source` is written by the worker
+-- (record_discovery_smoke_receipt), so no label it chooses can stand in for
+-- this record (Codex review, PR #96). Immutable, and it never changes a
+-- commitment. Until every purchase of every earlier smoke is reconciled, no
+-- new smoke can be authorized and no other authorization may spend.
 create table public.discovery_smoke_reconciliations (
   authorization_id uuid not null,
   operation_key    text not null,
@@ -176,13 +177,12 @@ begin
   end if;
 
   -- NO NEW SMOKE OVER UNRECONCILED LIABILITY. Any earlier provider purchase
-  -- with neither a settled receipt nor a reconciliation may still be billed
-  -- up to its maximum; another mission would spend on top of an unknown.
-  -- Serialized against a concurrent reconciliation by the table lock below.
-  lock table public.discovery_smoke_reconciliations in share mode;
+  -- without a reconciliation may still be billed up to its maximum; another
+  -- mission would spend on top of an unknown. Serialized with every paid
+  -- admission and reconciliation by one transaction-scoped lock.
+  perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
   select count(*) into v_open from public.discovery_smoke_operations o
    where o.kind = 'provider'
-     and o.report_source is distinct from 'apify_run(settled).receipt'
      and not exists (select 1 from public.discovery_smoke_reconciliations r
                       where r.authorization_id = o.authorization_id and r.operation_key = o.operation_key);
   if v_open > 0 then
@@ -329,6 +329,22 @@ begin
       'provider_dataset_id', o.provider_dataset_id);
   end if;
 
+  -- NOR MAY AN EARLIER AUTHORIZATION SPEND OVER IT (Codex review, PR #96). A
+  -- smoke authorized before another one bought anything would otherwise pass
+  -- the authorization check and spend on top of the other's open liability.
+  -- Rechecked at every paid admission, under the same lock as authorization
+  -- and reconciliation, so a purchase committing elsewhere is seen. Reads of
+  -- this mission's own runs are not spending and are not blocked.
+  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+    if exists (select 1 from public.discovery_smoke_operations x
+                where x.kind = 'provider' and x.authorization_id <> a.id
+                  and not exists (select 1 from public.discovery_smoke_reconciliations r
+                                   where r.authorization_id = x.authorization_id and r.operation_key = x.operation_key)) then
+      return jsonb_build_object('decision', 'prior_liability_unreconciled');
+    end if;
+  end if;
+
   -- The price is the APPROVED template's maximum; the worker names a template,
   -- it never states a price.
   v_tpl := a.approved_quotes -> p_template;
@@ -444,8 +460,8 @@ end $$;
 
 -- ── RECONCILE ONE PURCHASE. Administrators only, never the worker. ────────
 --
--- Records the vendor's final figure for a provider operation that has no
--- settled receipt. Never edits the operation, never lowers a commitment. A
+-- Records the vendor's final figure for a provider purchase (any purchase:
+-- a worker-written receipt is evidence, not settlement). Never edits the operation, never lowers a commitment. A
 -- second call for the same operation returns the first record unchanged, or
 -- refuses if it differs. A figure above the committed maximum is recorded AND
 -- stops the authorization (if still active): the bound was wrong, and the
@@ -461,6 +477,7 @@ begin
   end if;
   select * into a from public.discovery_smoke_authorizations where queue_id = p_queue for update;
   if not found then raise exception 'reconcile_discovery_smoke_operation: no authorization for this queue row'; end if;
+  perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
   select * into o from public.discovery_smoke_operations where authorization_id = a.id and operation_key = p_key;
   if not found or o.kind <> 'provider' then
     raise exception 'reconcile_discovery_smoke_operation: % is not a provider purchase of this authorization', p_key;
