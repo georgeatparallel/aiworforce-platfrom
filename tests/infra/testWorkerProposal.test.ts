@@ -70,6 +70,16 @@ Deno.test("test worker: spend controls are set, fail-closed, and never from prod
   }
 });
 
+Deno.test("test worker: the smoke's minimal orchestration, and keys for only the two priced vendors (final hardening)", () => {
+  const env = job.env;
+  // Without it the customer orchestration runs and needs more than the four model attempts.
+  assertEquals(env.LEAD_V2_SMOKE_ORCHESTRATION, "minimal");
+  // The catalog prices Apify and OpenAI only; the offline rehearsal runs with these absent.
+  for (const k of ["FIRECRAWL_API_KEY", "ANTHROPIC_API_KEY", "LOVABLE_API_KEY"]) assert(!(k in env), `${k} must not be set`);
+  const secrets = Object.entries(env).filter(([, v]) => String(v).includes("secrets.")).map(([k]) => k).sort();
+  assertEquals(secrets, ["APIFY_API_TOKEN", "OPENAI_API_KEY", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_URL"]);
+});
+
 Deno.test("test worker: one worker session that drains on SIGTERM, on the worker's own Deno", () => {
   const run = steps.find((s) => (s.run ?? "").includes("worker/main.ts"))!.run!;
   assert(run.includes("timeout -s TERM --kill-after=10m"));

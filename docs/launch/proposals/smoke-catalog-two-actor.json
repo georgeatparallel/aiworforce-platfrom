@@ -1,0 +1,82 @@
+{
+  "status": "PROPOSED — offline rehearsal only. Not authorized for purchase; live execution stays blocked.",
+  "live_execution": "blocked",
+  "live_blockers": [
+    "details.maximum_microusd: the HarvestAPI LinkedIn company-details price (per company, per start) is not observed. No figure is invented; authorize_discovery_smoke rejects a template without a numeric maximum.",
+    "details: Apify's provider-side cap (maxTotalChargeUsd, pinned by the gate to the template maximum) is not verified for apify:harvestapi~linkedin-company on the test account.",
+    "details: the test account's permission to run apify:harvestapi~linkedin-company (and its pricing tier) is not verified.",
+    "every template: source and observed_at must be replaced with observations no older than 24 h before authorization (Phase 5).",
+    "the company-details purchase is the mission's final run: its receipt is deferred to reconciliation (five reads: 3 + 2), and no later smoke can be authorized until it is reconciled."
+  ],
+  "based_on": "docs/launch/discovery-smoke-runbook.md (PR #93), 'The catalog' — jobs, reads and luna are unchanged except that reads now cover both actors.",
+  "approved_quotes": {
+    "jobs": {
+      "allowed_kinds": ["provider"],
+      "allowed_actors": ["apify:harvestapi~linkedin-job-search"],
+      "maximum_microusd": 5000,
+      "discovery_page": true,
+      "source": "<Apify actor pricing: job $0.001, start $0.001, tier <tier>>",
+      "liability_bound_ref": "maxTotalChargeUsd=0.005 (gate-pinned)",
+      "observed_at": "<ISO time>",
+      "request_limits": {
+        "max_request_bytes": 4096,
+        "pin_query": { "timeout": "120", "memory": "256" },
+        "max_fields": { "maxItems": 3 },
+        "max_array_items": { "jobTitles": 1, "locations": 1, "geoIds": 0 }
+      }
+    },
+    "details": {
+      "allowed_kinds": ["provider"],
+      "allowed_actors": ["apify:harvestapi~linkedin-company"],
+      "maximum_microusd": null,
+      "source": null,
+      "liability_bound_ref": "maxTotalChargeUsd = the maximum once observed (gate-pinned)",
+      "observed_at": null,
+      "request_limits": {
+        "max_request_bytes": 1024,
+        "pin_query": { "timeout": "120", "memory": "256" },
+        "max_array_items": { "companies": 1, "searches": 0 }
+      }
+    },
+    "reads": {
+      "allowed_kinds": ["poll"],
+      "allowed_actors": ["apify:harvestapi~linkedin-job-search", "apify:harvestapi~linkedin-company"],
+      "maximum_microusd": 0,
+      "source": "<Apify usage page: API reads not charged for these actors>",
+      "liability_bound_ref": "reads are not actor events",
+      "observed_at": "<ISO time>",
+      "request_limits": {
+        "max_reads_per_actor": {
+          "apify:harvestapi~linkedin-job-search": 3,
+          "apify:harvestapi~linkedin-company": 2
+        }
+      }
+    },
+    "luna": {
+      "allowed_kinds": ["model"],
+      "allowed_actors": ["openai:gpt-5.6-luna"],
+      "maximum_microusd": 12480,
+      "source": "<OpenAI project pricing, Standard: $<in>/1M input, $<cache write>/1M cache writes, $<out>/1M output>",
+      "liability_bound_ref": "B=30720 bytes (tokens <= bytes) priced at the cache-write rate, the dearest input rate ($0.25/1M listed 2026-10-17); O=4000 at $1.20/1M. 0.25*30720 + 1.2*4000 = 12480; four attempts 49920 <= 50000",
+      "observed_at": "<ISO time>",
+      "request_limits": { "max_request_bytes": 30720, "max_output_tokens": 4000 }
+    }
+  },
+  "request_bounds_basis": {
+    "details": "The actor bills per company looked up, and both `companies[]` (URLs) and `searches[]` (names to search) are looked up (experiments/hiring-actor-benchmark-2026-08-01/schemas/harvestapi__linkedin-company.input.json; compileHarvestCompanyDetailsInput bills companies + searches). The engine sends one LinkedIn URL in `companies` and never `searches`, so `searches` is refused outright and the purchase is one company.",
+    "jobs": "Billed rows are maxItems per job title per location: the actor runs once per `jobTitles` entry, and maxItems applies per title and location input (harvestapi__linkedin-job-search.input.json). `jobTitles`, `locations` and `geoIds` (the other location filter) are therefore bounded, and `maxItems` is mandatory. `company`, `industryIds`, `workplaceType`, `employmentType`, `experienceLevel`, `salary`, `postedLimit`, `sortBy`, `under10Applicants` and `easyApply` are filters that narrow each search, and `page` only chooses where a search starts, so none of them multiplies the rows. They are left unbounded, and the gate-pinned maxTotalChargeUsd caps the run either way."
+  },
+  "actor_limits": {
+    "apify:harvestapi~linkedin-job-search": 1,
+    "apify:harvestapi~linkedin-company": 1
+  },
+  "read_plan": {
+    "cap": 5,
+    "apify:harvestapi~linkedin-job-search": ["status (long poll)", "settled receipt", "dataset"],
+    "apify:harvestapi~linkedin-company": ["status (long poll)", "dataset"],
+    "enforced_by": "reads.request_limits.max_reads_per_actor (admit_discovery_smoke refuses `read_allocation`; the worker's read plan uses each actor's share), inside the shared cap of 5",
+    "slow_job_search": "a job search needing two status reads keeps its dataset read and defers its receipt; company details keeps its two",
+    "deferred": "any receipt the allocation leaves no read for (normally the company details'): committed maximum held, listed by scripts/test-project/smoke-reconciliation.sql, closed only by reconcile_discovery_smoke_operation"
+  },
+  "orchestration": "LEAD_V2_SMOKE_ORCHESTRATION=minimal (model attempts: execution plan, batch evaluation, mission evaluation, opportunity reasoning)"
+}

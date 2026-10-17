@@ -265,6 +265,98 @@ Deno.test("deadline: an admission that waited on the lock past the deadline is r
   assertEquals(waited.decision, "stopped", "the clock is read after the lock, not at transaction start");
 });
 
+// ── leases expiring while a paid admission waits on the liability lock ──────
+//
+// Codex P1 (final review of #94 → #96 → #93): ownership and the deadline were
+// judged BEFORE the global liability lock. A paid admission that waited on it
+// past a lease or the deadline was then admitted. Another session holds the
+// lock until the leases expire; nothing may be admitted for the stale owner.
+
+const LIABILITY_LOCK = "agentory.discovery_smoke.liability";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Hold the global liability lock in another session for `ms`. */
+function holdLiabilityLock(ms: number) {
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${LIABILITY_LOCK}))`;
+    await sleep(ms);
+  });
+}
+/** Make this mission's queue and/or lineage lease expire `ms` from now (database clock). */
+async function expireLeasesIn(m: SmokeMission, ms: number, which: { queue?: boolean; lineage?: boolean }) {
+  if (which.queue) {
+    await sql`update public.lead_mission_queue set lease_expires_at = clock_timestamp() + make_interval(secs => ${ms / 1000})
+              where id = ${m.queueId}`;
+  }
+  if (which.lineage) {
+    await sql`update public.lead_lineages set lease_expires_at = clock_timestamp() + make_interval(secs => ${ms / 1000})
+              where lineage_id = ${m.taskId}`;
+  }
+}
+
+Deno.test("leases: a paid admission that waited on the liability lock past a lease is refused (Codex P1, final review)", opts, async () => {
+  const svc = await db();
+  for (const lease of ["queue", "lineage"] as const) {
+    for (const kind of ["model", "provider"] as const) {
+      const m = await seedSmokeMission();
+      await expireLeasesIn(m, 1500, { [lease]: true });
+      const holder = holdLiabilityLock(2500);
+      await sleep(200);
+      const d = await admitOperation(svc, kind === "model" ? op(m) : provider(m, JOBS, "apify_jobs"));
+      await holder;
+      assertEquals(d.decision, "lost_ownership", `${kind} after the ${lease} lease expired during the wait`);
+      assertEquals((await ops(m)).length, 0, `${kind}/${lease}: nothing admitted, nothing committed`);
+    }
+  }
+});
+
+Deno.test("leases: a paid admission that waited on the liability lock past the deadline is refused", opts, async () => {
+  const m = await seedSmokeMission({ ageSeconds: 298 });   // two seconds left
+  const holder = holdLiabilityLock(3000);
+  await sleep(200);
+  const d = await admitOperation(await db(), provider(m, JOBS, "apify_jobs"));
+  await holder;
+  assertEquals(d.decision, "stopped");
+  assertEquals((await ops(m)).length, 0);
+});
+
+Deno.test("leases: concurrent buyers waiting on the lock past their leases are all refused", opts, async () => {
+  const svc = await db();
+  const a = await seedSmokeMission();
+  const b = await seedSmokeMission();
+  for (const m of [a, b]) await expireLeasesIn(m, 1500, { queue: true, lineage: true });
+  const holder = holdLiabilityLock(2500);
+  await sleep(200);
+  const decisions = await Promise.all([
+    admitOperation(svc, provider(a, JOBS, "apify_jobs")), admitOperation(svc, op(a)),
+    admitOperation(svc, provider(b, JOBS, "apify_jobs")), admitOperation(svc, op(b)),
+  ]);
+  await holder;
+  assertEquals(decisions.map((d) => d.decision), ["lost_ownership", "lost_ownership", "lost_ownership", "lost_ownership"]);
+  assertEquals([(await ops(a)).length, (await ops(b)).length], [0, 0]);
+});
+
+Deno.test("leases: after a stale owner is refused, the resumed task (new claim, new generation) buys exactly once", opts, async () => {
+  const svc = await db();
+  const m = await seedSmokeMission();
+  await expireLeasesIn(m, 1500, { queue: true });
+  const holder = holdLiabilityLock(2500);
+  await sleep(200);
+  const stale = admitOperation(svc, provider(m, JOBS, "apify_jobs", { key: "provider:resume" }));
+  // The re-claim waits behind the stale admission's row locks, then lands.
+  const worker2 = uuid();
+  const reclaim = sql`update public.lead_mission_queue set claimed_by = ${worker2}, lease_expires_at = now() + interval '3 minutes'
+                      where id = ${m.queueId}`.execute();
+  await holder;
+  assertEquals((await stale).decision, "lost_ownership");
+  await reclaim;
+  await sql`update public.tasks set checkpoint_version = checkpoint_version + 1 where id = ${m.taskId}`;
+  const resumed = { ...m, workerId: worker2, generation: m.generation + 1 };
+  const buy = provider(resumed, JOBS, "apify_jobs", { key: "provider:resume" });
+  assertEquals((await admitOperation(svc, buy)).decision, "admitted", "the resumed owner may buy");
+  assertEquals((await admitOperation(svc, { ...buy, key: "provider:resume:2" })).decision, "uncertain", "and only once");
+  assertEquals((await ops(m)).length, 1);
+});
+
 // ── restart, re-enqueue, re-claim ───────────────────────────────────────────
 
 Deno.test("restart: a new worker and a new generation inherit every counter; a new queue row inherits nothing", opts, async () => {
@@ -402,6 +494,14 @@ Deno.test("authorize: refuses stale, future, unbounded or evidence-free prices",
     ["unknown kind", { gpt: { ...syntheticQuotes().gpt as object, allowed_kinds: ["page"] } }],
     ["no request limits", { gpt: { ...syntheticQuotes().gpt as object, request_limits: null } }],
   ];
+  // Final hardening: a MISSING key is malformed too, never a NULL that passes.
+  for (const k of ["allowed_kinds", "allowed_actors", "maximum_microusd", "request_limits", "source", "observed_at"]) {
+    const rest = { ...syntheticQuotes().apify_jobs as Record<string, unknown> };
+    delete rest[k];
+    bad.push([`no ${k}`, { apify_jobs: rest }]);
+  }
+  bad.push(["a non-string kind", { apify_jobs: { ...syntheticQuotes().apify_jobs as object, allowed_kinds: [1] } }]);
+  bad.push(["a blank actor", { apify_jobs: { ...syntheticQuotes().apify_jobs as object, allowed_actors: [JOBS, " "] } }]);
   for (const [why, over] of bad) {
     const m = await seedSmokeMission({ authorize: false });
     await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes(over) }), Error, undefined, why);
@@ -482,3 +582,270 @@ for (const [why, change, refusedAs] of R8_CHANGES) {
     }
   });
 }
+
+// ── reconciliation: no new smoke over unreconciled liability ────────────────
+
+const tokenOf = (d: unknown) => (d as { reservation_token: string }).reservation_token;
+/** The operator's reconciliation of a finished mission: stop it (unless `live`), then record the vendor's figure. */
+const reconcile = async (m: SmokeMission, key: string, usd: number, ref = "apify run history: synthetic",
+  o: { status?: string | null; live?: boolean } = {}) => {
+  if (!o.live) await sql`select public.stop_discovery_smoke(${m.queueId}, 'contract test: the mission is over')`;
+  return sql`select public.reconcile_discovery_smoke_operation(${m.queueId}, ${key}, ${usd}, ${ref},
+    ${o.status === undefined ? "SUCCEEDED" : o.status}) as r`;
+};
+const authorizationOf = async (m: SmokeMission) =>
+  (await sql`select status, stop_reason from public.discovery_smoke_authorizations where queue_id = ${m.queueId}`)[0];
+
+Deno.test("reconciliation: an unsettled purchase blocks the next authorization until a person reconciles it", opts, async () => {
+  const first = await seedSmokeMission();
+  const buy = provider(first, JOBS, "apify_jobs");
+  const d = await admit(buy);
+  assertEquals(d.decision, "admitted");
+  // A preliminary figure (the deferred final receipt) is evidence, not settlement.
+  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token: tokenOf(d),
+    runId: `run-${uuid()}`, reportedMicrousd: 4000, source: "apify_run(status).receipt" }));
+
+  const next = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+  assertEquals((await sql`select count(*)::int as n from public.discovery_smoke_authorizations where queue_id = ${next.queueId}`)[0].n, 0);
+
+  // The worker can never close it.
+  const svc = await serviceClient();
+  const { error } = await svc.rpc("reconcile_discovery_smoke_operation",
+    { p_queue: first.queueId, p_key: buy.key, p_vendor_microusd: 0, p_vendor_ref: "worker", p_vendor_status: "SUCCEEDED" });
+  assert(error, "service_role cannot reconcile");
+
+  const [{ r }] = await reconcile(first, buy.key, 3800);
+  assertEquals(r.exceeded, false);
+  // Liability as authorized is untouched: the commitment and the evidence stay.
+  const [row] = await ops(first);
+  assertEquals([row.committed_microusd, row.reported_microusd, row.report_source], ["60000", "4000", "apify_run(status).receipt"]);
+  assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }), "reconciled: the next smoke may be authorized");
+});
+
+Deno.test("reconciliation: immutable, provider purchases only, terminal, and a padded reference is the same record", opts, async () => {
+  const m = await seedSmokeMission();
+  const buy = provider(m, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  const model = op(m);
+  assertEquals((await admit(model)).decision, "admitted");
+  await assertRejects(() => reconcile(m, model.key, 0), Error, "not a provider purchase");
+  await assertRejects(() => reconcile(m, buy.key, -1), Error, "required");
+  await assertRejects(() => reconcile(m, buy.key, 1, " "), Error, "required");
+  const [{ r }] = await reconcile(m, buy.key, 4000, "  apify run history: r-1 ");
+  assertEquals([r.exceeded, r.closes_liability, r.vendor_status], [false, true, "SUCCEEDED"]);
+  const [row] = await sql`select vendor_ref, reconciled_by from public.discovery_smoke_reconciliations
+    where operation_key = ${buy.key}`;
+  assertEquals(row.vendor_ref, "apify run history: r-1", "stored trimmed");
+  assertEquals(row.reconciled_by, (await sql`select session_user as u`)[0].u, "the person's login, not the definer");
+  // The same record again, however it is padded, is a no-op; anything different refuses.
+  for (const ref of ["apify run history: r-1", " apify run history: r-1\t"]) {
+    assertEquals((await reconcile(m, buy.key, 4000, ref))[0].r.vendor_microusd, 4000, `idempotent for ${JSON.stringify(ref)}`);
+  }
+  await assertRejects(() => reconcile(m, buy.key, 3000, "apify run history: r-1"), Error, "already reconciled differently");
+  await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history: r-2"), Error, "already reconciled differently");
+  await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history: r-1", { status: "FAILED" }), Error,
+    "already reconciled differently");
+});
+
+Deno.test("reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)", opts, async () => {
+  const m = await seedSmokeMission();
+  const buy = provider(m, JOBS, "apify_jobs");
+  const d = await admit(buy);
+  assertEquals(d.decision, "admitted");
+  // Live: the mission may still read, record or be billed for its run.
+  await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history", { live: true }), Error, "still live");
+  // No status, or a status that is not terminal.
+  for (const status of [null, "", "RUNNING", "READY", "TIMING-OUT", "ABORTING"]) {
+    await assertRejects(() => reconcile(m, buy.key, 4000, "apify run history", { status }), Error, "terminal status", String(status));
+  }
+  // NO_RUN: only for a start with no run id, and only at zero.
+  await assertRejects(() => reconcile(m, buy.key, 1, "apify run history: none", { status: "NO_RUN" }), Error, "NO_RUN");
+  assert(await recordReceipt(await db(), { queueId: m.queueId, key: buy.key, token: tokenOf(d), runId: `run-${uuid()}` }));
+  await assertRejects(() => reconcile(m, buy.key, 0, "apify run history: none", { status: "NO_RUN" }), Error, "NO_RUN");
+  assertEquals((await sql`select count(*)::int as n from public.discovery_smoke_reconciliations
+    where operation_key = ${buy.key}`)[0].n, 0, "nothing was recorded");
+  const [{ r }] = await reconcile(m, buy.key, 4000, "apify run history", { status: " timed-out " });
+  assertEquals(r.vendor_status, "TIMED-OUT", "normalized");
+  // An uncertain start the vendor never ran closes at zero.
+  const n = await seedSmokeMission();
+  const lost = provider(n, JOBS, "apify_jobs");
+  assertEquals((await admit(lost)).decision, "admitted");
+  assertEquals((await reconcile(n, lost.key, 0, "apify run history: no run", { status: "no_run" }))[0].r.closes_liability, true);
+});
+
+Deno.test("reconciliation: a figure above the quote is recorded, HELD open, and blocks every later smoke (final hardening)", opts, async () => {
+  // A two-second window, so the authorization is past its deadline but still `active`.
+  // Authorized first: seeding it reconciles every open purchase (the shared database's helper).
+  const other = await seedSmokeMission();
+  const m = await seedSmokeMission({ windowSeconds: 2 });
+  const buy = provider(m, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  await new Promise((r) => setTimeout(r, 2100));
+  try {
+    const [{ r }] = await reconcile(m, buy.key, 70000, "apify run history: over", { live: true });
+    assertEquals([r.exceeded, r.closes_liability], [true, false], "above the 60000 committed maximum");
+    const a = await authorizationOf(m);
+    assertEquals([a.status, a.stop_reason], ["stopped", `reconciled_charge_exceeded_quote:${buy.key}`]);
+    assertEquals((await reconcile(m, buy.key, 70000, "apify run history: over"))[0].r.vendor_microusd, 70000, "the same record again is a no-op");
+    await assertRejects(() => reconcile(m, buy.key, 60000, "apify run history: over"), Error, "already reconciled differently");
+    // Still liability: no new smoke, and no other authorization may spend.
+    const next = await seedSmokeMission({ authorize: false });
+    await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+    assertEquals((await admit(op(other))).decision, "prior_liability_unreconciled");
+    const listed = await sql.unsafe(Deno.readTextFileSync(new URL("../../scripts/test-project/smoke-reconciliation.sql", import.meta.url))
+      .replace(":'queue_id'", `'${m.queueId}'`));
+    assertEquals(listed.map((x) => [x.operation_key, x.state, x.vendor_microusd]), [[buy.key, "held_above_quote", "70000"]]);
+  } finally {
+    // Only the database owner lifts a hold (a reviewed decision outside these
+    // functions). The contract database is shared, so this test lifts its own.
+    await sql`delete from public.discovery_smoke_reconciliations where operation_key = ${buy.key}`;
+  }
+});
+
+Deno.test("reconciliation: a worker-written 'settled' label is not a reconciliation (Codex review, PR #96)", opts, async () => {
+  const first = await seedSmokeMission();
+  const buy = provider(first, JOBS, "apify_jobs");
+  const d = await admit(buy);
+  const token = tokenOf(d);
+  // The worker can write any label with its token: first the preliminary
+  // figure, then the same figure re-labelled as settled.
+  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token,
+    runId: `run-${uuid()}`, reportedMicrousd: 4000, source: "apify_run(status).receipt" }));
+  assert(await recordReceipt(await db(), { queueId: first.queueId, key: buy.key, token,
+    reportedMicrousd: 4000, source: "apify_run(settled).receipt" }));
+  const next = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+  await reconcile(first, buy.key, 4000);
+  assert(await authorizeSmoke(next.queueId, { keepPriorLiability: true }), "only a person's record closes it");
+});
+
+Deno.test("reconciliation: an earlier authorization cannot spend over another's open liability (Codex review, PR #96)", opts, async () => {
+  // Both authorized before either buys: the authorization check passed for both.
+  const a = await seedSmokeMission();
+  const b = await seedSmokeMission();
+  const buy = provider(a, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  // A spends within its own liability; B may not spend at all while A's is open.
+  assertEquals((await admit(op(a))).decision, "admitted", "a mission is not blocked by its own purchases");
+  assertEquals((await admit(op(b))).decision, "prior_liability_unreconciled", "no model attempt");
+  assertEquals((await admit(provider(b, JOBS, "apify_jobs"))).decision, "prior_liability_unreconciled", "no purchase");
+  assertEquals((await ops(b)).length, 0, "nothing was admitted, so nothing is owed");
+  await reconcile(a, buy.key, 5000);
+  assertEquals((await admit(op(b))).decision, "admitted", "reconciled: B may spend");
+});
+
+Deno.test("reconciliation: two smokes racing to buy first — exactly one purchase is admitted", opts, async () => {
+  for (let round = 0; round < 3; round++) {
+    const a = await seedSmokeMission();
+    const b = await seedSmokeMission();
+    const [da, dbb] = await Promise.all([admit(provider(a, JOBS, "apify_jobs")), admit(provider(b, JOBS, "apify_jobs"))]);
+    const decisions = [da.decision, dbb.decision].sort();
+    assertEquals(decisions, ["admitted", "prior_liability_unreconciled"], `round ${round}`);
+  }
+});
+
+Deno.test("proposal: the two-actor catalog cannot be authorized as written (no invented price; live stays blocked)", opts, async () => {
+  const proposal = JSON.parse(Deno.readTextFileSync(
+    new URL("../../docs/launch/proposals/smoke-catalog-two-actor.json", import.meta.url)));
+  assertEquals(proposal.live_execution, "blocked");
+  assertEquals(proposal.approved_quotes.details.maximum_microusd, null, "no figure is invented for the company-details price");
+  const authorize = (quotes: unknown) => async () => {
+    const m = await seedSmokeMission({ authorize: false });
+    await authorizeSmoke(m.queueId, { quotes: quotes as Record<string, unknown>, actorLimits: proposal.actor_limits });
+  };
+  // As written: placeholders are not observations.
+  await assertRejects(authorize(proposal.approved_quotes), Error);
+  // Even with every OTHER template freshly observed, the unpriced one refuses it.
+  const now = new Date(Date.now() - 60_000).toISOString();
+  const observed = Object.fromEntries(Object.entries(proposal.approved_quotes as Record<string, Record<string, unknown>>)
+    .map(([k, t]) => [k, k === "details" ? t : { ...t, source: "observed", observed_at: now }]));
+  await assertRejects(authorize(observed), Error, "template details is malformed");
+});
+
+Deno.test("reconciliation: a pre-authorized mission cannot spend over a CANCELLED mission's uncertain purchase (independent repro, PR #96)", opts, async () => {
+  // Both authorized before either purchases; same workspace is irrelevant to the rule.
+  const a = await seedSmokeMission();
+  const b = await seedSmokeMission();
+  const buy = provider(a, JOBS, "apify_jobs");
+  assertEquals((await admit(buy)).decision, "admitted");
+  // No run id, no receipt: an uncertain start, committed at 60000.
+  assertEquals([(await ops(a))[0].provider_run_id, (await ops(a))[0].report_source], [null, null]);
+  await sql`select * from public.cancel_lead_mission(${a.queueId}, ${a.ws})`;
+  assertEquals((await admit(op(b))).decision, "prior_liability_unreconciled", "B's first paid model operation is refused");
+  assertEquals((await ops(b)).length, 0);
+  // The cancelled mission's purchase can still be closed by a person; then B may spend.
+  await reconcile(a, buy.key, 60000);
+  assertEquals((await admit(op(b))).decision, "admitted");
+});
+
+Deno.test("polls: a reads template's per-actor allocation holds each actor to its share of the five (independent review, PR #96)", opts, async () => {
+  const quotes = syntheticQuotes({
+    polls: { ...(syntheticQuotes().polls as Record<string, unknown>), allowed_actors: [JOBS, DETAILS],
+      request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 2 } } },
+  });
+  const m = await seedSmokeMission({ quotes });
+  const jobs = provider(m, JOBS, "apify_jobs");
+  const details = provider(m, DETAILS, "apify_details");
+  assertEquals((await admit(jobs)).decision, "admitted");
+  assertEquals((await admit(details)).decision, "admitted");
+  const poll = (actor: string, parentKey: string) =>
+    op(m, { kind: "poll", actor, templateId: "polls", key: `poll:${uuid()}`, parentKey });
+  for (let i = 0; i < 3; i++) assertEquals((await admit(poll(JOBS, jobs.key))).decision, "admitted", `jobs read ${i + 1}`);
+  assertEquals((await admit(poll(JOBS, jobs.key))).decision, "read_allocation", "the job search's fourth read is the details' share");
+  for (let i = 0; i < 2; i++) assertEquals((await admit(poll(DETAILS, details.key))).decision, "admitted", `details read ${i + 1}`);
+  assertEquals((await admit(poll(DETAILS, details.key))).decision, "poll_limit", "the shared cap of five still holds");
+  // A malformed allocation is a malformed template.
+  const bad = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(bad.queueId, { quotes: syntheticQuotes({
+    polls: { ...(syntheticQuotes().polls as Record<string, unknown>), request_limits: { max_reads_per_actor: { [JOBS]: "3" } } },
+  }) }), Error, "malformed");
+});
+
+Deno.test("authorize: a read allocation covers exactly the reads template's actors and fits the five (final hardening)", opts, async () => {
+  const polls = syntheticQuotes().polls as Record<string, unknown>;
+  const reads = (over: Record<string, unknown>) => ({ ...polls, allowed_actors: [JOBS, DETAILS], ...over });
+  const bad: Array<[string, Record<string, unknown>]> = [
+    ["an actor without a share", reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3 } } })],
+    ["a share for an actor the template does not allow", reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 1, [SCRAPE]: 1 } } })],
+    ["shares above the shared five", reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 3 } } })],
+    ["an allocation on a template that is not reads-only",
+      reads({ allowed_kinds: ["poll", "model"], allowed_actors: [JOBS, DETAILS], request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 2 } } })],
+  ];
+  for (const [why, t] of bad) {
+    const m = await seedSmokeMission({ authorize: false });
+    await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({ polls: t }) }), Error, "read allocation", why);
+  }
+  const ok = await seedSmokeMission({ authorize: false });
+  assert(await authorizeSmoke(ok.queueId, { quotes: syntheticQuotes({ polls: reads({ request_limits: { max_reads_per_actor: { [JOBS]: 3, [DETAILS]: 2 } } }) }) }),
+    "the proposal's 3 + 2");
+});
+
+Deno.test("authorize: reads are free, and one template per kind and actor (final hardening)", opts, async () => {
+  const polls = syntheticQuotes().polls as Record<string, unknown>;
+  const m = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({ polls: { ...polls, maximum_microusd: 1 } }) }),
+    Error, "reads must be free");
+  // A provider template that also allows reads prices them too.
+  await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({
+    polls: { ...polls, allowed_actors: [DETAILS, "firecrawl:crawl"] },
+    apify_jobs: { ...syntheticQuotes().apify_jobs as object, allowed_kinds: ["provider", "poll"] },
+  }) }), Error, "reads must be free");
+  // A second, cheaper template for the same purchase: the worker could name either.
+  await assertRejects(() => authorizeSmoke(m.queueId, { quotes: syntheticQuotes({
+    apify_jobs_cheap: { ...syntheticQuotes().apify_jobs as object, maximum_microusd: 1 },
+  }) }), Error, "two templates cover the same kind and actor");
+  assertEquals((await sql`select count(*)::int as n from public.discovery_smoke_authorizations where queue_id = ${m.queueId}`)[0].n, 0);
+});
+
+Deno.test("admission: a template missing a key admits nothing, even one written outside authorize (final hardening)", opts, async () => {
+  const m = await seedSmokeMission();
+  // Only the database owner can write this; authorize itself refuses it.
+  await sql`update public.discovery_smoke_authorizations
+               set approved_quotes = approved_quotes #- '{apify_jobs,allowed_kinds}' #- '{gpt,maximum_microusd}' #- '{apify_details,observed_at}'
+             where queue_id = ${m.queueId}`;
+  assertEquals((await admit(provider(m, JOBS, "apify_jobs"))).decision, "unknown_quote", "no allowed_kinds");
+  assertEquals((await admit(op(m))).decision, "unknown_quote", "no maximum");
+  assertEquals((await admit(provider(m, DETAILS, "apify_details"))).decision, "stale_quote", "no observation");
+  assertEquals((await ops(m)).length, 0);
+});

@@ -408,7 +408,7 @@ import {
 import { priceFor } from "./creditPricing.ts";
 import {
   APIFY_RECEIPT_TIMEOUT_MS, apifyRunSettled, FIRECRAWL_UNCERTAIN, isAdmissionRefusal, planSmokeReceipt,
-  planSmokeStatusRead, smokeAdmissionActive, smokeReadState,
+  apifyGateActor, planSmokeStatusRead, smokeAdmissionActive, smokeReadState,
 } from "./smokeAdmissionRefusal.ts";
 
 /** A smoke-mode Apify call the read plan would not start or keep reading (smokeAdmissionRefusal.ts). */
@@ -1178,7 +1178,7 @@ async function execSourceWithApify(
   const smokeReads = smokeAdmissionActive();
   let resumeWait: { waitS: number; timeoutMs: number } | null = null;
   if (smokeReads && resumeRunId) {
-    const st = await smokeReadState();
+    const st = await smokeReadState(apifyGateActor(actor_id));
     const plan = st ? planSmokeStatusRead(st) : { ok: false as const, reason: "read_state_unknown" };
     if (!plan.ok) {
       console.warn("[toolRegistry] smoke: resume not read; the run stays pending, its receipt unsettled", { run_id: resumeRunId, reason: plan.reason });
@@ -1293,7 +1293,7 @@ async function execSourceWithApify(
   // iteration cap is a second bound that holds even if that count stalls.
   for (let n = 0; smokeReads && !APIFY_TERMINAL_STATUSES.has(status) && n < SMOKE_MAX_STATUS_READS; n++) {
     if (ctx?.stopWaiting?.()) break;
-    const st = await smokeReadState();
+    const st = await smokeReadState(apifyGateActor(actor_id));
     const plan = st ? planSmokeStatusRead(st) : { ok: false as const, reason: "read_state_unknown" };
     if (!plan.ok) {
       console.log("[toolRegistry] smoke: status read not planned; the Apify run stays pending", { run_id, status, reason: plan.reason });
@@ -1356,7 +1356,7 @@ async function execSourceWithApify(
     } else if (apifyRunSettled(finalRun, finalRunSentAt)) {
       receipt = "settled";
     } else {
-      const st = await smokeReadState();
+      const st = await smokeReadState(apifyGateActor(actor_id));
       const finishedAtMs = typeof finalRun?.finishedAt === "string" ? Date.parse(finalRun.finishedAt) : NaN;
       const plan = st
         ? planSmokeReceipt(st, {
@@ -1409,7 +1409,8 @@ async function execSourceWithApify(
   if (!resolvedDatasetId) {
     return {
       ok: true,
-      data: { actor_id, run_id, dataset_id: null, items: [], total: 0, no_results: true, summary: "no_dataset", citations: [] },
+      data: { actor_id, run_id, dataset_id: null, items: [], total: 0, no_results: true, summary: "no_dataset", citations: [],
+        ...(receipt ? { receipt } : {}) },
     };
   }
 
@@ -1514,6 +1515,8 @@ async function execSourceWithApify(
         normalized_source_type: kindLabel,
         run_id,
         dataset_id: resolvedDatasetId,
+        // Smoke only (null elsewhere): "unsettled" is listed for reconciliation.
+        ...(receipt ? { receipt } : {}),
       // ── THE PROVIDER'S OWN USAGE, CARRIED OUT OF THE POLLER ─────────────
       //
       // `finalRun` is the full `/actor-runs/{id}` document and it dies here
@@ -1605,6 +1608,8 @@ async function execSourceWithApify(
       discovery,
       run_id,
       dataset_id: resolvedDatasetId,
+      // Smoke only (null elsewhere): "unsettled" is listed for reconciliation.
+      ...(receipt ? { receipt } : {}),
       // ── THE PROVIDER'S OWN USAGE, CARRIED OUT OF THE POLLER ─────────────
       //
       // `finalRun` is the full `/actor-runs/{id}` document and it dies here

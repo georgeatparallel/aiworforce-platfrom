@@ -3,7 +3,8 @@
 // (request_too_large) before the mission's first purchase. In the smoke the
 // planner now sees only the approved actors, in unindented JSON. This measures
 // the request body gptStructured actually sends for the smoke's own mission.
-// Outside the smoke the prompt is byte-identical.
+// Outside the smoke the prompt is byte-identical. The bound is the proposed
+// catalog's (30,720 since Luna input is priced at its cache-write rate).
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { compileLeadMission } from "../../../supabase/functions/_shared/leadMissionCompiler.ts";
 import { buildCapabilityGraph } from "../../../supabase/functions/_shared/leadCapabilityGraph.ts";
@@ -15,9 +16,14 @@ import {
   ADMISSION_GATE_MARK, SMOKE_APPROVED_ACTORS_MARK,
 } from "../../../supabase/functions/_shared/smokeAdmissionRefusal.ts";
 
-/** The Luna template's byte bound in the first-smoke catalog (#93). */
-const LUNA_MAX_REQUEST_BYTES = 32_768;
+/** The Luna template's byte bound in the proposed catalog (input priced at the cache-write rate). */
+const LUNA_MAX_REQUEST_BYTES: number = JSON.parse(Deno.readTextFileSync(
+  new URL("../../../docs/launch/proposals/smoke-catalog-two-actor.json", import.meta.url),
+)).approved_quotes.luna.request_limits.max_request_bytes;
 const JOB_SEARCH = "apify:harvestapi~linkedin-job-search";
+const DETAILS = "apify:harvestapi~linkedin-company";
+/** The margin the smoke keeps below the template's bound (not "just under"). */
+const REQUIRED_MARGIN_BYTES = 2_048;
 
 const proposal = {
   requested_opportunity_count: 1, requested_contact_ready_count: null, company_types: ["B2B software"],
@@ -68,6 +74,40 @@ Deno.test("smoke planner: the execution-planner request for the smoke's mission 
   console.log(`execution-planner request: ${full.bytes} bytes outside the smoke, ${smoke.bytes} in it (bound ${LUNA_MAX_REQUEST_BYTES})`);
   assert(full.bytes > LUNA_MAX_REQUEST_BYTES, "outside the smoke the request is the unchanged, larger one");
   assert(smoke.bytes <= LUNA_MAX_REQUEST_BYTES, `smoke request ${smoke.bytes} bytes exceeds ${LUNA_MAX_REQUEST_BYTES}`);
+});
+
+Deno.test("smoke planner: the two-actor smoke (job search + company details) keeps a 2 KiB margin", async () => {
+  const two = await sentBytes(smokeGate([JOB_SEARCH, DETAILS]));
+  console.log(`two-actor execution-planner request: ${two.bytes} bytes (margin ${LUNA_MAX_REQUEST_BYTES - two.bytes})`);
+  assert(two.bytes <= LUNA_MAX_REQUEST_BYTES - REQUIRED_MARGIN_BYTES,
+    `${two.bytes} bytes leaves ${LUNA_MAX_REQUEST_BYTES - two.bytes}, under the ${REQUIRED_MARGIN_BYTES}-byte margin`);
+  const one = await sentBytes(smokeGate([JOB_SEARCH]));
+  assert(one.bytes <= LUNA_MAX_REQUEST_BYTES - REQUIRED_MARGIN_BYTES);
+});
+
+Deno.test("smoke planner: an actor is described once; nothing is lost (a repeat carries every field that differs)", () => {
+  type Cap = { capability: string; actors: Array<Record<string, unknown>> };
+  const filtered = smokePlannerPayload(PAYLOAD, [JOB_SEARCH, DETAILS]).authorised_capabilities as Cap[];
+  const original = (PAYLOAD.authorised_capabilities as Cap[]);
+  const first = new Map<string, Record<string, unknown>>();
+  let repeats = 0;
+  for (const c of filtered) {
+    const orig = original.find((o) => o.capability === c.capability)!;
+    for (const a of c.actors) {
+      const k = String(a.actor_key);
+      const full = orig.actors.find((x) => x.actor_key === k)!;
+      if (!first.has(k)) {
+        assertEquals(a, full, "the first description is unchanged");
+        first.set(k, a);
+        continue;
+      }
+      repeats++;
+      const { same_as, ...rest } = a;
+      assert(String(same_as).includes(k));
+      assertEquals({ ...first.get(k), ...rest }, full, "re-expanded, the repeat is the original entry");
+    }
+  }
+  assert(repeats > 0, "the job search is offered for discovery and for hiring verification");
 });
 
 Deno.test("smoke planner: only approved actors are offered, and capabilities with none are dropped", () => {

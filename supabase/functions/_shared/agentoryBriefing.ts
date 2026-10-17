@@ -180,13 +180,28 @@ export function companyBrainSection(brain: CompanyBrainBriefing | null): string 
  * change. That is the whole contract of this module: update the knowledge, not
  * a branch.
  */
-export function actorPlaybookSection(actorKeys?: readonly string[] | null, compact = false): string {
+export function actorPlaybookSection(
+  actorKeys?: readonly string[] | null, compact = false,
+  restated?: ReadonlyMap<string, Record<string, unknown>> | null,
+): string {
   // P2 — THE RELEVANT SUBSET. Given the actors this mission's graph admitted,
   // only their cards are shown; the full catalog (~70k characters) otherwise.
   const all = discoveryCatalogBriefing();
-  const actors = actorKeys && actorKeys.length
+  const subset = actorKeys && actorKeys.length
     ? all.filter((a) => actorKeys.includes(String(a.actor_key)))
     : all;
+  // SAID ONCE (compact only). A field the request's authorised_capabilities
+  // already states for this actor, byte for byte, is not repeated here.
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const actors = compact && restated
+    ? subset.map((a) => {
+      const r = restated.get(String(a.actor_key));
+      if (!r) return a;
+      const kept = Object.entries(a).filter(([f, v]) => f === "actor_key" || !(f in r) || !same(v, r[f]));
+      return kept.length === Object.keys(a).length ? a
+        : { ...Object.fromEntries(kept), also_see: "authorised_capabilities (fields not repeated here)" };
+    })
+    : subset;
   const unserveable = scenarioBriefing()
     .filter((s) => s.servable === false)
     .map((s) => ({ scenario: s.scenario, why: s.blocked_reason }));
@@ -218,6 +233,8 @@ export interface BriefingInput {
   actorKeys?: readonly string[] | null;
   /** Unindented JSON (the smoke's request-size bound). Absent: byte-identical to before. */
   compact?: boolean;
+  /** Compact only: actor entries the request itself states (their identical fields are not repeated). */
+  restatedActors?: ReadonlyMap<string, Record<string, unknown>> | null;
 }
 
 /**
@@ -298,7 +315,7 @@ export function buildAgentoryBriefing(i: BriefingInput): string {
     "",
     companyBrainSection(i.brain),
     "",
-    actorPlaybookSection(i.actorKeys ?? null, i.compact === true),
+    actorPlaybookSection(i.actorKeys ?? null, i.compact === true, i.restatedActors ?? null),
     "",
     AGENTORY_AGENTS,
     ...(i.results ? ["", resultsSection(i.results)] : []),

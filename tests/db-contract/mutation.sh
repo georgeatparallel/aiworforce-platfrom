@@ -109,15 +109,85 @@ prove_killed "no serialization lock" "$adm_sql" \
   if not found then return jsonb_build_object('decision', 'not_authorized'); end if;" \
   "where queue_id = p_queue;
   if not found then return jsonb_build_object('decision', 'not_authorized'); end if;" \
-  "$adm_tests" "race: an admission still in flight holds the last slot until it commits"
+  "$adm_tests" "deadline: an admission that waited on the lock past the deadline is refused"
+# (Paid admissions also serialize on the liability lock since PR #96, so the
+# last-slot race no longer depends on this row lock alone; the lock-wait test,
+# which holds this row from a second session, still does.)
 prove_killed "no deadline" "$adm_sql" "or a.deadline_at <= v_now" "" \
   "$adm_tests" "deadline: absolute, from the queue row, read after the lock, never renewed"
 prove_killed "clock read before the lock wait" "$adm_sql" "v_now := clock_timestamp();  -- after the lock wait" "v_now := now();  --" \
   "$adm_tests" "deadline: an admission that waited on the lock past the deadline is refused"
+prove_killed "a run bought with one read (no dataset read)" "$plan_ts" "export const SMOKE_MIN_RUN_READS = 2;" "export const SMOKE_MIN_RUN_READS = 1;" \
+  "$gate_tests" "read lifecycle: the FINAL run is bought with two reads; its receipt is deferred, held at the maximum, and blocks the next smoke"
 prove_killed "no generation fence" "$adm_sql" "or t.checkpoint_version is distinct from p_generation" "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "any task status admitted" "$adm_sql" "or t.status not in ('running', 'ready')" "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
+prove_killed "no new smoke over unreconciled liability: gate removed" "$adm_sql" "  if v_open > 0 then" "  if false then" \
+  "$adm_tests" "reconciliation: an unsettled purchase blocks the next authorization until a person reconciles it"
+prove_killed "an earlier authorization spends over open liability: admission recheck removed" "$adm_sql" \
+  "  if p_kind in ('provider', 'model') and exists (select 1 from public.discovery_smoke_operations x" \
+  "  if false and exists (select 1 from public.discovery_smoke_operations x" \
+  "$adm_tests" "reconciliation: an earlier authorization cannot spend over another's open liability (Codex review, PR #96)"
+prove_killed "two smokes race past the recheck: admission lock removed" "$adm_sql" \
+  "  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));" \
+  "  if p_kind in ('provider', 'model') then
+    null;" \
+  "$adm_tests" "reconciliation: two smokes racing to buy first — exactly one purchase is admitted"
+# Codex P1 (final review): the clock read, and so every ownership check, before
+# the liability lock's wait. A lease expiring during the wait would be missed.
+prove_killed "ownership judged before the liability lock's wait" "$adm_sql" \
+  "  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  end if;
+  v_now := clock_timestamp();  -- after the lock wait; now() is transaction start" \
+  "  v_now := clock_timestamp();  -- after the lock wait; now() is transaction start
+  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  end if;" \
+  "$adm_tests" "leases: a paid admission that waited on the liability lock past a lease is refused (Codex P1, final review)"
+prove_killed "one actor's slow run spends another's reads: allocation ignored by the read plan" "$gate_ts" \
+  "    const share = actor ? readAllocation(auth, actor) : null;" "    const share = null as number | null;" \
+  "$gate_tests" "read lifecycle: with a 3 + 2 allocation, a slow job search keeps company details' two reads (independent review, PR #96)"
+prove_killed "one actor's reads exceed its share: database allocation removed" "$adm_sql" \
+  "    return jsonb_build_object('decision', 'read_allocation');" "    null;" \
+  "$adm_tests" "polls: a reads template's per-actor allocation holds each actor to its share of the five (independent review, PR #96)"
+# Final offline hardening: the template catalog and reconciliation.
+prove_killed "a template missing a required key is authorized" "$adm_sql" \
+  "or jsonb_typeof(v_t -> 'allowed_kinds') is distinct from 'array' or" \
+  "or jsonb_typeof(v_t -> 'allowed_kinds') <> 'array' or" \
+  "$adm_tests" "authorize: refuses stale, future, unbounded or evidence-free prices"
+prove_killed "a template missing allowed_kinds admits" "$adm_sql" \
+  "not coalesce((v_tpl -> 'allowed_kinds') ? p_kind, false)" "not ((v_tpl -> 'allowed_kinds') ? p_kind)" \
+  "$adm_tests" "admission: a template missing a key admits nothing, even one written outside authorize (final hardening)"
+prove_killed "an incomplete or oversized read allocation is authorized" "$adm_sql" \
+  "    if (v_t -> 'request_limits') ? 'max_reads_per_actor' and (" "    if false and (" \
+  "$adm_tests" "authorize: a read allocation covers exactly the reads template's actors and fits the five (final hardening)"
+prove_killed "a priced read template is authorized" "$adm_sql" \
+  "and (v_t ->> 'maximum_microusd')::bigint <> 0 then" "and false then" \
+  "$adm_tests" "authorize: reads are free, and one template per kind and actor (final hardening)"
+prove_killed "two templates for one kind and actor are authorized" "$adm_sql" \
+  "group by k, x having count(distinct t.key) > 1) then" "group by k, x having false) then" \
+  "$adm_tests" "authorize: reads are free, and one template per kind and actor (final hardening)"
+prove_killed "an above-quote reconciliation closes liability for authorization" "$adm_sql" \
+  "                        and r.vendor_microusd <= o.committed_microusd);" "                        );" \
+  "$adm_tests" "reconciliation: a figure above the quote is recorded, HELD open, and blocks every later smoke (final hardening)"
+prove_killed "an above-quote reconciliation lets another authorization spend" "$adm_sql" \
+  "                                     and r.vendor_microusd <= x.committed_microusd)) then" "                                     )) then" \
+  "$adm_tests" "reconciliation: a figure above the quote is recorded, HELD open, and blocks every later smoke (final hardening)"
+prove_killed "a live authorization's purchase is reconciled" "$adm_sql" \
+  "    if a.status = 'active' and a.deadline_at > clock_timestamp() then" "    if false then" \
+  "$adm_tests" "reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)"
+prove_killed "a nonterminal vendor status is accepted" "$adm_sql" \
+  "  if v_status is null or v_status not in ('SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT', 'NO_RUN') then" "  if false then" \
+  "$adm_tests" "reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)"
+prove_killed "NO_RUN closes a purchase that ran" "$adm_sql" \
+  "    if v_status = 'NO_RUN' and (o.provider_run_id is not null or p_vendor_microusd <> 0) then" "    if false then" \
+  "$adm_tests" "reconciliation: never while the authorization is live, and only for a terminal vendor status (final hardening)"
+prove_killed "a padded reference is a different record" "$adm_sql" \
+  "or r.vendor_ref is distinct from v_ref" "or r.vendor_ref is distinct from p_vendor_ref" \
+  "$adm_tests" "reconciliation: immutable, provider purchases only, terminal, and a padded reference is the same record"
 prove_killed "no lineage lease check" "$adm_sql" "or l.lease_holder is distinct from p_task " "" \
   "$adm_tests" "ownership: queue claim, queue lease, lineage lease, task binding and generation all fence"
 prove_killed "re-keyed payload buys again" "$adm_sql" \
@@ -147,10 +217,10 @@ prove_killed "vendor caps not pinned" "$gate_ts" "url.searchParams.set(k, String
   "$gate_tests" "apify: admitted with the template's vendor caps, run id durable, polls admitted, one credit charged"
 # The smoke's Apify read lifecycle (its loop replaced the 3 s poll loop in smoke mode).
 prove_killed "smoke status read ignores the read reserve" "$plan_ts" \
-  '  if (s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_reserved" };' "" \
+  '  if (s.readsLeft < SMOKE_MIN_RUN_READS) return { ok: false, reason: "reads_reserved" };' "" \
   "$gate_tests" "read lifecycle: a run still RUNNING at the reserve stays pending, its receipt explicitly unsettled and listed"
 prove_killed "smoke start ignores the lifecycle's reads" "$plan_ts" \
-  '  if (s.readsLeft !== null && s.readsLeft < 1 + SMOKE_READS_AFTER_STATUS) return { ok: false, reason: "reads_exhausted" };' "" \
+  '  if (s.readsLeft !== null && s.readsLeft < SMOKE_MIN_RUN_READS) return { ok: false, reason: "reads_exhausted" };' "" \
   "$gate_tests" "read lifecycle: a slow run takes four reads; a second run that could not be settled is never bought"
 prove_killed "read plan refusal reads as a refund for a replay" "$gate_ts" \
   '      if (!plan.ok) return refuse("read_plan", plan.reason);' '      if (!plan.ok) return refusal("read_plan", plan.reason);' \

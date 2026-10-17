@@ -18,9 +18,11 @@ do $$ begin
   end if;
 end $$;
 drop function public.stop_discovery_smoke(uuid, text);
+drop function public.reconcile_discovery_smoke_operation(uuid, text, bigint, text, text);
 drop function public.record_discovery_smoke_receipt(uuid, text, uuid, text, text, bigint, text);
 drop function public.admit_discovery_smoke(uuid, uuid, uuid, integer, text, text, text, text, text, text);
 drop function public.authorize_discovery_smoke(uuid, text, jsonb, jsonb, integer);
+drop table public.discovery_smoke_reconciliations;
 drop table public.discovery_smoke_operations;
 drop table public.discovery_smoke_authorizations;
 commit;

@@ -7,7 +7,7 @@
 // api.openai.com and api.anthropic.com and records every request it receives.
 // Nothing leaves localhost (run.sh grants net to 127.0.0.1 only), so "the
 // vendor saw N requests" is exactly what would have been bought.
-import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   createAdmissionFetch, missionAdmission, type AdmissionDb, type MissionAdmissionContext,
@@ -22,7 +22,7 @@ import { completeOpenAiCompatible } from "../../supabase/functions/_shared/leadS
 import { OPENAI_CHAT_URL } from "../../supabase/functions/_shared/leadStrategy/adapters/openai.ts";
 import { LOVABLE_GATEWAY_URL } from "../../supabase/functions/_shared/leadStrategy/adapters/lovableAi.ts";
 import { mintJwt, REST_URL, sql } from "./lib/harness.ts";
-import { seedSmokeMission, syntheticActorLimits, syntheticQuotes, type SmokeMission } from "./lib/smokeMission.ts";
+import { authorizeSmoke, seedSmokeMission, syntheticActorLimits, syntheticQuotes, type SmokeMission } from "./lib/smokeMission.ts";
 
 const opts = { sanitizeResources: false, sanitizeOps: false };
 const HAIKU = "anthropic:claude-haiku-4-5-20251001";
@@ -162,8 +162,9 @@ Deno.test("apify: an uncertain start keeps its credit HELD and is never bought a
 
 Deno.test("apify: when polls run out the wait stops at once; the run stays pending with its id", opts, async () => {
   const m = await fundedMission();
-  // Three reads: exactly one run's lifecycle. One status read leaves the two the
-  // dataset and the receipt need, so the plan stops waiting after it.
+  // Three reads: exactly one run's lifecycle. Two status reads leave the one the
+  // dataset needs (the receipt is the read a final run defers), so the plan
+  // stops waiting after them.
   await sql`update public.discovery_smoke_authorizations set provider_polls = 3 where queue_id = ${m.queueId}`;
   const v = fakeVendor((r) => r.method === "POST"
     ? json(201, { data: { id: "run-p", defaultDatasetId: "ds-p", status: "RUNNING" } })
@@ -175,7 +176,7 @@ Deno.test("apify: when polls run out the wait stops at once; the run stays pendi
   const d = res.data as { run_id?: string; pending?: boolean };
   assertEquals(d.run_id, "run-p");
   assertEquals(d.pending, true, "pending, resumable: never discarded");
-  assertEquals(v.seen.filter((s) => s.method === "GET").length, 1, "one admitted poll, then nothing sent");
+  assertEquals(v.seen.filter((s) => s.method === "GET").length, 2, "two admitted polls, then nothing sent");
   assert(ms < 20_000, `stopped waiting after the refusal, not after the 90 s window (${ms} ms)`);
   assertEquals(await credits(m.ws), { balance: 9, reserved: 0, statuses: ["charged"] }, "a started run is charged");
 });
@@ -483,7 +484,7 @@ Deno.test("strategist: concurrent attempts in flight never exceed the mission's 
 // settled (`apify_run(settled).receipt`) or listed by the reconciliation.
 const reconciliation = Deno.readTextFileSync(new URL("../../scripts/test-project/smoke-reconciliation.sql", import.meta.url));
 const unsettled = async (m: SmokeMission) =>
-  await sql.unsafe(reconciliation.replace(":'queue_id'", `'${m.queueId}'`));
+  (await sql.unsafe(reconciliation.replace(":'queue_id'", `'${m.queueId}'`))).filter((r) => r.receipt === "unsettled");
 const reads = async (m: SmokeMission) => (await ops(m)).filter((o) => o.kind === "poll").length;
 /** An Apify that honours `waitForFinish`: `finishAfter` status reads, then SUCCEEDED with `finishedAt` `settleLeftMs` short of settled. */
 function apify(o: { id: string; finishAfter: number; settleLeftMs?: number; usd?: number; finalUsd?: number; statusDelayMs?: number }) {
@@ -546,14 +547,66 @@ Deno.test("read lifecycle: a run still RUNNING at the reserve stays pending, its
   const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
   const d = res.data as { run_id?: string; pending?: boolean; receipt?: string };
   assertEquals([res.ok, d.run_id, d.pending, d.receipt], [false, "r3", true, "unsettled"]);
-  assertEquals(await reads(m), 3, "status reads stop while the dataset and receipt reads are still reserved");
-  // The next slice's resume is a status read too: two reads left are the reserve, so it is not made.
+  assertEquals(await reads(m), 4, "status reads stop while the dataset read is still reserved");
+  // The next slice's resume is a status read too: one read left is the dataset's reserve, so it is not made.
   const resumed = await inMission(m, v, () => runTool("source_with_apify", { ...jobsSearch(), resume_run_id: "r3" }, toolCtx(m)));
   assertEquals(resumed.error, "smoke_read_plan:reads_reserved");
   assertEquals(resumed.data as Record<string, unknown>, { run_id: "r3", pending: true, resumable: true, receipt: "unsettled", actor_id: "curious_coder/linkedin-jobs-scraper" });
-  assertEquals(await reads(m), 3);
+  assertEquals(await reads(m), 4);
   const rows = await unsettled(m);
   assertEquals(rows.map((r) => r.provider_run_id), ["r3"], "the reconciliation lists the run whose charge was never settled");
+});
+
+Deno.test("read lifecycle: the FINAL run is bought with two reads; its receipt is deferred, held at the maximum, and blocks the next smoke", opts, async () => {
+  const m = await fundedMission();
+  // Two reads left for this run: what the second actor of the two-actor smoke finds.
+  await sql`update public.discovery_smoke_authorizations set provider_polls = 2 where queue_id = ${m.queueId}`;
+  const v = apify({ id: "r5", finishAfter: 1, usd: 0.004 });
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  assertEquals((res.data as { receipt?: string }).receipt, "unsettled", "never reported as settled");
+  assertEquals(v.kinds, ["status(wait=60)", "dataset"], "status, then the rows; no read is left for the receipt");
+  assertEquals(await reads(m), 2, "the cap is the cap");
+  const [p] = (await ops(m)).filter((o) => o.kind === "provider");
+  assertEquals([p.committed_microusd, p.reported_microusd, p.report_source], ["60000", "4000", "apify_run(status).receipt"],
+    "liability stays at the committed maximum; the preliminary figure is evidence, labelled as such");
+  assertEquals((await unsettled(m)).map((r) => r.provider_run_id), ["r5"], "listed for reconciliation");
+  assertEquals(await credits(m.ws), { balance: 9, reserved: 0, statuses: ["charged"] }, "the customer credit is charged, never refunded");
+  // No new smoke until a person reconciles it.
+  const next = await seedSmokeMission({ authorize: false });
+  await assertRejects(() => authorizeSmoke(next.queueId, { keepPriorLiability: true }), Error, "unreconciled");
+  // One read left: a run whose dataset could not be read is never bought.
+  const n2 = await fundedMission();
+  await sql`update public.discovery_smoke_authorizations set provider_polls = 1 where queue_id = ${n2.queueId}`;
+  const v2 = apify({ id: "r6", finishAfter: 1 });
+  const refused = await inMission(n2, v2, () => runTool("source_with_apify", jobsSearch(), toolCtx(n2)));
+  assertEquals(refused.ok, false);
+  assertEquals(v2.seen.filter((s) => s.method === "POST").length, 0, "nothing bought");
+  assertEquals(await credits(n2.ws), { balance: 10, reserved: 0, statuses: ["not_charged"] }, "a definite non-start is not charged");
+});
+
+Deno.test("read lifecycle: with a 3 + 2 allocation, a slow job search keeps company details' two reads (independent review, PR #96)", opts, async () => {
+  const quotes = syntheticQuotes({
+    // A complete allocation: one share for each actor the reads template allows.
+    polls: { ...(syntheticQuotes().polls as Record<string, unknown>),
+      allowed_actors: ["apify:curious_coder~linkedin-jobs-scraper", "apify:harvestapi~linkedin-company"],
+      request_limits: { max_reads_per_actor: { "apify:curious_coder~linkedin-jobs-scraper": 3, "apify:harvestapi~linkedin-company": 2 } } },
+  });
+  const m = await fundedMission({ quotes });
+  // The first long poll returns RUNNING; the second returns SUCCEEDED, just finished.
+  const v = apify({ id: "r7", finishAfter: 2 });
+  const res = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  assert(res.ok, JSON.stringify(res).slice(0, 300));
+  assertEquals(v.kinds, ["status(wait=60)", "status(wait=60)", "dataset"], "its share is three: the receipt is the read deferred");
+  assertEquals((res.data as { receipt?: string }).receipt, "unsettled");
+  assertEquals(await reads(m), 3);
+  assertEquals((await unsettled(m)).map((r) => r.provider_run_id), ["r7"], "held at its maximum, listed");
+  // Company details still has its two reads: its start is bought.
+  const second = await inMission(m, v, () => fetch("https://api.apify.com/v2/acts/harvestapi~linkedin-company/runs?token=t",
+    { method: "POST", body: JSON.stringify({ companies: ["https://www.linkedin.com/company/x"] }) }));
+  assertEquals(second.status, 201, "not refused by the read plan");
+  await second.body?.cancel();
+  assertEquals(v.seen.filter((s) => s.method === "POST").length, 2);
 });
 
 Deno.test("read lifecycle: the long poll is clamped to the time left; too little time buys nothing", opts, async () => {
@@ -624,6 +677,42 @@ Deno.test("jobs: the legacy LinkedIn jobs actor gets one URL, three per source, 
   assertEquals(JSON.parse(post.body!), { urls: [urls[0]], limitPerSource: 3, splitByLocation: false, scrapeCompany: true },
     "three URLs would have been three billed searches; exactly one is sent");
   assertEquals(post.url.searchParams.get("maxTotalChargeUsd"), "0.06", "capped at the template's maximum");
+});
+
+Deno.test("leases: nothing reaches the transport when ownership expires while the gate waits on the liability lock (Codex P1)", opts, async () => {
+  // Another session holds the global liability lock until both ownership
+  // leases have expired. A Luna request and an Apify purchase made through
+  // the real gate in that window must send nothing.
+  const holdLock = (ms: number) => sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'))`;
+    await new Promise((r) => setTimeout(r, ms));
+  });
+  const expireIn = async (m: SmokeMission, s: number) => {
+    await sql`update public.lead_mission_queue set lease_expires_at = clock_timestamp() + make_interval(secs => ${s}) where id = ${m.queueId}`;
+    await sql`update public.lead_lineages set lease_expires_at = clock_timestamp() + make_interval(secs => ${s}) where lineage_id = ${m.taskId}`;
+  };
+  const m = await fundedMission();
+  const v = fakeVendor((r) => r.method === "POST" && r.url.hostname === "api.apify.com"
+    ? json(201, { data: { id: "run-late", defaultDatasetId: "ds-late", status: "RUNNING" } })
+    : json(200, { choices: [{ message: { content: "{}" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+
+  await expireIn(m, 1.5);
+  let holder = holdLock(2500);
+  await new Promise((r) => setTimeout(r, 200));
+  const luna = await inMission(m, v, () => gptStructured({ purpose: "t", system: "s", user: "u", model: "gpt-4.1-mini", maxTokens: 100 }));
+  await holder;
+  assertEquals(luna.ok, false, "the model request is refused");
+
+  await expireIn(m, 1.5);
+  holder = holdLock(2500);
+  await new Promise((r) => setTimeout(r, 200));
+  const buy = await inMission(m, v, () => runTool("source_with_apify", jobsSearch(), toolCtx(m)));
+  await holder;
+  assertEquals(buy.ok, false, "the purchase is refused");
+
+  assertEquals(v.seen.length, 0, "zero model or provider requests reached the transport after ownership expired");
+  assertEquals((await ops(m)).length, 0, "nothing admitted, nothing committed");
+  assertEquals((await credits(m.ws)).reserved, 0, "no credit is left reserved for a purchase that was never made");
 });
 
 Deno.test("models: a Terra template priced above the model allocation is never admitted", opts, async () => {

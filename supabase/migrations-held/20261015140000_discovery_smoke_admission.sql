@@ -114,11 +114,46 @@ create unique index discovery_smoke_run_id on public.discovery_smoke_operations
 create unique index discovery_smoke_dataset_id on public.discovery_smoke_operations
   (authorization_id, provider_dataset_id) where provider_dataset_id is not null;
 
+-- ── RECONCILIATION: THE VENDOR'S OWN FIGURE, RECORDED BY A PERSON ─────────
+--
+-- Every provider purchase is LIABILITY, carried at its committed maximum,
+-- until an administrator records the vendor's own figure here — the final run
+-- whose receipt the five-read plan deferred, a run left pending, an uncertain
+-- start, and a "settled" receipt too: `report_source` is written by the worker
+-- (record_discovery_smoke_receipt), so no label it chooses can stand in for
+-- this record (Codex review, PR #96). Immutable, and it never changes a
+-- commitment. Until every purchase of every earlier smoke is reconciled, no
+-- new smoke can be authorized and no other authorization may spend.
+--
+-- A record CLOSES a purchase only when the vendor's figure is within the
+-- committed maximum. A figure above it is recorded and HELD (final offline
+-- hardening): the approved bound was wrong, so the purchase stays open
+-- liability and blocks every later smoke until the database owner, after a
+-- review outside these functions, decides otherwise.
+create table public.discovery_smoke_reconciliations (
+  authorization_id uuid not null,
+  operation_key    text not null,
+  vendor_microusd  bigint not null check (vendor_microusd >= 0),
+  vendor_ref       text not null check (length(vendor_ref) > 0 and vendor_ref = btrim(vendor_ref, E' \t\r\n')),
+  -- The vendor's own terminal state, as the administrator read it. `NO_RUN`:
+  -- the vendor has no run for an uncertain start, so nothing was charged.
+  vendor_status    text not null check (vendor_status in ('SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT', 'NO_RUN')),
+  reconciled_at    timestamptz not null default clock_timestamp(),
+  -- The person's login (session_user), not the definer that runs the function.
+  reconciled_by    name not null default session_user,
+  primary key (authorization_id, operation_key),
+  foreign key (authorization_id, operation_key)
+    references public.discovery_smoke_operations(authorization_id, operation_key)
+);
+
 alter table public.discovery_smoke_authorizations enable row level security;
 alter table public.discovery_smoke_operations enable row level security;
-revoke all on public.discovery_smoke_authorizations, public.discovery_smoke_operations
+alter table public.discovery_smoke_reconciliations enable row level security;
+revoke all on public.discovery_smoke_authorizations, public.discovery_smoke_operations,
+  public.discovery_smoke_reconciliations
   from public, anon, authenticated, service_role;
-grant select on public.discovery_smoke_authorizations, public.discovery_smoke_operations to service_role;
+grant select on public.discovery_smoke_authorizations, public.discovery_smoke_operations,
+  public.discovery_smoke_reconciliations to service_role;
 
 -- ── ADMINISTRATIVE APPROVAL. Never granted to the worker. ─────────────────
 --
@@ -135,7 +170,7 @@ declare
   q public.lead_mission_queue%rowtype;
   a public.discovery_smoke_authorizations%rowtype;
   v_now timestamptz := clock_timestamp();
-  v_hash text; v_t jsonb; v_id text; v_obs timestamptz; v_k text;
+  v_hash text; v_t jsonb; v_id text; v_obs timestamptz; v_k text; v_open bigint;
 begin
   select * into q from public.lead_mission_queue where id = p_queue for update;
   if not found then raise exception 'authorize_discovery_smoke: no such queue row'; end if;
@@ -149,6 +184,21 @@ begin
       raise exception 'authorize_discovery_smoke: an authorization exists and cannot be replaced';
     end if;
     return a.id;
+  end if;
+
+  -- NO NEW SMOKE OVER UNRECONCILED LIABILITY. Any earlier provider purchase
+  -- without a reconciliation may still be billed up to its maximum; another
+  -- mission would spend on top of an unknown. One reconciled above its
+  -- maximum is held open (the bound was wrong). Serialized with every paid
+  -- admission and reconciliation by one transaction-scoped lock.
+  perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  select count(*) into v_open from public.discovery_smoke_operations o
+   where o.kind = 'provider'
+     and not exists (select 1 from public.discovery_smoke_reconciliations r
+                      where r.authorization_id = o.authorization_id and r.operation_key = o.operation_key
+                        and r.vendor_microusd <= o.committed_microusd);
+  if v_open > 0 then
+    raise exception 'authorize_discovery_smoke: % earlier provider purchase(s) are unreconciled; reconcile them first', v_open;
   end if;
 
   if q.status not in ('queued', 'running', 'resumable') then
@@ -177,17 +227,42 @@ begin
     raise exception 'authorize_discovery_smoke: approved quotes required';
   end if;
   for v_id, v_t in select key, value from jsonb_each(p_approved_quotes) loop
-    if jsonb_typeof(v_t) <> 'object'
-       or jsonb_typeof(v_t -> 'allowed_kinds') <> 'array' or jsonb_array_length(v_t -> 'allowed_kinds') = 0
-       or exists (select 1 from jsonb_array_elements_text(v_t -> 'allowed_kinds') k where k not in ('provider', 'model', 'poll'))
-       or jsonb_typeof(v_t -> 'allowed_actors') <> 'array' or jsonb_array_length(v_t -> 'allowed_actors') = 0
-       or jsonb_typeof(v_t -> 'maximum_microusd') <> 'number' or (v_t ->> 'maximum_microusd') !~ '^[0-9]+$'
+    -- NULL-SAFE (final offline hardening): every type check is `is distinct
+    -- from`, so a missing key is malformed, never a NULL that slips through the
+    -- OR chain.
+    if jsonb_typeof(v_t) is distinct from 'object'
+       or jsonb_typeof(v_t -> 'allowed_kinds') is distinct from 'array' or jsonb_array_length(v_t -> 'allowed_kinds') = 0
+       or exists (select 1 from jsonb_array_elements(v_t -> 'allowed_kinds') k
+                   where jsonb_typeof(k) <> 'string' or k #>> '{}' not in ('provider', 'model', 'poll'))
+       or jsonb_typeof(v_t -> 'allowed_actors') is distinct from 'array' or jsonb_array_length(v_t -> 'allowed_actors') = 0
+       or exists (select 1 from jsonb_array_elements(v_t -> 'allowed_actors') x
+                   where jsonb_typeof(x) <> 'string' or length(trim(x #>> '{}')) = 0)
+       or jsonb_typeof(v_t -> 'maximum_microusd') is distinct from 'number' or (v_t ->> 'maximum_microusd') !~ '^[0-9]+$'
        or (v_t ->> 'maximum_microusd')::numeric > 250000
        or coalesce(length(trim(v_t ->> 'source')), 0) = 0
        or coalesce(length(trim(v_t ->> 'liability_bound_ref')), 0) = 0
        or jsonb_typeof(v_t -> 'request_limits') is distinct from 'object'
-       or (v_t ? 'discovery_page' and jsonb_typeof(v_t -> 'discovery_page') <> 'boolean') then
+       or ((v_t -> 'request_limits') ? 'max_reads_per_actor'
+           and (jsonb_typeof(v_t -> 'request_limits' -> 'max_reads_per_actor') is distinct from 'object'
+                or exists (select 1 from jsonb_each(v_t -> 'request_limits' -> 'max_reads_per_actor') r
+                            where jsonb_typeof(r.value) <> 'number' or r.value::text !~ '^[0-9]+$')))
+       or (v_t ? 'discovery_page' and jsonb_typeof(v_t -> 'discovery_page') is distinct from 'boolean') then
       raise exception 'authorize_discovery_smoke: template % is malformed', v_id;
+    end if;
+    -- READS ARE FREE. A poll is never a purchase, so it is never reconciled;
+    -- a priced read would be spending outside the liability checks.
+    if (v_t -> 'allowed_kinds') ? 'poll' and (v_t ->> 'maximum_microusd')::bigint <> 0 then
+      raise exception 'authorize_discovery_smoke: template % prices a read; reads must be free', v_id;
+    end if;
+    -- A READ ALLOCATION IS COMPLETE AND FITS THE SHARED CAP: one share for
+    -- every actor the reads template allows and for no other, on a reads-only
+    -- template, summing to at most the five polls.
+    if (v_t -> 'request_limits') ? 'max_reads_per_actor' and (
+         v_t -> 'allowed_kinds' <> '["poll"]'::jsonb
+         or (select array_agg(k order by k) from jsonb_object_keys(v_t -> 'request_limits' -> 'max_reads_per_actor') k)
+            is distinct from (select array_agg(distinct x order by x) from jsonb_array_elements_text(v_t -> 'allowed_actors') x)
+         or (select sum(r.value::text::bigint) from jsonb_each(v_t -> 'request_limits' -> 'max_reads_per_actor') r) > 5) then
+      raise exception 'authorize_discovery_smoke: template % read allocation must cover exactly its actors and sum to at most 5', v_id;
     end if;
     begin v_obs := (v_t ->> 'observed_at')::timestamptz;
     exception when others then raise exception 'authorize_discovery_smoke: template % observed_at is not a time', v_id; end;
@@ -195,6 +270,14 @@ begin
       raise exception 'authorize_discovery_smoke: template % price observation is stale or in the future', v_id;
     end if;
   end loop;
+  -- ONE TEMPLATE PER (kind, actor), as the transport gate requires: a worker
+  -- naming a second template cannot escape the first one's price or limits.
+  if exists (select 1 from jsonb_each(p_approved_quotes) t,
+                    jsonb_array_elements_text(t.value -> 'allowed_kinds') k,
+                    jsonb_array_elements_text(t.value -> 'allowed_actors') x
+              group by k, x having count(distinct t.key) > 1) then
+    raise exception 'authorize_discovery_smoke: two templates cover the same kind and actor';
+  end if;
 
   insert into public.discovery_smoke_authorizations
     (queue_id, workspace_id, criteria_hash, pricing_version, approved_quotes, actor_limits, authorized_at, deadline_at)
@@ -224,7 +307,7 @@ declare
   p public.discovery_smoke_operations%rowtype;
   v_tpl jsonb; v_cost bigint; v_page boolean; v_paid boolean; v_now timestamptz; v_obs timestamptz;
   v_total bigint; v_provider bigint; v_model bigint;
-  n_paid integer; n_model integer; n_page integer; n_poll integer; n_actor integer;
+  n_paid integer; n_model integer; n_page integer; n_poll integer; n_actor integer; n_actor_poll integer;
 begin
   if p_queue is null or p_worker is null or p_task is null or p_generation is null
      or p_key is null or length(trim(p_key)) = 0 or p_kind is null or p_kind not in ('provider', 'model', 'poll')
@@ -248,6 +331,15 @@ begin
   select * into q from public.lead_mission_queue where id = p_queue for share;
   select * into t from public.tasks where id = p_task for share;
   select * into l from public.lead_lineages where lineage_id = q.lineage_id for share;
+  -- THE GLOBAL LIABILITY LOCK, for paid kinds, is taken BEFORE the clock is
+  -- read. It can wait on another smoke, and a lease or the deadline may expire
+  -- meanwhile (Codex P1, final review: ownership was judged before this wait
+  -- and never again). Every check below runs after the last wait. The rows
+  -- above are held, so nothing else they decide can change. It is still the
+  -- last lock this function takes.
+  if p_kind in ('provider', 'model') then
+    perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  end if;
   v_now := clock_timestamp();  -- after the lock wait; now() is transaction start
 
   if a.status <> 'active' or a.deadline_at <= v_now
@@ -291,14 +383,31 @@ begin
       'provider_dataset_id', o.provider_dataset_id);
   end if;
 
+  -- NOR MAY AN EARLIER AUTHORIZATION SPEND OVER IT (Codex review, PR #96). A
+  -- smoke authorized before another one bought anything would otherwise pass
+  -- the authorization check and spend on top of the other's open liability.
+  -- Rechecked at every paid admission, under the same lock as authorization
+  -- and reconciliation (taken above), so a purchase committing elsewhere is
+  -- seen. Reads of this mission's own runs are not spending and are not blocked.
+  if p_kind in ('provider', 'model') and exists (select 1 from public.discovery_smoke_operations x
+                where x.kind = 'provider' and x.authorization_id <> a.id
+                  and not exists (select 1 from public.discovery_smoke_reconciliations r
+                                   where r.authorization_id = x.authorization_id and r.operation_key = x.operation_key
+                                     and r.vendor_microusd <= x.committed_microusd)) then
+    return jsonb_build_object('decision', 'prior_liability_unreconciled');
+  end if;
+
   -- The price is the APPROVED template's maximum; the worker names a template,
   -- it never states a price.
   v_tpl := a.approved_quotes -> p_template;
-  if v_tpl is null or not ((v_tpl -> 'allowed_kinds') ? p_kind) or not ((v_tpl -> 'allowed_actors') ? p_actor) then
+  -- NULL-safe: a template missing a key matches nothing (final offline hardening).
+  if v_tpl is null or not coalesce((v_tpl -> 'allowed_kinds') ? p_kind, false)
+     or not coalesce((v_tpl -> 'allowed_actors') ? p_actor, false)
+     or jsonb_typeof(v_tpl -> 'maximum_microusd') is distinct from 'number' then
     return jsonb_build_object('decision', 'unknown_quote');
   end if;
   v_obs := (v_tpl ->> 'observed_at')::timestamptz;
-  if v_obs < v_now - interval '24 hours' then
+  if v_obs is null or v_obs < v_now - interval '24 hours' then
     return jsonb_build_object('decision', 'stale_quote');
   end if;
   v_cost := (v_tpl ->> 'maximum_microusd')::bigint;
@@ -324,8 +433,9 @@ begin
          count(*) filter (where kind = 'model'),
          count(*) filter (where discovery_page),
          count(*) filter (where kind = 'poll'),
-         count(*) filter (where actor = p_actor and (kind = 'provider' or (kind = 'poll' and committed_microusd > 0)))
-    into v_total, v_provider, v_model, n_paid, n_model, n_page, n_poll, n_actor
+         count(*) filter (where actor = p_actor and (kind = 'provider' or (kind = 'poll' and committed_microusd > 0))),
+         count(*) filter (where kind = 'poll' and actor = p_actor)
+    into v_total, v_provider, v_model, n_paid, n_model, n_page, n_poll, n_actor, n_actor_poll
     from public.discovery_smoke_operations where authorization_id = a.id;
 
   if v_total + v_cost > a.total_microusd
@@ -347,6 +457,14 @@ begin
   end if;
   if p_kind = 'poll' and n_poll >= a.provider_polls then
     return jsonb_build_object('decision', 'poll_limit');
+  end if;
+  -- THE READ ALLOCATION (optional, per actor, inside the shared cap): a reads
+  -- template may give each actor its share of the polls, so one slow run
+  -- cannot spend the reads a later approved run needs (independent review,
+  -- PR #96: job search 3, company details 2). Counted from the same rows.
+  if p_kind = 'poll' and (v_tpl -> 'request_limits' -> 'max_reads_per_actor') ? p_actor
+     and n_actor_poll >= (v_tpl -> 'request_limits' -> 'max_reads_per_actor' ->> p_actor)::integer then
+    return jsonb_build_object('decision', 'read_allocation');
   end if;
 
   insert into public.discovery_smoke_operations
@@ -404,6 +522,69 @@ begin
   return true;
 end $$;
 
+-- ── RECONCILE ONE PURCHASE. Administrators only, never the worker. ────────
+--
+-- Records the vendor's final figure for a provider purchase (any purchase:
+-- a worker-written receipt is evidence, not settlement). Never edits the
+-- operation, never lowers a commitment. Final offline hardening:
+--
+--   * only a TERMINAL purchase: the administrator states the vendor's own
+--     terminal status (`NO_RUN`, with a zero figure, only for a start with no
+--     run id), and nothing is reconciled while the authorization is live
+--     (active, before its deadline): stop it or wait for the deadline;
+--   * the reference is trimmed (spaces, tabs, line breaks) before it is stored or compared, so the same
+--     record again returns the first record unchanged; a different one refuses;
+--   * a figure above the committed maximum is recorded, HELD open (it does not
+--     close the purchase; see the table) and stops the authorization if it is
+--     still active. The report says so (`exceeded`, `closes_liability`).
+create function public.reconcile_discovery_smoke_operation(
+  p_queue uuid, p_key text, p_vendor_microusd bigint, p_vendor_ref text, p_vendor_status text
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare a public.discovery_smoke_authorizations%rowtype; o public.discovery_smoke_operations%rowtype;
+        r public.discovery_smoke_reconciliations%rowtype;
+        v_ref text := btrim(p_vendor_ref, E' \t\r\n'); v_status text := upper(trim(p_vendor_status));
+begin
+  if p_vendor_microusd is null or p_vendor_microusd < 0 or coalesce(length(v_ref), 0) = 0 then
+    raise exception 'reconcile_discovery_smoke_operation: a vendor figure and its reference are required';
+  end if;
+  if v_status is null or v_status not in ('SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT', 'NO_RUN') then
+    raise exception 'reconcile_discovery_smoke_operation: the vendor''s terminal status is required (SUCCEEDED, FAILED, ABORTED, TIMED-OUT or NO_RUN)';
+  end if;
+  select * into a from public.discovery_smoke_authorizations where queue_id = p_queue for update;
+  if not found then raise exception 'reconcile_discovery_smoke_operation: no authorization for this queue row'; end if;
+  perform pg_advisory_xact_lock(hashtext('agentory.discovery_smoke.liability'));
+  select * into o from public.discovery_smoke_operations where authorization_id = a.id and operation_key = p_key;
+  if not found or o.kind <> 'provider' then
+    raise exception 'reconcile_discovery_smoke_operation: % is not a provider purchase of this authorization', p_key;
+  end if;
+  select * into r from public.discovery_smoke_reconciliations where authorization_id = a.id and operation_key = p_key;
+  if found then
+    if r.vendor_microusd is distinct from p_vendor_microusd or r.vendor_ref is distinct from v_ref
+       or r.vendor_status is distinct from v_status then
+      raise exception 'reconcile_discovery_smoke_operation: % is already reconciled differently', p_key;
+    end if;
+  else
+    if a.status = 'active' and a.deadline_at > clock_timestamp() then
+      raise exception 'reconcile_discovery_smoke_operation: the authorization is still live until %; stop it or wait for the deadline', a.deadline_at;
+    end if;
+    if v_status = 'NO_RUN' and (o.provider_run_id is not null or p_vendor_microusd <> 0) then
+      raise exception 'reconcile_discovery_smoke_operation: NO_RUN is only for a start with no run id, at zero';
+    end if;
+    insert into public.discovery_smoke_reconciliations
+      (authorization_id, operation_key, vendor_microusd, vendor_ref, vendor_status)
+    values (a.id, p_key, p_vendor_microusd, v_ref, v_status) returning * into r;
+    if p_vendor_microusd > o.committed_microusd and a.status = 'active' then
+      update public.discovery_smoke_authorizations
+         set status = 'stopped', stop_reason = 'reconciled_charge_exceeded_quote:' || p_key
+       where id = a.id;
+    end if;
+  end if;
+  return jsonb_build_object('operation_key', p_key, 'vendor_microusd', r.vendor_microusd,
+    'vendor_status', r.vendor_status, 'committed_microusd', o.committed_microusd,
+    'exceeded', r.vendor_microusd > o.committed_microusd,
+    'closes_liability', r.vendor_microusd <= o.committed_microusd);
+end $$;
+
 -- One-way. There is no restart or reset.
 create function public.stop_discovery_smoke(p_queue uuid, p_reason text)
 returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -415,6 +596,7 @@ begin
 end $$;
 
 revoke all on function public.authorize_discovery_smoke(uuid, text, jsonb, jsonb, integer) from public, anon, authenticated, service_role;
+revoke all on function public.reconcile_discovery_smoke_operation(uuid, text, bigint, text, text) from public, anon, authenticated, service_role;
 revoke all on function public.admit_discovery_smoke(uuid, uuid, uuid, integer, text, text, text, text, text, text) from public, anon, authenticated;
 revoke all on function public.record_discovery_smoke_receipt(uuid, text, uuid, text, text, bigint, text) from public, anon, authenticated;
 revoke all on function public.stop_discovery_smoke(uuid, text) from public, anon, authenticated;

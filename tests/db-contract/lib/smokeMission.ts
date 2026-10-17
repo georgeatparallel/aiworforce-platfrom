@@ -60,7 +60,7 @@ export interface SmokeMission {
 
 /** Seed the mission. `ageSeconds` backdates the queue row (the deadline runs from it). */
 export async function seedSmokeMission(o: {
-  ageSeconds?: number; windowSeconds?: number; authorize?: boolean; quotes?: Record<string, unknown>;
+  ageSeconds?: number; windowSeconds?: number; authorize?: boolean; quotes?: Record<string, unknown>; keepPriorLiability?: boolean;
   actorLimits?: Record<string, number>; generation?: number;
 } = {}): Promise<SmokeMission> {
   const ws = await seedWorkspace();
@@ -81,10 +81,36 @@ export async function seedSmokeMission(o: {
   return { ws, queueId, taskId, workerId, generation, authorizationId };
 }
 
+/**
+ * Phase 7, as the operator performs it: every earlier provider purchase is
+ * reconciled against the vendor's record before another smoke may be
+ * authorized (a worker-written receipt label settles nothing). These contract tests share one database, so the
+ * helper does it for the tests that are not about it; the rule itself is
+ * pinned in smokeAdmission.contract.test.ts ("reconciliation").
+ */
+export async function reconcilePriorLiability(): Promise<number> {
+  const open = await sql`select a.queue_id, o.operation_key, o.committed_microusd
+    from public.discovery_smoke_operations o
+    join public.discovery_smoke_authorizations a on a.id = o.authorization_id
+   where o.kind = 'provider'
+     and not exists (select 1 from public.discovery_smoke_reconciliations r
+                      where r.authorization_id = o.authorization_id and r.operation_key = o.operation_key)`;
+  for (const o of open) {
+    // A live authorization cannot be reconciled: the operator stops the finished mission first.
+    await sql`select public.stop_discovery_smoke(${o.queue_id}, 'contract test: the mission is over')`;
+    await sql`select public.reconcile_discovery_smoke_operation(${o.queue_id}, ${o.operation_key},
+      ${o.committed_microusd}, 'synthetic contract control: vendor run history', 'SUCCEEDED')`;
+  }
+  return open.length;
+}
+
 /** The administrator's call (the superuser connection; never the worker's role). */
 export async function authorizeSmoke(queueId: string, o: {
   quotes?: Record<string, unknown>; actorLimits?: Record<string, number>; windowSeconds?: number;
+  /** Leave earlier liability unreconciled (the test of the refusal itself). */
+  keepPriorLiability?: boolean;
 } = {}): Promise<string> {
+  if (!o.keepPriorLiability) await reconcilePriorLiability();
   const [r] = await sql`select public.authorize_discovery_smoke(${queueId}, 'synthetic-v1',
     ${sql.json((o.quotes ?? syntheticQuotes()) as never)}, ${sql.json((o.actorLimits ?? syntheticActorLimits) as never)},
     ${o.windowSeconds ?? 300}) as id`;

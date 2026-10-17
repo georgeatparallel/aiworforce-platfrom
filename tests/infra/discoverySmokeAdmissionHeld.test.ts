@@ -30,10 +30,14 @@ Deno.test("smoke admission: held — no deploy path applies it", async () => {
 });
 
 Deno.test("smoke admission: the worker's role reads and admits, nothing more", () => {
-  assert(UP.includes("revoke all on public.discovery_smoke_authorizations, public.discovery_smoke_operations\n  from public, anon, authenticated, service_role;"));
-  assert(UP.includes("grant select on public.discovery_smoke_authorizations, public.discovery_smoke_operations to service_role;"));
+  assert(UP.includes("revoke all on public.discovery_smoke_authorizations, public.discovery_smoke_operations,\n  public.discovery_smoke_reconciliations\n  from public, anon, authenticated, service_role;"));
+  assert(UP.includes("grant select on public.discovery_smoke_authorizations, public.discovery_smoke_operations,\n  public.discovery_smoke_reconciliations to service_role;"));
   assert(/revoke all on function public\.authorize_discovery_smoke\([^)]*\) from public, anon, authenticated, service_role;/.test(UP));
   assert(!/grant execute on function public\.authorize_discovery_smoke/.test(UP), "nobody is granted the approval RPC");
+  assert(/revoke all on function public\.reconcile_discovery_smoke_operation\([^)]*\) from public, anon, authenticated, service_role;/.test(UP));
+  assert(!/grant execute on function public\.reconcile_discovery_smoke_operation/.test(UP), "nobody is granted the reconciliation RPC");
+  assert(/function public\.reconcile_discovery_smoke_operation[^$]*?security definer set search_path = pg_catalog, public/.test(UP),
+    "reconcile: pinned search_path");
   const grants = [...UP.matchAll(/grant execute on function public\.(\w+)\([^)]*\) to (\w+);/g)].map((m) => `${m[1]}:${m[2]}`);
   assertEquals(grants.sort(), ["admit_discovery_smoke:service_role", "record_discovery_smoke_receipt:service_role", "stop_discovery_smoke:service_role"]);
   for (const fn of ["authorize", "admit", "record", "stop"]) {
@@ -57,10 +61,19 @@ Deno.test("smoke admission: the rollback refuses while there is anything to acco
   const guard = DOWN.indexOf("raise exception");
   assert(guard > 0 && guard < DOWN.indexOf("drop function"), "the guard runs before anything is dropped");
   assert(DOWN.includes("exists (select 1 from public.discovery_smoke_authorizations)") && DOWN.includes("exists (select 1 from public.discovery_smoke_operations)"));
-  for (const o of ["stop_discovery_smoke", "record_discovery_smoke_receipt", "admit_discovery_smoke", "authorize_discovery_smoke",
+  for (const o of ["stop_discovery_smoke", "reconcile_discovery_smoke_operation", "record_discovery_smoke_receipt", "admit_discovery_smoke",
+    "authorize_discovery_smoke", "table public.discovery_smoke_reconciliations",
     "table public.discovery_smoke_operations", "table public.discovery_smoke_authorizations"]) {
     assert(DOWN.includes(`drop ${o.startsWith("table") ? "" : "function public."}${o}`), o);
   }
+});
+
+Deno.test("smoke admission: the rollback drops each function by the signature its revoke names", () => {
+  const revoked = [...UP.matchAll(/revoke all on function public\.(\w+\([^)]*\)) from/g)].map((m) => m[1]).sort();
+  const dropped = [...DOWN.matchAll(/drop function public\.(\w+\([^)]*\));/g)].map((m) => m[1]).sort();
+  assertEquals(dropped, revoked);
+  // Final hardening: reconciliation states the vendor's terminal status.
+  assert(revoked.includes("reconcile_discovery_smoke_operation(uuid, text, bigint, text, text)"));
 });
 
 Deno.test("smoke admission: the worker installs the gate only when enforced, before run-agent loads", () => {
