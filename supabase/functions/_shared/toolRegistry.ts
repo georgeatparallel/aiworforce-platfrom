@@ -34,6 +34,7 @@ import { APIFY_START_UNCERTAIN } from "./verifierPurchaseRecovery.ts";
 import { buildLinkedinEngagementInput, buildLinkedinProfilePostsInput } from "./linkedinEngagementInput.ts";
 import { normalizeLinkedinEngagementItem } from "./linkedinEngagementOutput.ts";
 import { normalizeApifyJobRow } from "./apifyJobsNormalizer.ts";
+import { executeWebSearch, resolveWebSearch } from "./parallelSearch.ts";
 
 /**
  * How deep a paid jobs dataset is read.
@@ -47,6 +48,8 @@ export const JOBS_POOL_READ_CEILING = 200;
 
 export interface ToolContext {
   admin: SupabaseClient;
+  /** Cancellation of the owning request, forwarded to read-only web search. */
+  signal?: AbortSignal;
   /**
    * Called the moment a provider run exists, before anything waits on it.
    *
@@ -1696,29 +1699,18 @@ async function execSendEmail(input: unknown): Promise<ToolResult> {
   }
 }
 
-// ---------- Tool: search_web (broad grounded web search) ----------
-// Placeholder: returns `unavailable` unless a real grounded-search backend
-// (e.g. Gemini Enterprise webGroundingSpec) is wired up. This lets the
-// orchestrator honestly report "broad web search unavailable" without
-// pretending Perplexity is the only option.
-async function execSearchWeb(_input: unknown): Promise<ToolResult> {
-  return {
-    ok: false,
-    unavailable: true,
-    error: "broad_web_search_not_configured",
-  };
-}
+// ---------- Tool: search_web (anonymous Parallel Search MCP) ----------
 
 // ---------- Registry ----------
 
 const REGISTRY: Record<string, ToolDef> = {
   search_web: {
     name: "search_web",
-    provider: "gemini_search",
-    description: "Broad grounded web search (Gemini/Lovable). Reports unavailable until a grounded-search backend is configured.",
+    provider: "parallel",
+    description: "Current web search with cited excerpts via anonymous Parallel Search MCP.",
     allowed_agents: ["hawk", "scout"],
     requires_approval: false,
-    execute: execSearchWeb,
+    execute: (input, ctx) => executeWebSearch(input, { signal: ctx.signal }),
   },
   scrape_url: {
     name: "scrape_url",
@@ -1769,7 +1761,6 @@ export const RETIRED_TOOLS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 const TOOL_ENV: Record<string, string> = {
-  search_web: "GEMINI_SEARCH",
   scrape_url: "FIRECRAWL_API_KEY",
   source_with_apify: "APIFY_API_TOKEN",
   send_email: "RESEND_API_KEY",
@@ -1783,6 +1774,7 @@ export function isToolConfigured(
   // as "research is available".
   const retired = RETIRED_TOOLS[name];
   if (retired) return { ready: false, retired };
+  if (name === "search_web") return { ready: resolveWebSearch() === "parallel" };
   const env = TOOL_ENV[name];
   if (!env) return { ready: true };
   return { ready: !!Deno.env.get(env), env };

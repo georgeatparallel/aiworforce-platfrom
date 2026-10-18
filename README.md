@@ -76,3 +76,9 @@ Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-trick
 
 For Apify + Firecrawl lead scraping setup, see:
 - [`docs/lead-scraping-setup.md`](docs/lead-scraping-setup.md)
+
+## Live web research
+
+Hawk and Scout use free anonymous Parallel search for topic research on an
+unconfigured installation. See [`docs/web-search.md`](docs/web-search.md) for
+usage, disable controls and provider selection.

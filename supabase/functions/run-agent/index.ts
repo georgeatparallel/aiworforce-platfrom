@@ -14,6 +14,7 @@ import { PendingModelDrain } from "../_shared/executionLedger.ts";
 import { leadQuotaProvenance } from "../_shared/leadMissionV2Request.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { runTool, normalizeApifySourceType } from "../_shared/toolRegistry.ts";
+import { formatSearchContext } from "../_shared/parallelSearch.ts";
 import { buildInvoker, readPendingRun } from "../_shared/capabilityExecution.ts";
 import { projectCanonicalEvents } from "../_shared/canonicalSignalEvent.ts";
 import { writeSignalEventV2 } from "../_shared/signalsV2Writer.ts";
@@ -1786,6 +1787,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
   if (agent_slug === "hawk" || agent_slug === "scout") {
     const baseCtx = {
       admin: supabase,
+      signal: req.signal,
       workspace_id,
       agent_slug,
       agent_id: agent.id,
@@ -1807,7 +1809,31 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
       stopWaiting: () => verificationWaitStop?.() ?? false,
     };
 
-    // 1) Firecrawl scrape — if instruction/input contains URLs.
+    const plannedTool = resolvePlannedTool({
+      tool_needed: tool_needed_body,
+      tool_name: tool_input_body?.tool_name ?? null,
+      selected_actor_key: tool_input_body?.selected_actor_key ?? null,
+    });
+    const isSearchSelected = plannedTool.tool === "search_web";
+    if (isSearchSelected) {
+      const result = await runTool("search_web", {
+        query: tool_input_body?.query ?? instruction,
+        max_results: tool_input_body?.max_results,
+        session_id: plan_id,
+      }, baseCtx);
+      if (result.error === "search_web_cancelled") {
+        await writeTaskResult(supabase as unknown as TaskResultDb, task.id,
+          { output: "Web research cancelled." },
+          { status: "failed", error_message: "search_web_cancelled" });
+        await supabase.from("task_plans").update({ status: "failed" }).eq("id", plan_id);
+        return json({ success: false, task_id: task.id, error: "search_web_cancelled" }, 499);
+      }
+      if (result.ok && result.data) toolContext = formatSearchContext(result.data);
+      else toolNotices.push(`Live web search failed (${result.error ?? "unavailable"}). No current web evidence was retrieved.`);
+    }
+
+    // 1) Firecrawl scrape — if instruction/input contains URLs. An explicit
+    // search selection never buys a different provider from a URL in its query.
     //
     // NOT FOR A MISSION-AUTHORITATIVE RUN. This pre-scrape predates Lead V2 and
     // runs before the capability engine with no spend-ledger reservation and no
@@ -1819,7 +1845,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
     const missionOwnsEvidence = isLeadMissionV1(tool_input_body?.lead_mission);
     const urlRe = /https?:\/\/[^\s)\]"'<>]+/g;
     const haystack = `${instruction ?? ""}\n${input ?? ""}`;
-    const urls = missionOwnsEvidence
+    const urls = missionOwnsEvidence || isSearchSelected
       ? []
       : Array.from(new Set((haystack.match(urlRe) ?? []).map((u) => u.replace(/[.,;:]+$/, "")))).slice(0, 3);
 
@@ -1845,19 +1871,13 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
     //    or (legacy path) when no tool_input was supplied and the instruction looks like sourcing.
     const sourcingRe = /\b(find|source|sourcing|discover|prospects?|leads?|founders?|companies|hiring|job openings|roles|recruit(?:ers?|ing)|candidates?|engineers?|marketers?|linkedin posts?|comments?)\b/i;
     const planned_actor_key: string | null = tool_input_body?.selected_actor_key ?? null;
-    const planned_tool_name: string | null = tool_input_body?.tool_name ?? null;
     // Canonical tool resolution — precedence: body.tool_needed > plan-step tool_needed
     // > tool_input.tool_name > tool_input.selected_actor_key. Honours the plan step's
     // tool even when the AI-planned tool_input omits tool_name (the live root cause:
     // a source_with_apify step fell through to the generic LLM and fabricated leads).
-    const plannedTool = resolvePlannedTool({
-      tool_needed: tool_needed_body,
-      tool_name: planned_tool_name,
-      selected_actor_key: planned_actor_key,
-    });
     const isFirecrawlSelected = plannedTool.tool === "scrape_url";
     const isApifySelected = plannedTool.tool === "source_with_apify";
-    const shouldUseApify = !isFirecrawlSelected && (
+    const shouldUseApify = !isFirecrawlSelected && !isSearchSelected && (
       isApifySelected
       || (!tool_input_body && sourcingRe.test(`${instruction ?? ""} ${input ?? ""}`))
     );
@@ -8245,7 +8265,7 @@ async function handleRunAgent(req: Request, inProcess: RunAgentRunOptions = {}):
       hasProviderContext: !!apifyContext,
       hasScrapedContext: !!scrapedContext,
     });
-    if (!apifyContext && !scrapedContext && !skipBroadResearch) {
+    if (!isSearchSelected && !apifyContext && !scrapedContext && !skipBroadResearch) {
       // ── THE BROAD-RESEARCH CALL IS GONE WITH ITS PROVIDER ────────────────
       //
       // This called `research_web`, which was Perplexity. It is retired, so the

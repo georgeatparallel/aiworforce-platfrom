@@ -84,13 +84,13 @@ Deno.test("5. only research on a market — a read about one is not a search", (
 // ══ 2. THE CAPABILITY IS ASKED ═════════════════════════════════════════════
 
 Deno.test("6. availability is read from the deployment, not from a null field", () => {
-  assertFalse(webSearchAvailable(env({})), "default off — an unconfigured key must refuse");
+  assert(webSearchAvailable(env({})), "anonymous search needs no key");
   assert(webSearchAvailable(env({ ENABLE_SEARCH_WEB: "true" })));
   assert(webSearchAvailable(env({ ENABLE_SEARCH_WEB: "1" })));
-  assert(webSearchAvailable(env({ SEARCH_WEB_API_KEY: "sk-x" })));
+  assertFalse(webSearchAvailable(env({ SEARCH_WEB_API_KEY: "sk-x" })), "preserve configured backend");
   assertFalse(webSearchAvailable(env({ ENABLE_SEARCH_WEB: "false" })));
-  assertFalse(webSearchAvailable(env({ SEARCH_WEB_API_KEY: "   " })),
-    "a blank key is not a key");
+  assert(webSearchAvailable(env({ SEARCH_WEB_API_KEY: "   " })),
+    "a blank key leaves the installation unconfigured");
 });
 
 Deno.test("7. one definition of the rule, and one sentence explaining it", async () => {

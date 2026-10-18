@@ -28,6 +28,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import {
   RETIRED_TOOLS, isToolConfigured, listTools, runTool,
 } from "../../../supabase/functions/_shared/toolRegistry.ts";
+import { resolveWebSearch } from "../../../supabase/functions/_shared/parallelSearch.ts";
 
 const FUNCTIONS = new URL("../../../supabase/functions/", import.meta.url);
 
@@ -167,7 +168,7 @@ Deno.test("nothing falls back to research_web", async () => {
   );
 });
 
-Deno.test("a stored plan naming research_web does not become a paid Apify call", async () => {
+Deno.test("a stored plan naming research_web does not become another provider", async () => {
   // The repair branch shared `defaultTool`, which is `source_with_apify` for
   // anything hiring-shaped — so retiring the tool would have turned every
   // stored plan naming it into paid sourcing the user never asked for, decided
@@ -178,12 +179,8 @@ Deno.test("a stored plan naming research_web does not become a paid Apify call",
   assert(branch > 0, "the repair branch must still handle stored plans");
   const body = src.slice(branch, branch + 900);
   assert(
-    body.includes('hawk.tool_needed = "search_web"'),
-    "a research step must degrade to the honest placeholder, never to a paid provider",
-  );
-  assert(
-    !/hawk\.tool_needed = defaultTool/.test(body.slice(0, body.indexOf("} else if"))),
-    "and must not share the defaultTool branch, which resolves to source_with_apify",
+    !/hawk\.tool_needed\s*=(?!=)/.test(body.slice(0, body.indexOf("} else if"))),
+    "an explicit retired selection must be preserved, never replaced by another provider",
   );
 });
 
@@ -196,7 +193,7 @@ Deno.test("the live tools are unaffected", () => {
   }
   assertEquals(
     isToolConfigured("search_web").ready,
-    !!Deno.env.get("GEMINI_SEARCH"),
-    "search_web still answers from its own env, unchanged",
+    resolveWebSearch() === "parallel",
+    "search_web answers from the shared provider resolver",
   );
 });

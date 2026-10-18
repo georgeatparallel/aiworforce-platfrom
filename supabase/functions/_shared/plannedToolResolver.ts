@@ -13,7 +13,7 @@ import { extractLeadDetails } from "./leadIntake.ts";
 
 // --------------------------------------------------------------- tool resolver --
 
-export type PlannedToolKind = "source_with_apify" | "scrape_url" | "generic";
+export type PlannedToolKind = "source_with_apify" | "scrape_url" | "search_web" | "generic";
 
 export interface PlannedToolSignals {
   /** body.tool_needed threaded by orchestrate from the plan step (highest precedence). */
@@ -39,6 +39,7 @@ const s = (v: unknown) => (v ?? "").toString().trim().toLowerCase();
 /** Classify a single raw tool string / actor key into a tool kind (or null). */
 function kindOf(raw: string): PlannedToolKind | null {
   if (raw === "source_with_apify") return "source_with_apify";
+  if (raw === "search_web") return "search_web";
   if (raw === "scrape_url" || raw === "firecrawl_scrape_url") return "scrape_url";
   if (raw.startsWith("apify_")) return "source_with_apify";
   if (raw === "research_web" || raw === "summarize_text" || raw === "extract_structured") return "generic";

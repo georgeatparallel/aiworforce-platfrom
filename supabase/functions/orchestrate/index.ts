@@ -68,7 +68,7 @@ const json = (body: unknown, status = 200) =>
 
 // A LOCAL COPY OF THE REGISTRY'S TOOL NAMES, and it had drifted.
 //
-// `search_web` — broad grounded web search, backed by GEMINI_SEARCH — is a real
+// `search_web` — broad grounded web search, backed by Parallel MCP — is a real
 // registered tool (`toolRegistry.ts`) and a member of the planner's own
 // `ToolName` in `toolInputPlanner.ts`. It was missing here, so two call sites
 // that correctly select it produced a step whose `tool_needed` did not
@@ -425,17 +425,8 @@ function expandPlan(instruction: string, intent: Intent, steps: Step[]): Step[] 
         }),
       );
     } else if (hawk.tool_needed === "research_web") {
-      // A PLAN THAT ASKED FOR RESEARCH DOES NOT BECOME A PLAN THAT BUYS APIFY.
-      //
-      // This shared the branch below and so inherited `defaultTool`, which is
-      // `source_with_apify` for anything hiring-shaped. With `research_web`
-      // retired that would turn every stored plan naming it into a paid
-      // sourcing call the user never asked for — a silent substitution of one
-      // paid provider for another, decided by a regex on the instruction.
-      //
-      // `search_web` is the honest landing place: it reports `unavailable`, so
-      // the step degrades visibly instead of spending.
-      hawk.tool_needed = "search_web";
+      // Preserve a stored provider choice. The retired Perplexity tool remains
+      // unavailable; it must not silently become Parallel or paid Apify.
     } else if (!hawk.tool_needed) {
       hawk.tool_needed = defaultTool;
     }
@@ -1361,7 +1352,7 @@ AGENTS:
 TOOLS (priority order matters):
 - source_with_apify   (apify)        allowed: scout, hawk — PRIMARY for finding companies/leads/hiring signals/jobs/posts
 - scrape_url          (firecrawl)    allowed: hawk, scout — PRIMARY for any specific URL/page extraction
-- search_web          (gemini_search) allowed: hawk, scout — broad/current web research (may be unavailable; that's fine)
+- search_web          (parallel) allowed: hawk, scout — current web research with source URLs (respects deployment search settings)
 - summarize_text      (gemini)       allowed: aria, scribe, hawk, scout
 - extract_structured  (gemini)       allowed: aria, scribe, hawk, scout
 - draft_outreach      (gemini)       allowed: penn

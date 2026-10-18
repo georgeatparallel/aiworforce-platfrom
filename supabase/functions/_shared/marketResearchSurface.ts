@@ -30,6 +30,7 @@
 // Pure apart from the env reader, which is injected.
 
 import type { RequestV1, RequestPart } from "./requestV1.ts";
+import { resolveWebSearch } from "./parallelSearch.ts";
 
 export const MARKET_RESEARCH_VERSION = "market-research-surface-v1" as const;
 
@@ -39,19 +40,12 @@ const defaultReadEnv: EnvReader = (k) => {
   try { return Deno.env.get(k); } catch { return undefined; }
 };
 
-const truthy = (v: string | undefined): boolean =>
-  !!v && ["1", "true", "yes", "on", "enabled"].includes(v.trim().toLowerCase());
-
 /**
- * Is live web search configured for this deployment?
- *
- * DEFAULT OFF, and deliberately so: a broad web search is the one research path
- * with no named subject to bound it, and an unconfigured key must produce an
- * honest "I can't" rather than a silent empty result.
+ * Anonymous Parallel search is available on an unconfigured installation.
+ * Explicit disable settings and configured provider choices still win.
  */
 export function webSearchAvailable(readEnv: EnvReader = defaultReadEnv): boolean {
-  const key = readEnv("SEARCH_WEB_API_KEY");
-  return truthy(readEnv("ENABLE_SEARCH_WEB")) || !!(key && key.trim());
+  return resolveWebSearch(readEnv) === "parallel";
 }
 
 export interface MarketResearchPlan {

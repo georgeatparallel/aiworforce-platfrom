@@ -2,6 +2,8 @@
 // Used by toolInputPlanner (Gemini) to pick the right actor/tool,
 // and by toolRegistry/run-agent to resolve selected_actor_key -> actor_id.
 
+import { resolveWebSearch } from "./parallelSearch.ts";
+
 export type ActorEntry = {
   key: string;
   tool_name: "source_with_apify" | "scrape_url" | "search_web";
@@ -570,11 +572,11 @@ export const ACTOR_REGISTRY: Record<string, ActorEntry> = {
   search_web: {
     key: "search_web",
     tool_name: "search_web",
-    provider: "gemini_or_lovable_search",
+    provider: "parallel",
     actor_id: null,
     source_type: "search",
-    label: "Gemini/Lovable Search",
-    enabled: false,
+    label: "Parallel Search",
+    enabled: true,
     best_for: [
       "broad current web search",
       "market updates",
@@ -596,6 +598,7 @@ export function getActorByKey(key: string | null | undefined): ActorEntry | null
 
 export function isActorRuntimeEnabled(entry: ActorEntry): boolean {
   if (!entry.enabled) return false;
+  if (entry.key === "search_web") return resolveWebSearch() === "parallel";
   if (entry.required_env && !envStr(entry.required_env)) return false;
   return true;
 }
